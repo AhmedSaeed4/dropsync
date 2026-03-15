@@ -41,9 +41,12 @@ export function DropItem({ drop, onDelete, onPreview, selected, onSelect, select
   const [deleting, setDeleting] = useState(false);
   const [copied, setCopied] = useState(false);
   const [decryptedContent, setDecryptedContent] = useState<string>('');
+  const [decryptedFileData, setDecryptedFileData] = useState<string>('');
   const [decryptError, setDecryptError] = useState(false);
   const isDark = theme === 'dark';
   const isMinimal = theme === 'minimal';
+
+  const isImage = drop.mimeType?.startsWith('image/');
 
   // Decrypt content if encrypted
   useEffect(() => {
@@ -56,24 +59,30 @@ export function DropItem({ drop, onDelete, onPreview, selected, onSelect, select
             // User doesn't have encryption keys set up
             setDecryptError(true);
             setDecryptedContent('');
+            setDecryptedFileData('');
             return;
           }
 
           const decrypted = await decryptDrop(drop, currentUserId);
+
           if (decrypted.type === 'text' && decrypted.content) {
             setDecryptedContent(decrypted.content);
             setDecryptError(false);
+          } else if (decrypted.type === 'file' && decrypted.fileData) {
+            setDecryptedFileData(decrypted.fileData);
+            setDecryptError(false);
           } else {
             setDecryptError(true);
-            setDecryptedContent('');
           }
         } catch (error) {
           console.error('Decryption error:', error);
           setDecryptError(true);
           setDecryptedContent('');
+          setDecryptedFileData('');
         }
       } else {
         setDecryptedContent(drop.content || '');
+        setDecryptedFileData(drop.fileData || '');
         setDecryptError(false);
       }
     }
@@ -84,6 +93,9 @@ export function DropItem({ drop, onDelete, onPreview, selected, onSelect, select
   const displayContent = drop.encrypted
     ? (decryptError ? '[Encrypted - cannot decrypt]' : decryptedContent)
     : (drop.content || '');
+
+  // What to display for file data (images)
+  const displayFileData = drop.encrypted ? decryptedFileData : (drop.fileData || '');
 
   const handleDownload = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -120,7 +132,6 @@ export function DropItem({ drop, onDelete, onPreview, selected, onSelect, select
     onSelect(drop.id);
   };
 
-  const isImage = drop.mimeType?.startsWith('image/');
   const canCopyContent = isTextFile(drop);
 
   // Theme colors
@@ -183,8 +194,8 @@ export function DropItem({ drop, onDelete, onPreview, selected, onSelect, select
               <svg className={`w-5 h-5 ${tc.textColor}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
                 <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
-            ) : isImage && drop.fileData ? (
-              <img src={drop.fileData} alt={drop.name} className="w-full h-full object-cover" />
+            ) : isImage && displayFileData ? (
+              <img src={displayFileData} alt={drop.name} className="w-full h-full object-cover" />
             ) : (
               <svg className={`w-5 h-5 ${tc.textColor}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
                 <path d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
