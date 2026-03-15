@@ -3,11 +3,15 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { useDrops } from '@/hooks/useDrops';
+import { useWorkspaces } from '@/hooks/useWorkspaces';
 import { Header } from '@/components/Header';
 import { DropZone } from '@/components/DropZone';
 import { DropList } from '@/components/DropList';
 import { PreviewModal } from '@/components/PreviewModal';
-import { Drop } from '@/types';
+import { WorkspaceSwitcher } from '@/components/WorkspaceSwitcher';
+import { CreateWorkspaceModal } from '@/components/CreateWorkspaceModal';
+import { JoinWorkspaceModal } from '@/components/JoinWorkspaceModal';
+import { Drop, Workspace } from '@/types';
 
 type Theme = 'light' | 'dark' | 'minimal';
 
@@ -15,10 +19,28 @@ const THEME_STORAGE_KEY = 'dropsync_theme';
 
 export default function Home() {
   const { user, loading: authLoading, signIn } = useAuth();
-  const { drops, loading: dropsLoading, refreshDrops } = useDrops();
   const [previewDrop, setPreviewDrop] = useState<Drop | null>(null);
   const [theme, setTheme] = useState<Theme>('light');
   const [themeLoaded, setThemeLoaded] = useState(false);
+
+  // Workspace state
+  const {
+    workspaces,
+    currentWorkspace,
+    currentWorkspaceId,
+    switchWorkspace,
+    create: createWorkspace,
+    join: joinWorkspace,
+    loading: workspacesLoading
+  } = useWorkspaces(user?.uid || null);
+
+  // Pass currentWorkspaceId to useDrops
+  const { drops, loading: dropsLoading, refreshDrops } = useDrops(currentWorkspaceId);
+
+  // Modal states
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showJoinModal, setShowJoinModal] = useState(false);
+  const [createdWorkspace, setCreatedWorkspace] = useState<{ name: string; inviteCode: string } | null>(null);
 
   // Load theme from localStorage on mount
   useEffect(() => {
@@ -35,6 +57,29 @@ export default function Home() {
       localStorage.setItem(THEME_STORAGE_KEY, theme);
     }
   }, [theme, themeLoaded]);
+
+  // Workspace handlers
+  const handleCreateWorkspace = async (name: string) => {
+    const workspace = await createWorkspace(name);
+    if (workspace) {
+      setCreatedWorkspace({ name: workspace.name, inviteCode: workspace.inviteCode });
+      switchWorkspace(workspace.id);
+    }
+  };
+
+  const handleJoinWorkspace = async (inviteCode: string) => {
+    const result = await joinWorkspace(inviteCode);
+    if (result.workspace) {
+      switchWorkspace(result.workspace.id);
+      return { success: true };
+    }
+    return { success: false, error: result.error };
+  };
+
+  const handleCloseCreateModal = () => {
+    setShowCreateModal(false);
+    setCreatedWorkspace(null);
+  };
 
   // Theme configuration
   const getThemeColors = (theme: Theme) => {
@@ -288,12 +333,21 @@ export default function Home() {
   // Main app with theme selector
   return (
     <div className={`min-h-screen ${themeColors.bgColor} transition-colors duration-500`}>
-      <Header theme={theme} onThemeChange={setTheme} />
+      <Header theme={theme} onThemeChange={setTheme}>
+        <WorkspaceSwitcher
+          workspaces={workspaces}
+          currentWorkspace={currentWorkspace}
+          onSwitch={switchWorkspace}
+          onCreate={() => setShowCreateModal(true)}
+          onJoin={() => setShowJoinModal(true)}
+          theme={theme}
+        />
+      </Header>
       <main className="max-w-6xl mx-auto px-6 py-8">
         <div className="flex flex-col lg:flex-row gap-6">
           <div className="flex-1">
             <section className="mb-6">
-              <DropZone theme={theme} />
+              <DropZone theme={theme} workspaceId={currentWorkspaceId} />
             </section>
             <section>
               <DropList
@@ -374,6 +428,24 @@ export default function Home() {
         <PreviewModal
           drop={previewDrop}
           onClose={() => setPreviewDrop(null)}
+          theme={theme}
+        />
+      )}
+
+      {/* Workspace Modals */}
+      {showCreateModal && (
+        <CreateWorkspaceModal
+          onSubmit={handleCreateWorkspace}
+          onClose={handleCloseCreateModal}
+          createdWorkspace={createdWorkspace}
+          theme={theme}
+        />
+      )}
+
+      {showJoinModal && (
+        <JoinWorkspaceModal
+          onSubmit={handleJoinWorkspace}
+          onClose={() => setShowJoinModal(false)}
           theme={theme}
         />
       )}

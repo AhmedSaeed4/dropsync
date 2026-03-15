@@ -29,12 +29,15 @@ function getExpirationDate(option: ExpirationOption): Date | null {
 
 export function createDropListener(
   userId: string,
+  workspaceId: string | null,
   callback: (drops: Drop[]) => void
 ): () => void {
-  // Simple query - just filter by userId (no index needed)
+  // Query based on workspaceId
+  // For personal drops (null), filter by userId AND workspaceId == null
+  // For workspace drops, filter by workspaceId
   const q = query(
     collection(db, DROPS_COLLECTION),
-    where('userId', '==', userId),
+    where('workspaceId', '==', workspaceId),
     limit(MAX_DROPS)
   );
 
@@ -60,6 +63,7 @@ export function createDropListener(
           createdAt: data.createdAt?.toDate() || new Date(),
           expiresAt: expiresAt,
           expirationOption: data.expirationOption,
+          workspaceId: data.workspaceId || null,
         });
       }
     });
@@ -77,7 +81,8 @@ export async function createTextDrop(
   userId: string,
   name: string,
   content: string,
-  expirationOption: ExpirationOption = '2h'
+  expirationOption: ExpirationOption = '2h',
+  workspaceId: string | null = null
 ): Promise<Drop | null> {
   try {
     const now = new Date();
@@ -91,6 +96,7 @@ export async function createTextDrop(
       createdAt: serverTimestamp(),
       expiresAt: expiresAt ? Timestamp.fromDate(expiresAt) : null,
       expirationOption,
+      workspaceId,
     });
 
     return {
@@ -102,6 +108,7 @@ export async function createTextDrop(
       createdAt: now,
       expiresAt,
       expirationOption,
+      workspaceId,
     };
   } catch (error) {
     console.error('Error creating text drop:', error);
@@ -112,7 +119,8 @@ export async function createTextDrop(
 export async function createFileDrop(
   userId: string,
   file: File,
-  expirationOption: ExpirationOption = '2h'
+  expirationOption: ExpirationOption = '2h',
+  workspaceId: string | null = null
 ): Promise<{ drop: Drop | null; error?: string }> {
   try {
     // Check file size
@@ -140,6 +148,7 @@ export async function createFileDrop(
       createdAt: serverTimestamp(),
       expiresAt: expiresAt ? Timestamp.fromDate(expiresAt) : null,
       expirationOption,
+      workspaceId,
     });
 
     return {
@@ -154,6 +163,7 @@ export async function createFileDrop(
         createdAt: now,
         expiresAt,
         expirationOption,
+        workspaceId,
       }
     };
   } catch (error) {
@@ -214,6 +224,7 @@ export async function cleanupExpiredDrops(userId: string): Promise<void> {
         createdAt: data.createdAt?.toDate() || new Date(),
         expiresAt: expiresAt,
         expirationOption: data.expirationOption,
+        workspaceId: data.workspaceId || null,
       });
     }
   });

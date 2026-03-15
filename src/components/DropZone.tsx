@@ -8,6 +8,7 @@ import { ExpirationOption } from '@/types';
 
 interface DropZoneProps {
   theme?: 'light' | 'dark' | 'minimal';
+  workspaceId?: string | null;
 }
 
 const EXPIRATION_OPTIONS: { value: ExpirationOption; label: string }[] = [
@@ -18,7 +19,7 @@ const EXPIRATION_OPTIONS: { value: ExpirationOption; label: string }[] = [
   { value: 'forever', label: '∞' },
 ];
 
-export function DropZone({ theme = 'light' }: DropZoneProps) {
+export function DropZone({ theme = 'light', workspaceId = null }: DropZoneProps) {
   const { user } = useAuth();
   const [isDragging, setIsDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -50,14 +51,14 @@ export function DropZone({ theme = 'light' }: DropZoneProps) {
     if (files.length > 0) {
       setUploading(true);
       for (const file of files) {
-        const result = await createFileDrop(user.uid, file, expiration);
+        const result = await createFileDrop(user.uid, file, expiration, workspaceId);
         if (result.error) {
           setError(result.error);
         }
       }
       setUploading(false);
     }
-  }, [user, expiration]);
+  }, [user, expiration, workspaceId]);
 
   const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!user || !e.target.files) return;
@@ -67,7 +68,7 @@ export function DropZone({ theme = 'light' }: DropZoneProps) {
     if (files.length > 0) {
       setUploading(true);
       for (const file of files) {
-        const result = await createFileDrop(user.uid, file, expiration);
+        const result = await createFileDrop(user.uid, file, expiration, workspaceId);
         if (result.error) {
           setError(result.error);
         }
@@ -78,13 +79,13 @@ export function DropZone({ theme = 'light' }: DropZoneProps) {
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
-  }, [user, expiration]);
+  }, [user, expiration, workspaceId]);
 
   const handleTextSubmit = async (name: string, content: string, textExpiration: ExpirationOption) => {
     if (!user) return;
 
     setUploading(true);
-    await createTextDrop(user.uid, name, content, textExpiration);
+    await createTextDrop(user.uid, name, content, textExpiration, workspaceId);
     setUploading(false);
     setShowTextModal(false);
   };

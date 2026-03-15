@@ -1,15 +1,17 @@
 'use client';
 
 import { useAuth } from '@/hooks/useAuth';
+import { ReactNode } from 'react';
 
 type Theme = 'light' | 'dark' | 'minimal';
 
 interface HeaderProps {
   theme?: Theme;
   onThemeChange?: (theme: Theme) => void;
+  children?: ReactNode;
 }
 
-export function Header({ theme = 'light', onThemeChange }: HeaderProps) {
+export function Header({ theme = 'light', onThemeChange, children }: HeaderProps) {
   const { user, loading, signIn, signOutUser } = useAuth();
   const isDark = theme === 'dark';
   const isMinimal = theme === 'minimal';
@@ -68,7 +70,9 @@ export function Header({ theme = 'light', onThemeChange }: HeaderProps) {
             <span className="text-sm font-medium tracking-wide text-[#1A1A1A]">DROP/SYNC</span>
           </div>
 
-          <div className="flex items-center gap-6">
+          <div className="flex items-center gap-4">
+            {children}
+
             {user ? (
               <>
                 <span className="text-xs text-[#1A1A1A]/50 hidden sm:block">{user.email}</span>
@@ -112,6 +116,9 @@ export function Header({ theme = 'light', onThemeChange }: HeaderProps) {
               SECURE TRANSFER SYSTEM // v1.0
             </p>
           </div>
+
+          {/* Workspace Switcher */}
+          {children}
         </div>
 
         <div className="flex items-center gap-6">

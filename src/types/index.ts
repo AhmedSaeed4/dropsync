@@ -7,6 +7,15 @@ export interface User {
 
 export type ExpirationOption = '1h' | '2h' | '6h' | '24h' | 'forever';
 
+export interface Workspace {
+  id: string;
+  name: string;
+  ownerId: string;
+  members: string[];
+  inviteCode: string;
+  createdAt: Date;
+}
+
 export interface Drop {
   id: string;
   userId: string;
@@ -19,6 +28,7 @@ export interface Drop {
   createdAt: Date;
   expiresAt: Date | null; // null = forever
   expirationOption?: ExpirationOption;
+  workspaceId: string | null; // null = personal drop
 }
 
 export interface DropFormData {

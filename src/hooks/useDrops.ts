@@ -3,7 +3,7 @@ import { createDropListener, cleanupExpiredDrops } from '@/lib/drops';
 import { Drop } from '@/types';
 import { useAuth } from './useAuth';
 
-export function useDrops() {
+export function useDrops(workspaceId: string | null = null) {
   const { user } = useAuth();
   const [drops, setDrops] = useState<Drop[]>([]);
   const [loading, setLoading] = useState(true);
@@ -17,23 +17,25 @@ export function useDrops() {
 
     setLoading(true);
 
-    // Clean up expired drops on load
-    cleanupExpiredDrops(user.uid);
+    // Clean up expired drops on load (only for personal drops)
+    if (!workspaceId) {
+      cleanupExpiredDrops(user.uid);
+    }
 
     // Subscribe to real-time updates
-    const unsubscribe = createDropListener(user.uid, (newDrops) => {
+    const unsubscribe = createDropListener(user.uid, workspaceId, (newDrops) => {
       setDrops(newDrops);
       setLoading(false);
     });
 
     return () => unsubscribe();
-  }, [user]);
+  }, [user, workspaceId]);
 
   const refreshDrops = useCallback(() => {
-    if (user) {
+    if (user && !workspaceId) {
       cleanupExpiredDrops(user.uid);
     }
-  }, [user]);
+  }, [user, workspaceId]);
 
   return { drops, loading, refreshDrops };
 }
