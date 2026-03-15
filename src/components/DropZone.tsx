@@ -9,6 +9,7 @@ import { ExpirationOption } from '@/types';
 interface DropZoneProps {
   theme?: 'light' | 'dark' | 'minimal';
   workspaceId?: string | null;
+  workspaceMembers?: string[];
 }
 
 const EXPIRATION_OPTIONS: { value: ExpirationOption; label: string }[] = [
@@ -19,7 +20,7 @@ const EXPIRATION_OPTIONS: { value: ExpirationOption; label: string }[] = [
   { value: 'forever', label: '∞' },
 ];
 
-export function DropZone({ theme = 'light', workspaceId = null }: DropZoneProps) {
+export function DropZone({ theme = 'light', workspaceId = null, workspaceMembers = [] }: DropZoneProps) {
   const { user } = useAuth();
   const [isDragging, setIsDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -51,14 +52,14 @@ export function DropZone({ theme = 'light', workspaceId = null }: DropZoneProps)
     if (files.length > 0) {
       setUploading(true);
       for (const file of files) {
-        const result = await createFileDrop(user.uid, file, expiration, workspaceId);
+        const result = await createFileDrop(user.uid, file, expiration, workspaceId, workspaceMembers);
         if (result.error) {
           setError(result.error);
         }
       }
       setUploading(false);
     }
-  }, [user, expiration, workspaceId]);
+  }, [user, expiration, workspaceId, workspaceMembers]);
 
   const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!user || !e.target.files) return;
@@ -68,7 +69,7 @@ export function DropZone({ theme = 'light', workspaceId = null }: DropZoneProps)
     if (files.length > 0) {
       setUploading(true);
       for (const file of files) {
-        const result = await createFileDrop(user.uid, file, expiration, workspaceId);
+        const result = await createFileDrop(user.uid, file, expiration, workspaceId, workspaceMembers);
         if (result.error) {
           setError(result.error);
         }
@@ -79,13 +80,13 @@ export function DropZone({ theme = 'light', workspaceId = null }: DropZoneProps)
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
-  }, [user, expiration, workspaceId]);
+  }, [user, expiration, workspaceId, workspaceMembers]);
 
   const handleTextSubmit = async (name: string, content: string, textExpiration: ExpirationOption) => {
     if (!user) return;
 
     setUploading(true);
-    await createTextDrop(user.uid, name, content, textExpiration, workspaceId);
+    await createTextDrop(user.uid, name, content, textExpiration, workspaceId, workspaceMembers);
     setUploading(false);
     setShowTextModal(false);
   };

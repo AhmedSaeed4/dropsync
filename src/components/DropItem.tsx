@@ -1,8 +1,9 @@
 'use client';
 
 import { Drop } from '@/types';
-import { formatFileSize, getTimeRemaining, deleteDrop } from '@/lib/drops';
-import { useState } from 'react';
+import { formatFileSize, getTimeRemaining, deleteDrop, decryptDrop } from '@/lib/drops';
+import { getUserKeys } from '@/lib/keys';
+import { useState, useEffect } from 'react';
 
 interface DropItemProps {
   drop: Drop;
@@ -12,6 +13,7 @@ interface DropItemProps {
   onSelect: (id: string) => void;
   selectionMode: boolean;
   theme?: 'light' | 'dark' | 'minimal';
+  currentUserId?: string;
 }
 
 function isTextFile(drop: Drop): boolean {
@@ -35,11 +37,53 @@ function getFileContent(drop: Drop): string {
   return '';
 }
 
-export function DropItem({ drop, onDelete, onPreview, selected, onSelect, selectionMode, theme = 'light' }: DropItemProps) {
+export function DropItem({ drop, onDelete, onPreview, selected, onSelect, selectionMode, theme = 'light', currentUserId }: DropItemProps) {
   const [deleting, setDeleting] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [decryptedContent, setDecryptedContent] = useState<string>('');
+  const [decryptError, setDecryptError] = useState(false);
   const isDark = theme === 'dark';
   const isMinimal = theme === 'minimal';
+
+  // Decrypt content if encrypted
+  useEffect(() => {
+    async function decrypt() {
+      if (drop.encrypted && currentUserId) {
+        try {
+          // First check if user has keys
+          const keys = await getUserKeys(currentUserId);
+          if (!keys) {
+            // User doesn't have encryption keys set up
+            setDecryptError(true);
+            setDecryptedContent('');
+            return;
+          }
+
+          const decrypted = await decryptDrop(drop, currentUserId);
+          if (decrypted.type === 'text' && decrypted.content) {
+            setDecryptedContent(decrypted.content);
+            setDecryptError(false);
+          } else {
+            setDecryptError(true);
+            setDecryptedContent('');
+          }
+        } catch (error) {
+          console.error('Decryption error:', error);
+          setDecryptError(true);
+          setDecryptedContent('');
+        }
+      } else {
+        setDecryptedContent(drop.content || '');
+        setDecryptError(false);
+      }
+    }
+    decrypt();
+  }, [drop, currentUserId]);
+
+  // What to display: decrypted, error message, or original content
+  const displayContent = drop.encrypted
+    ? (decryptError ? '[Encrypted - cannot decrypt]' : decryptedContent)
+    : (drop.content || '');
 
   const handleDownload = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -218,10 +262,10 @@ export function DropItem({ drop, onDelete, onPreview, selected, onSelect, select
       </div>
 
       {/* Text Preview */}
-      {!selectionMode && drop.type === 'text' && drop.content && (
+      {!selectionMode && drop.type === 'text' && displayContent && (
         <div className={`border-t ${tc.borderColor} px-4 py-3 ${tc.textPreviewBg}`}>
           <p className={`${isMinimal ? 'text-sm font-sans tracking-wide' : 'text-xs font-mono'} ${tc.textPreviewColor} line-clamp-3`}>
-            {drop.content}
+            {displayContent}
           </p>
         </div>
       )}

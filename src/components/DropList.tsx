@@ -11,9 +11,10 @@ interface DropListProps {
   onDelete: () => void;
   onPreview: (drop: Drop) => void;
   theme?: 'light' | 'dark' | 'minimal';
+  currentUserId?: string;
 }
 
-export function DropList({ drops, loading, onDelete, onPreview, theme = 'light' }: DropListProps) {
+export function DropList({ drops, loading, onDelete, onPreview, theme = 'light', currentUserId }: DropListProps) {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
@@ -180,6 +181,7 @@ export function DropList({ drops, loading, onDelete, onPreview, theme = 'light' 
               onSelect={toggleSelect}
               selectionMode={selectionMode}
               theme={theme}
+              currentUserId={currentUserId}
             />
           </div>
         ))}

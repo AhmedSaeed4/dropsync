@@ -11,7 +11,10 @@ import { PreviewModal } from '@/components/PreviewModal';
 import { WorkspaceSwitcher } from '@/components/WorkspaceSwitcher';
 import { CreateWorkspaceModal } from '@/components/CreateWorkspaceModal';
 import { JoinWorkspaceModal } from '@/components/JoinWorkspaceModal';
+import { EncryptionSetup } from '@/components/EncryptionSetup';
 import { Drop, Workspace } from '@/types';
+import { hasUserKeys, hasLocalMasterKey } from '@/lib/keys';
+import { decryptDrop } from '@/lib/drops';
 
 type Theme = 'light' | 'dark' | 'minimal';
 
@@ -22,6 +25,10 @@ export default function Home() {
   const [previewDrop, setPreviewDrop] = useState<Drop | null>(null);
   const [theme, setTheme] = useState<Theme>('light');
   const [themeLoaded, setThemeLoaded] = useState(false);
+
+  // Encryption state
+  const [showEncryptionSetup, setShowEncryptionSetup] = useState(false);
+  const [encryptionEnabled, setEncryptionEnabled] = useState(false);
 
   // Workspace state
   const {
@@ -41,6 +48,28 @@ export default function Home() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showJoinModal, setShowJoinModal] = useState(false);
   const [createdWorkspace, setCreatedWorkspace] = useState<{ name: string; inviteCode: string } | null>(null);
+
+  // Check encryption status on user login
+  useEffect(() => {
+    if (user) {
+      checkEncryptionStatus();
+    }
+  }, [user]);
+
+  const checkEncryptionStatus = async () => {
+    if (!user) return;
+
+    const hasKeys = await hasUserKeys(user.uid);
+    const hasLocalKey = await hasLocalMasterKey(user.uid);
+
+    if (hasKeys && hasLocalKey) {
+      setEncryptionEnabled(true);
+      setShowEncryptionSetup(false);
+    } else {
+      setEncryptionEnabled(false);
+      setShowEncryptionSetup(true);
+    }
+  };
 
   // Load theme from localStorage on mount
   useEffect(() => {
@@ -80,6 +109,25 @@ export default function Home() {
     setShowCreateModal(false);
     setCreatedWorkspace(null);
   };
+
+  // Handle preview with decryption
+  const handlePreview = async (drop: Drop) => {
+    if (!user) {
+      setPreviewDrop(drop);
+      return;
+    }
+
+    // Decrypt if needed
+    if (drop.encrypted) {
+      const decryptedDrop = await decryptDrop(drop, user.uid);
+      setPreviewDrop(decryptedDrop);
+    } else {
+      setPreviewDrop(drop);
+    }
+  };
+
+  // Get workspace members for encryption
+  const workspaceMembers = currentWorkspace?.members || [];
 
   // Theme configuration
   const getThemeColors = (theme: Theme) => {
@@ -346,16 +394,35 @@ export default function Home() {
       <main className="max-w-6xl mx-auto px-6 py-8">
         <div className="flex flex-col lg:flex-row gap-6">
           <div className="flex-1">
+            {/* Encryption Setup Banner */}
+            {showEncryptionSetup && user && (
+              <section className="mb-6">
+                <EncryptionSetup
+                  userId={user.uid}
+                  onComplete={() => {
+                    setShowEncryptionSetup(false);
+                    setEncryptionEnabled(true);
+                  }}
+                  theme={theme}
+                />
+              </section>
+            )}
+
             <section className="mb-6">
-              <DropZone theme={theme} workspaceId={currentWorkspaceId} />
+              <DropZone
+                theme={theme}
+                workspaceId={currentWorkspaceId}
+                workspaceMembers={workspaceMembers}
+              />
             </section>
             <section>
               <DropList
                 drops={drops}
                 loading={dropsLoading}
                 onDelete={refreshDrops}
-                onPreview={setPreviewDrop}
+                onPreview={handlePreview}
                 theme={theme}
+                currentUserId={user?.uid}
               />
             </section>
           </div>
