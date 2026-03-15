@@ -39,3 +39,13 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# project specific
+*.png
+!public/*.png
+TECHNICAL_PLAN.md
+firestore.indexes.json
+firestore.rules
+storage.rules
+.claude/
+.vscode/
