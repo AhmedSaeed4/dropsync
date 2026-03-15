@@ -170,9 +170,9 @@ export function DropList({ drops, loading, onDelete, onPreview, theme = 'light',
       </div>
 
       {/* Drop items */}
-      <div className={`border ${tc.borderColor} ${tc.roundedClass} transition-colors duration-300 ${isMinimal ? 'rounded-b-lg' : ''}`}>
+      <div className={`border ${tc.borderColor} ${tc.roundedClass} transition-colors duration-300 ${isMinimal ? 'rounded-b-lg' : ''} overflow-hidden`}>
         {drops.map((drop, index) => (
-          <div key={drop.id} className={index > 0 ? `border-t ${tc.borderColor}` : ''}>
+          <div key={drop.id} className={`overflow-hidden ${index > 0 ? `border-t ${tc.borderColor}` : ''}`}>
             <DropItem
               drop={drop}
               onDelete={onDelete}

@@ -169,7 +169,7 @@ export function DropItem({ drop, onDelete, onPreview, selected, onSelect, select
   return (
     <div
       onClick={() => selectionMode ? onSelect(drop.id) : onPreview(drop)}
-      className={`border ${tc.borderColor} ${tc.bgColor} transition-all cursor-pointer group ${
+      className={`border ${tc.borderColor} ${tc.bgColor} transition-all cursor-pointer group overflow-hidden ${
         selected ? `${tc.selectedBg} ${tc.selectedBorder}` : tc.hoverBg
       }`}
     >
@@ -274,8 +274,8 @@ export function DropItem({ drop, onDelete, onPreview, selected, onSelect, select
 
       {/* Text Preview */}
       {!selectionMode && drop.type === 'text' && displayContent && (
-        <div className={`border-t ${tc.borderColor} px-4 py-3 ${tc.textPreviewBg}`}>
-          <p className={`${isMinimal ? 'text-sm font-sans tracking-wide' : 'text-xs font-mono'} ${tc.textPreviewColor} line-clamp-3`}>
+        <div className={`border-t ${tc.borderColor} px-4 py-3 ${tc.textPreviewBg} overflow-hidden`}>
+          <p className={`${isMinimal ? 'text-sm font-sans tracking-wide' : 'text-xs font-mono'} ${tc.textPreviewColor} line-clamp-3 break-words`}>
             {displayContent}
           </p>
         </div>
