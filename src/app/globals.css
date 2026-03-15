@@ -1,26 +1,112 @@
 @import "tailwindcss";
 
+@theme {
+  --color-cream: #FAF7F2;
+  --color-white: #FAF7F2;
+}
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --coral: #FF5A47;
+  --black: #1A1A1A;
+  --dark-gray: #2A2A2A;
+  --medium-gray: #C4C4C4;
+  --light-gray: #E8E8E8;
+  --off-white: #F5F2ED;
+  --cream: #FAF7F2;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
+/* Base styles */
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--off-white);
+  color: var(--black);
+  font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Custom scrollbar - technical style */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--light-gray);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--black);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--coral);
+}
+
+/* Line clamp utility */
+.line-clamp-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Geometric Patterns */
+.geo-grid {
+  background-image:
+    linear-gradient(var(--black) 1px, transparent 1px),
+    linear-gradient(90deg, var(--black) 1px, transparent 1px);
+  background-size: 20px 20px;
+  background-position: center;
+}
+
+.geo-dots {
+  background: radial-gradient(circle, var(--black) 1px, transparent 1px);
+  background-size: 8px 8px;
+}
+
+.geo-crosshair {
+  position: relative;
+}
+
+.geo-crosshair::before,
+.geo-crosshair::after {
+  content: '';
+  position: absolute;
+  background: var(--black);
+}
+
+.geo-crosshair::before {
+  width: 1px;
+  height: 100%;
+  left: 50%;
+  top: 0;
+}
+
+.geo-crosshair::after {
+  width: 100%;
+  height: 1px;
+  top: 50%;
+  left: 0;
+}
+
+/* Technical monospace for data */
+.font-mono {
+  font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
+}
+
+/* Tight tracking for display text */
+.tracking-tight {
+  letter-spacing: -0.05em;
+}
+
+.tracking-tighter {
+  letter-spacing: -0.08em;
+}
+
+/* Animation for status indicators */
+@keyframes pulse-coral {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.status-active {
+  animation: pulse-coral 2s ease-in-out infinite;
 }
