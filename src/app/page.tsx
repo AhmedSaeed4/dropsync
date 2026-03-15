@@ -11,9 +11,8 @@ import { PreviewModal } from '@/components/PreviewModal';
 import { WorkspaceSwitcher } from '@/components/WorkspaceSwitcher';
 import { CreateWorkspaceModal } from '@/components/CreateWorkspaceModal';
 import { JoinWorkspaceModal } from '@/components/JoinWorkspaceModal';
-import { EncryptionSetup } from '@/components/EncryptionSetup';
 import { Drop, Workspace } from '@/types';
-import { hasUserKeys, hasLocalMasterKey } from '@/lib/keys';
+import { initializeUserKeys, hasUserKeys, hasLocalMasterKey } from '@/lib/keys';
 import { decryptDrop } from '@/lib/drops';
 
 type Theme = 'light' | 'dark' | 'minimal';
@@ -25,10 +24,7 @@ export default function Home() {
   const [previewDrop, setPreviewDrop] = useState<Drop | null>(null);
   const [theme, setTheme] = useState<Theme>('light');
   const [themeLoaded, setThemeLoaded] = useState(false);
-
-  // Encryption state
-  const [showEncryptionSetup, setShowEncryptionSetup] = useState(false);
-  const [encryptionEnabled, setEncryptionEnabled] = useState(false);
+  const [encryptionInitializing, setEncryptionInitializing] = useState(false);
 
   // Workspace state
   const {
@@ -49,25 +45,30 @@ export default function Home() {
   const [showJoinModal, setShowJoinModal] = useState(false);
   const [createdWorkspace, setCreatedWorkspace] = useState<{ name: string; inviteCode: string } | null>(null);
 
-  // Check encryption status on user login
+  // Auto-initialize encryption keys on user login
   useEffect(() => {
     if (user) {
-      checkEncryptionStatus();
+      initializeEncryption();
     }
   }, [user]);
 
-  const checkEncryptionStatus = async () => {
+  const initializeEncryption = async () => {
     if (!user) return;
 
+    // Check if user already has keys
     const hasKeys = await hasUserKeys(user.uid);
     const hasLocalKey = await hasLocalMasterKey(user.uid);
 
-    if (hasKeys && hasLocalKey) {
-      setEncryptionEnabled(true);
-      setShowEncryptionSetup(false);
-    } else {
-      setEncryptionEnabled(false);
-      setShowEncryptionSetup(true);
+    // If no keys, auto-initialize
+    if (!hasKeys || !hasLocalKey) {
+      setEncryptionInitializing(true);
+      try {
+        await initializeUserKeys(user.uid);
+      } catch (error) {
+        console.error('Failed to initialize encryption keys:', error);
+      } finally {
+        setEncryptionInitializing(false);
+      }
     }
   };
 
@@ -381,6 +382,19 @@ export default function Home() {
   // Main app with theme selector
   return (
     <div className={`min-h-screen ${themeColors.bgColor} transition-colors duration-500`}>
+      {/* Encryption initializing overlay */}
+      {encryptionInitializing && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className={`${themeColors.cardBg} border ${themeColors.borderColor} p-8 ${theme === 'minimal' ? 'rounded-lg' : ''}`}>
+            <div className="flex flex-col items-center gap-4">
+              <div className="w-8 h-8 border-2 border-[#FF5A47] border-t-transparent animate-spin rounded-full" />
+              <p className={`text-sm ${theme === 'minimal' ? 'font-sans tracking-wide' : 'font-mono uppercase tracking-wider'} ${themeColors.textColor}`}>
+                {theme === 'minimal' ? 'Setting up encryption...' : 'INITIALIZING_ENCRYPTION...'}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
       <Header theme={theme} onThemeChange={setTheme}>
         <WorkspaceSwitcher
           workspaces={workspaces}
@@ -394,20 +408,6 @@ export default function Home() {
       <main className="max-w-6xl mx-auto px-6 py-8">
         <div className="flex flex-col lg:flex-row gap-6">
           <div className="flex-1">
-            {/* Encryption Setup Banner */}
-            {showEncryptionSetup && user && (
-              <section className="mb-6">
-                <EncryptionSetup
-                  userId={user.uid}
-                  onComplete={() => {
-                    setShowEncryptionSetup(false);
-                    setEncryptionEnabled(true);
-                  }}
-                  theme={theme}
-                />
-              </section>
-            )}
-
             <section className="mb-6">
               <DropZone
                 theme={theme}
@@ -479,6 +479,13 @@ export default function Home() {
                   <li className={`flex justify-between py-2 border-b ${themeColors.borderColor}`}>
                     <span className={themeColors.textMuted}>Active</span>
                     <span className={themeColors.textColor}>{drops.length}</span>
+                  </li>
+                  <li className={`flex justify-between py-2 border-b ${themeColors.borderColor}`}>
+                    <span className={themeColors.textMuted}>Encryption</span>
+                    <span className="flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 bg-green-500 rounded-full" />
+                      <span className={themeColors.textColor}>{encryptionInitializing ? 'Setting up...' : 'Active'}</span>
+                    </span>
                   </li>
                   <li className={`flex justify-between py-2`}>
                     <span className={themeColors.textMuted}>Session</span>
