@@ -3,6 +3,7 @@ export interface User {
   email: string | null;
   displayName: string | null;
   photoURL: string | null;
+  emailVerified: boolean;
 }
 
 export type ExpirationOption = '1h' | '2h' | '6h' | '24h' | 'forever';

@@ -26,7 +26,9 @@ export function JoinWorkspaceModal({ onSubmit, onClose, theme = 'light' }: JoinW
 
     setLoading(false);
 
-    if (!result.success && result.error) {
+    if (result.success) {
+      onClose();
+    } else if (result.error) {
       setError(result.error);
     }
   };

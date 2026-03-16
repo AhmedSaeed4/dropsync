@@ -6,6 +6,7 @@ import { Workspace } from '@/types';
 interface WorkspaceSwitcherProps {
   workspaces: Workspace[];
   currentWorkspace: Workspace | null;
+  currentUserId: string | null;
   onSwitch: (workspaceId: string | null) => void;
   onCreate: () => void;
   onJoin: () => void;
@@ -15,12 +16,14 @@ interface WorkspaceSwitcherProps {
 export function WorkspaceSwitcher({
   workspaces,
   currentWorkspace,
+  currentUserId,
   onSwitch,
   onCreate,
   onJoin,
   theme = 'light'
 }: WorkspaceSwitcherProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const isDark = theme === 'dark';
   const isMinimal = theme === 'minimal';
 
@@ -54,6 +57,24 @@ export function WorkspaceSwitcher({
   };
 
   const tc = getThemeColors();
+
+  const copyInviteCode = async (code: string, workspaceId: string) => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopiedId(workspaceId);
+      setTimeout(() => setCopiedId(null), 1500);
+    } catch {
+      // Fallback for older browsers
+      const textArea = document.createElement('textarea');
+      textArea.value = code;
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textArea);
+      setCopiedId(workspaceId);
+      setTimeout(() => setCopiedId(null), 1500);
+    }
+  };
 
   return (
     <div className="relative">
@@ -99,23 +120,52 @@ export function WorkspaceSwitcher({
             )}
 
             {/* Workspaces */}
-            {workspaces.map((workspace) => (
-              <button
-                key={workspace.id}
-                onClick={() => {
-                  onSwitch(workspace.id);
-                  setIsOpen(false);
-                }}
-                className={`w-full px-4 py-3 text-left flex items-center gap-3 ${currentWorkspace?.id === workspace.id ? `${tc.activeBg} ${tc.activeText}` : tc.hoverBg} transition-colors`}
-              >
-                <svg className={`w-4 h-4 ${currentWorkspace?.id === workspace.id ? 'text-white' : tc.textColor}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                </svg>
-                <span className={`${tc.fontClass} ${currentWorkspace?.id === workspace.id ? 'text-white' : tc.textColor}`}>
-                  {workspace.name}
-                </span>
-              </button>
-            ))}
+            {workspaces.map((workspace) => {
+              const isOwner = currentUserId === workspace.ownerId;
+              const isActive = currentWorkspace?.id === workspace.id;
+
+              return (
+                <div
+                  key={workspace.id}
+                  className={`w-full px-4 py-3 flex items-center justify-between ${isActive ? `${tc.activeBg}` : tc.hoverBg} transition-colors`}
+                >
+                  <button
+                    onClick={() => {
+                      onSwitch(workspace.id);
+                      setIsOpen(false);
+                    }}
+                    className="flex items-center gap-3 flex-1 text-left"
+                  >
+                    <svg className={`w-4 h-4 ${isActive ? 'text-white' : tc.textColor}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                    </svg>
+                    <span className={`${tc.fontClass} ${isActive ? 'text-white' : tc.textColor}`}>
+                      {workspace.name}
+                    </span>
+                  </button>
+                  {isOwner && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyInviteCode(workspace.inviteCode, workspace.id);
+                      }}
+                      className={`p-1.5 ${isActive ? 'hover:bg-white/20' : tc.hoverBg} ${tc.roundedClass} transition-colors relative`}
+                      title="Copy invite code"
+                    >
+                      {copiedId === workspace.id ? (
+                        <svg className={`w-3.5 h-3.5 ${isMinimal ? 'text-[#1A1A1A]' : 'text-green-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                      ) : (
+                        <svg className={`w-3.5 h-3.5 ${isActive ? 'text-white/70' : tc.textMuted}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                        </svg>
+                      )}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
 
             {/* Divider */}
             <div className={`border-t ${tc.borderColor}`} />

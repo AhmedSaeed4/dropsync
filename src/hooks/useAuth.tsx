@@ -1,13 +1,17 @@
 'use client';
 
 import { useState, useEffect, createContext, useContext, ReactNode } from 'react';
-import { onAuthChange, signInWithGoogle, signOut } from '@/lib/auth';
+import { onAuthChange, signInWithGoogle, signOut, signUpWithEmail, signInWithEmail, sendPasswordReset, resendVerificationEmail } from '@/lib/auth';
 import { User } from '@/types';
 
 interface AuthContextType {
   user: User | null;
   loading: boolean;
   signIn: () => Promise<void>;
+  signUp: (email: string, password: string) => Promise<{ error?: string; success?: boolean }>;
+  signInWithEmail: (email: string, password: string) => Promise<{ error?: string; needsVerification?: boolean }>;
+  resetPassword: (email: string) => Promise<{ success: boolean; error?: string }>;
+  resendVerification: () => Promise<{ success: boolean; error?: string }>;
   signOutUser: () => Promise<void>;
 }
 
@@ -40,12 +44,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   };
 
+  const handleSignUp = async (email: string, password: string) => {
+    const result = await signUpWithEmail(email, password);
+    return { error: result.error, success: result.success };
+  };
+
+  const handleSignInWithEmail = async (email: string, password: string) => {
+    const result = await signInWithEmail(email, password);
+    if (result.user) {
+      setUser(result.user);
+    }
+    return { error: result.error, needsVerification: result.needsVerification };
+  };
+
+  const handleResetPassword = async (email: string) => {
+    return await sendPasswordReset(email);
+  };
+
+  const handleResendVerification = async () => {
+    return await resendVerificationEmail();
+  };
+
   return (
     <AuthContext.Provider
       value={{
         user,
         loading,
         signIn: handleSignIn,
+        signUp: handleSignUp,
+        signInWithEmail: handleSignInWithEmail,
+        resetPassword: handleResetPassword,
+        resendVerification: handleResendVerification,
         signOutUser: handleSignOut,
       }}
     >
