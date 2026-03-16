@@ -6,9 +6,12 @@ A secure, temporary file sharing app. Drop files on one device, pick them up on 
 
 - **Drag & Drop** - Upload files or paste text instantly
 - **Cross-Device Sync** - Access your drops from any device
-- **Google Authentication** - Secure sign-in with Google
+- **Multiple Auth Options** - Sign in with Google or Email/Password with email verification
+- **End-to-End Encryption** - Client-side encryption for all drops using AES-GCM
+- **Workspace Encryption** - Shared workspace key allows all members to encrypt/decrypt workspace drops
 - **Custom Expiration** - Choose when drops expire: 1h, 2h, 6h, 24h, or keep forever
 - **Shared Workspaces** - Create workspaces, invite others with a code, collaborate on drops together
+- **Workspace Management** - Owners can delete workspaces, members can leave
 - **Real-Time Updates** - See changes instantly across devices
 - **Three Themes** - Light (Operational Intelligence), Dark, and Minimal
 
@@ -63,7 +66,7 @@ npm run dev
 ## Firebase Setup
 
 1. Create a new Firebase project
-2. Enable Google Sign-In in Authentication
+2. Enable Google Sign-In and Email/Password in Authentication
 3. Create a Firestore database
 4. Deploy security rules:
    ```bash
@@ -77,11 +80,16 @@ Workspaces allow multiple users to collaborate on the same drops:
 
 1. Click the workspace selector in the header
 2. Select "Create Workspace" and enter a name
-3. Share the 6-character invite code with others
+3. Share the 6-character invite code with others (click the link icon to copy)
 4. Others can join via "Join Workspace" and enter the code
 5. All workspace members see the same drops in real-time
 
-Personal drops remain separate from workspace drops.
+**Workspace Management:**
+- **Owners** can delete workspaces (trash icon) and copy invite codes (link icon)
+- **Members** can leave workspaces (exit icon)
+- All workspace drops are encrypted with a shared workspace key
+
+Personal drops remain separate from workspace drops and use individual encryption.
 
 ## Themes
 
