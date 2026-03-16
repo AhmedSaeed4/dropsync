@@ -18,11 +18,13 @@ import {
   exportPrivateKey,
   importPublicKey,
   importPrivateKey,
+  importAESKey,
   deriveSharedKey,
   encryptKey,
   decryptKey,
   encryptData,
   decryptData,
+  exportKey,
   storeMasterKeySecurely,
   getMasterKeySecurely,
   hasMasterKey,
@@ -187,4 +189,126 @@ export async function hasUserKeys(userId: string): Promise<boolean> {
 // Check if user has master key stored in IndexedDB
 export async function hasLocalMasterKey(userId: string): Promise<boolean> {
   return await hasMasterKey(userId);
+}
+
+// ============ WORKSPACE KEY MANAGEMENT ============
+
+const WORKSPACE_KEYS_COLLECTION = 'workspaceKeys';
+
+export interface WorkspaceKeyData {
+  workspaceId: string;
+  // Workspace key encrypted with workspace secret (base64 encoded)
+  encryptedKey: string;
+  iv: string;
+  // The secret used to encrypt (stored here for members to access)
+  keySecret: string;
+  createdAt: Date;
+}
+
+// Generate a random workspace secret
+function generateWorkspaceSecret(): string {
+  const array = new Uint8Array(32);
+  crypto.getRandomValues(array);
+  return Array.from(array, b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Generate and store a workspace key
+export async function createWorkspaceKey(
+  workspaceId: string,
+  creatorId: string
+): Promise<boolean> {
+  try {
+    // Generate workspace AES key
+    const workspaceKey = await generateAESKey();
+    const secret = generateWorkspaceSecret();
+
+    // Import secret as CryptoKey for encryption
+    const secretKey = await crypto.subtle.importKey(
+      'raw',
+      new TextEncoder().encode(secret).slice(0, 32),
+      { name: 'AES-GCM' },
+      false,
+      ['encrypt']
+    );
+
+    // Export and encrypt the workspace key
+    const exportedKey = await exportKey(workspaceKey);
+    const encryptedData = await encryptData(exportedKey, secretKey);
+
+    // Store in Firestore
+    await setDoc(doc(db, WORKSPACE_KEYS_COLLECTION, workspaceId), {
+      workspaceId,
+      encryptedKey: encryptedData.encrypted,
+      iv: encryptedData.iv,
+      keySecret: secret,
+      createdAt: new Date(),
+    });
+
+    return true;
+  } catch (error) {
+    console.error('Error creating workspace key:', error);
+    return false;
+  }
+}
+
+// Get workspace key (any member can access using the stored secret)
+export async function getWorkspaceKey(
+  workspaceId: string,
+  userId: string
+): Promise<CryptoKey | null> {
+  try {
+    // Get workspace key document
+    const docRef = doc(db, WORKSPACE_KEYS_COLLECTION, workspaceId);
+    const docSnap = await getDoc(docRef);
+
+    if (!docSnap.exists()) return null;
+
+    const data = docSnap.data() as WorkspaceKeyData;
+
+    // Import secret as CryptoKey
+    const secretKey = await crypto.subtle.importKey(
+      'raw',
+      new TextEncoder().encode(data.keySecret).slice(0, 32),
+      { name: 'AES-GCM' },
+      false,
+      ['decrypt']
+    );
+
+    // Decrypt the workspace key
+    const decryptedKeyData = await decryptData(data.encryptedKey, secretKey, data.iv);
+    const workspaceKey = await importAESKey(decryptedKeyData);
+
+    return workspaceKey;
+  } catch (error) {
+    console.error('Error getting workspace key:', error);
+    return null;
+  }
+}
+
+// Check if workspace has encryption key set up
+export async function hasWorkspaceKey(workspaceId: string): Promise<boolean> {
+  const docRef = doc(db, WORKSPACE_KEYS_COLLECTION, workspaceId);
+  const docSnap = await getDoc(docRef);
+  return docSnap.exists();
+}
+
+// No longer needed - workspace key is accessible via workspace secret
+export async function addMemberToWorkspaceKey(
+  workspaceId: string,
+  newMemberId: string,
+  existingMemberId: string
+): Promise<boolean> {
+  // Workspace key is now accessible to all members via the stored secret
+  // No per-member encryption needed
+  return true;
+}
+
+// No longer needed - but kept for compatibility
+export async function removeMemberFromWorkspaceKey(
+  workspaceId: string,
+  memberId: string
+): Promise<boolean> {
+  // When member leaves, they lose access via Firestore rules
+  // The workspace key itself doesn't need to change
+  return true;
 }

@@ -2,7 +2,6 @@
 
 import { Drop } from '@/types';
 import { formatFileSize, getTimeRemaining, deleteDrop, decryptDrop } from '@/lib/drops';
-import { getUserKeys } from '@/lib/keys';
 import { useState, useEffect } from 'react';
 
 interface DropItemProps {
@@ -53,16 +52,7 @@ export function DropItem({ drop, onDelete, onPreview, selected, onSelect, select
     async function decrypt() {
       if (drop.encrypted && currentUserId) {
         try {
-          // First check if user has keys
-          const keys = await getUserKeys(currentUserId);
-          if (!keys) {
-            // User doesn't have encryption keys set up
-            setDecryptError(true);
-            setDecryptedContent('');
-            setDecryptedFileData('');
-            return;
-          }
-
+          // decryptDrop handles both workspace and personal drops
           const decrypted = await decryptDrop(drop, currentUserId);
 
           if (decrypted.type === 'text' && decrypted.content) {

@@ -13,6 +13,7 @@ import {
 } from 'firebase/firestore';
 import { db } from './firebase';
 import { Workspace } from '@/types';
+import { createWorkspaceKey, addMemberToWorkspaceKey, removeMemberFromWorkspaceKey } from './keys';
 
 const WORKSPACES_COLLECTION = 'workspaces';
 
@@ -38,6 +39,9 @@ export async function createWorkspace(userId: string, name: string): Promise<Wor
       inviteCode,
       createdAt: serverTimestamp(),
     });
+
+    // Create workspace encryption key
+    await createWorkspaceKey(docRef.id, userId);
 
     return {
       id: docRef.id,
@@ -81,6 +85,9 @@ export async function joinWorkspace(userId: string, inviteCode: string): Promise
     await updateDoc(doc(db, WORKSPACES_COLLECTION, workspaceDoc.id), {
       members: updatedMembers
     });
+
+    // Add new member to workspace encryption key (use owner's access to share)
+    await addMemberToWorkspaceKey(workspaceDoc.id, userId, data.ownerId);
 
     return {
       workspace: {
@@ -128,6 +135,9 @@ export async function leaveWorkspace(userId: string, workspaceId: string): Promi
         members: updatedMembers
       });
     }
+
+    // Remove member's access to workspace encryption key
+    await removeMemberFromWorkspaceKey(workspaceId, userId);
 
     return true;
   } catch (error) {

@@ -19,7 +19,9 @@ import {
   getUserPublicKey,
   encryptDEKForWorkspace,
   encryptDEKForUser,
-  decryptDEKForUser
+  decryptDEKForUser,
+  getWorkspaceKey,
+  hasWorkspaceKey
 } from './keys';
 
 const DROPS_COLLECTION = 'drops';
@@ -105,26 +107,31 @@ export async function createTextDrop(
     let encrypted = false;
     let iv: string | undefined;
     let encryptedDEK: string | undefined;
-    let encryptedDEKs: { [userId: string]: { encryptedDEK: string; iv: string } } | undefined;
 
-    // Check if user has encryption keys
-    const keys = await getUserKeys(userId);
-    if (keys) {
-      // Generate DEK
-      const dek = await generateAESKey();
+    // For workspace drops, use workspace key (no personal keys needed)
+    if (workspaceId) {
+      const workspaceKey = await getWorkspaceKey(workspaceId, userId);
+      if (workspaceKey) {
+        // Encrypt content with workspace key
+        const encryptedData = await encryptData(content, workspaceKey);
+        encryptedContent = encryptedData.encrypted;
+        iv = encryptedData.iv;
+        encrypted = true;
+      }
+    } else {
+      // Personal drop - need user's personal keys
+      const keys = await getUserKeys(userId);
+      if (keys) {
+        // Generate DEK
+        const dek = await generateAESKey();
 
-      // Encrypt content with DEK
-      const encryptedData = await encryptData(content, dek);
-      encryptedContent = encryptedData.encrypted;
-      iv = encryptedData.iv;
-      encrypted = true;
+        // Encrypt content with DEK
+        const encryptedData = await encryptData(content, dek);
+        encryptedContent = encryptedData.encrypted;
+        iv = encryptedData.iv;
+        encrypted = true;
 
-      // Encrypt DEK
-      if (workspaceId && workspaceMembers && workspaceMembers.length > 0) {
-        // Workspace drop - encrypt DEK for all members
-        encryptedDEKs = await encryptDEKForWorkspace(dek, workspaceMembers, keys.privateKey);
-      } else {
-        // Personal drop - encrypt DEK with user's own key
+        // Encrypt DEK with user's own key
         const publicKey = await getUserPublicKey(userId);
         if (publicKey) {
           const { encryptedDEK: encDEK, iv: dekIv } = await encryptDEKForUser(
@@ -154,7 +161,6 @@ export async function createTextDrop(
       docData.encrypted = encrypted;
       if (iv) docData.iv = iv;
       if (encryptedDEK) docData.encryptedDEK = encryptedDEK;
-      if (encryptedDEKs) docData.encryptedDEKs = encryptedDEKs;
     }
 
     const docRef = await addDoc(collection(db, DROPS_COLLECTION), docData);
@@ -172,7 +178,6 @@ export async function createTextDrop(
       encrypted,
       iv,
       encryptedDEK,
-      encryptedDEKs,
     };
   } catch (error) {
     console.error('Error creating text drop:', error);
@@ -206,26 +211,31 @@ export async function createFileDrop(
     let encrypted = false;
     let iv: string | undefined;
     let encryptedDEK: string | undefined;
-    let encryptedDEKs: { [userId: string]: { encryptedDEK: string; iv: string } } | undefined;
 
-    // Check if user has encryption keys
-    const keys = await getUserKeys(userId);
-    if (keys) {
-      // Generate DEK
-      const dek = await generateAESKey();
+    // For workspace drops, use workspace key (no personal keys needed)
+    if (workspaceId) {
+      const workspaceKey = await getWorkspaceKey(workspaceId, userId);
+      if (workspaceKey) {
+        // Encrypt content with workspace key
+        const encryptedData = await encryptData(fileData, workspaceKey);
+        encryptedFileData = encryptedData.encrypted;
+        iv = encryptedData.iv;
+        encrypted = true;
+      }
+    } else {
+      // Personal drop - need user's personal keys
+      const keys = await getUserKeys(userId);
+      if (keys) {
+        // Generate DEK
+        const dek = await generateAESKey();
 
-      // Encrypt file data with DEK
-      const encryptedData = await encryptData(fileData, dek);
-      encryptedFileData = encryptedData.encrypted;
-      iv = encryptedData.iv;
-      encrypted = true;
+        // Encrypt file data with DEK
+        const encryptedData = await encryptData(fileData, dek);
+        encryptedFileData = encryptedData.encrypted;
+        iv = encryptedData.iv;
+        encrypted = true;
 
-      // Encrypt DEK
-      if (workspaceId && workspaceMembers && workspaceMembers.length > 0) {
-        // Workspace drop - encrypt DEK for all members
-        encryptedDEKs = await encryptDEKForWorkspace(dek, workspaceMembers, keys.privateKey);
-      } else {
-        // Personal drop - encrypt DEK with user's own key
+        // Encrypt DEK with user's own key
         const publicKey = await getUserPublicKey(userId);
         if (publicKey) {
           const { encryptedDEK: encDEK, iv: dekIv } = await encryptDEKForUser(
@@ -257,7 +267,6 @@ export async function createFileDrop(
       docData.encrypted = encrypted;
       if (iv) docData.iv = iv;
       if (encryptedDEK) docData.encryptedDEK = encryptedDEK;
-      if (encryptedDEKs) docData.encryptedDEKs = encryptedDEKs;
     }
 
     // Create document
@@ -279,7 +288,6 @@ export async function createFileDrop(
         encrypted,
         iv,
         encryptedDEK,
-        encryptedDEKs,
       }
     };
   } catch (error) {
@@ -379,41 +387,39 @@ export async function decryptDrop(drop: Drop, currentUserId: string): Promise<Dr
     return drop;
   }
 
-  // Get user's keys
-  const keys = await getUserKeys(currentUserId);
-  if (!keys) {
-    console.error('User has no encryption keys');
-    return drop;
-  }
-
-  // Get the encrypted DEK
-  let dekIv: string;
-  let encryptedDEK: string;
-
-  if (drop.encryptedDEKs && drop.encryptedDEKs[currentUserId]) {
-    // Workspace drop - use our encrypted DEK
-    encryptedDEK = drop.encryptedDEKs[currentUserId].encryptedDEK;
-    dekIv = drop.encryptedDEKs[currentUserId].iv;
-  } else if (drop.encryptedDEK) {
-    // Personal drop - parse the encrypted DEK
-    const parsed = JSON.parse(drop.encryptedDEK);
-    encryptedDEK = parsed.encryptedDEK;
-    dekIv = parsed.iv;
-  } else {
-    console.error('No encrypted DEK found for this user');
-    return drop;
-  }
-
-  // Get the creator's public key to derive shared secret
-  const creatorPublicKey = await getUserPublicKey(drop.userId);
-  if (!creatorPublicKey) {
-    console.error('Could not get creator public key');
-    return drop;
-  }
-
   try {
-    // Decrypt the DEK
-    const dek = await decryptDEKForUser(encryptedDEK, dekIv, creatorPublicKey, keys.privateKey);
+    let dek: CryptoKey;
+
+    // For workspace drops, use workspace key (no personal keys needed)
+    if (drop.workspaceId) {
+      const workspaceKey = await getWorkspaceKey(drop.workspaceId, currentUserId);
+      if (!workspaceKey) {
+        console.error('Could not get workspace key');
+        return drop;
+      }
+      dek = workspaceKey;
+    } else {
+      // Personal drop - need user's personal keys
+      const keys = await getUserKeys(currentUserId);
+      if (!keys) {
+        console.error('User has no encryption keys');
+        return drop;
+      }
+
+      if (!drop.encryptedDEK) {
+        console.error('No encrypted DEK for personal drop');
+        return drop;
+      }
+
+      const parsed = JSON.parse(drop.encryptedDEK);
+      const creatorPublicKey = await getUserPublicKey(drop.userId);
+      if (!creatorPublicKey) {
+        console.error('Could not get creator public key');
+        return drop;
+      }
+
+      dek = await decryptDEKForUser(parsed.encryptedDEK, parsed.iv, creatorPublicKey, keys.privateKey);
+    }
 
     // Decrypt the content
     const dataToDecrypt = drop.type === 'text' ? drop.content : drop.fileData;
