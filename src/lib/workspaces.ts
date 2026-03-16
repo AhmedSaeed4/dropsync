@@ -180,6 +180,34 @@ export function createWorkspacesListener(
   });
 }
 
+// Delete a workspace (owner only)
+export async function deleteWorkspace(userId: string, workspaceId: string): Promise<boolean> {
+  try {
+    const workspaceRef = doc(db, WORKSPACES_COLLECTION, workspaceId);
+    const snapshot = await getDocs(
+      query(collection(db, WORKSPACES_COLLECTION), where('__name__', '==', workspaceId))
+    );
+
+    if (snapshot.empty) return false;
+
+    const data = snapshot.docs[0].data();
+
+    // Only owner can delete
+    if (data.ownerId !== userId) return false;
+
+    // Delete the workspace
+    await deleteDoc(workspaceRef);
+
+    // Note: We don't delete the workspaceKey or drops here
+    // They will be orphaned but inaccessible due to Firestore rules
+
+    return true;
+  } catch (error) {
+    console.error('Error deleting workspace:', error);
+    return false;
+  }
+}
+
 // Get workspace by ID
 export async function getWorkspace(workspaceId: string): Promise<Workspace | null> {
   try {

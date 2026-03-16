@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { createWorkspacesListener, createWorkspace, joinWorkspace, leaveWorkspace } from '@/lib/workspaces';
+import { createWorkspacesListener, createWorkspace, joinWorkspace, leaveWorkspace, deleteWorkspace } from '@/lib/workspaces';
 import { Workspace } from '@/types';
 
 const CURRENT_WORKSPACE_KEY = 'dropsync_current_workspace';
@@ -76,6 +76,16 @@ export function useWorkspaces(userId: string | null) {
     return result;
   }, [userId, currentWorkspaceId, switchWorkspace]);
 
+  // Delete a workspace (owner only)
+  const deleteWS = useCallback(async (workspaceId: string) => {
+    if (!userId) return false;
+    const result = await deleteWorkspace(userId, workspaceId);
+    if (result && currentWorkspaceId === workspaceId) {
+      switchWorkspace(null);
+    }
+    return result;
+  }, [userId, currentWorkspaceId, switchWorkspace]);
+
   // Get current workspace
   const currentWorkspace = workspaces.find(w => w.id === currentWorkspaceId) || null;
 
@@ -87,6 +97,7 @@ export function useWorkspaces(userId: string | null) {
     create,
     join,
     leave,
+    deleteWS,
     loading,
   };
 }

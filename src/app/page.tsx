@@ -41,6 +41,8 @@ export default function Home() {
     switchWorkspace,
     create: createWorkspace,
     join: joinWorkspace,
+    leave: leaveWorkspace,
+    deleteWS,
     loading: workspacesLoading
   } = useWorkspaces(user?.uid || null);
 
@@ -51,6 +53,8 @@ export default function Home() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showJoinModal, setShowJoinModal] = useState(false);
   const [createdWorkspace, setCreatedWorkspace] = useState<{ name: string; inviteCode: string } | null>(null);
+  const [workspaceToDelete, setWorkspaceToDelete] = useState<Workspace | null>(null);
+  const [workspaceToLeave, setWorkspaceToLeave] = useState<Workspace | null>(null);
 
   // Auto-close auth modal when user successfully logs in
   useEffect(() => {
@@ -123,6 +127,20 @@ export default function Home() {
   const handleCloseCreateModal = () => {
     setShowCreateModal(false);
     setCreatedWorkspace(null);
+  };
+
+  const handleDeleteWorkspace = async () => {
+    if (workspaceToDelete) {
+      await deleteWS(workspaceToDelete.id);
+      setWorkspaceToDelete(null);
+    }
+  };
+
+  const handleLeaveWorkspace = async () => {
+    if (workspaceToLeave) {
+      await leaveWorkspace(workspaceToLeave.id);
+      setWorkspaceToLeave(null);
+    }
   };
 
   // Auth handlers
@@ -582,6 +600,8 @@ export default function Home() {
           onSwitch={switchWorkspace}
           onCreate={() => setShowCreateModal(true)}
           onJoin={() => setShowJoinModal(true)}
+          onDelete={(workspace) => setWorkspaceToDelete(workspace)}
+          onLeave={(workspace) => setWorkspaceToLeave(workspace)}
           theme={theme}
         />
       </Header>
@@ -702,6 +722,88 @@ export default function Home() {
           onClose={() => setShowJoinModal(false)}
           theme={theme}
         />
+      )}
+
+      {/* Delete Workspace Confirmation Modal */}
+      {workspaceToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="fixed inset-0 bg-black/50" onClick={() => setWorkspaceToDelete(null)} />
+          <div className={`relative z-10 w-80 border ${theme === 'dark' ? 'bg-[#1A1A1A] border-white/10' : theme === 'minimal' ? 'bg-[#D4D8C8] border-[#1A1A1A]/20 rounded-lg' : 'bg-white border-[#1A1A1A]'}`}>
+            <div className={`px-4 py-3 border-b ${theme === 'dark' ? 'border-white/10' : theme === 'minimal' ? 'border-[#1A1A1A]/20' : 'border-[#1A1A1A]'} flex items-center justify-between ${theme === 'minimal' ? 'bg-[#1A1A1A]/5' : 'bg-[#FF5A47]'}`}>
+              <h3 className={`font-bold text-white ${theme === 'minimal' ? 'font-sans tracking-wide text-xs' : 'font-mono uppercase tracking-wider text-[10px]'}`}>
+                {theme === 'minimal' ? 'Delete workspace' : 'DELETE_WORKSPACE'}
+              </h3>
+              <button onClick={() => setWorkspaceToDelete(null)} className="text-white/70 hover:text-white transition-colors">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="p-4">
+              <p className={`text-sm mb-4 ${theme === 'dark' ? 'text-white/80' : 'text-[#1A1A1A]/80'}`}>
+                {theme === 'minimal'
+                  ? `Are you sure you want to delete "${workspaceToDelete.name}"? This cannot be undone.`
+                  : `ARE_YOU_SURE_YOU_WANT_TO_DELETE "${workspaceToDelete.name}"? THIS_ACTION_CANNOT_BE_UNDONE.`
+                }
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setWorkspaceToDelete(null)}
+                  className={`flex-1 px-4 py-2 ${theme === 'dark' ? 'bg-white/10 hover:bg-white/20 text-white' : theme === 'minimal' ? 'bg-[#1A1A1A]/10 hover:bg-[#1A1A1A]/20 text-[#1A1A1A] rounded-lg' : 'bg-[#1A1A1A]/10 hover:bg-[#1A1A1A]/20 text-[#1A1A1A]'} transition-colors ${theme === 'minimal' ? 'font-sans tracking-wide text-xs' : 'font-mono uppercase tracking-wider text-[10px]'}`}
+                >
+                  {theme === 'minimal' ? 'Cancel' : 'CANCEL'}
+                </button>
+                <button
+                  onClick={handleDeleteWorkspace}
+                  className={`flex-1 px-4 py-2 bg-red-500 hover:bg-red-600 text-white transition-colors ${theme === 'minimal' ? 'rounded-lg font-sans tracking-wide text-xs' : 'font-mono uppercase tracking-wider text-[10px]'}`}
+                >
+                  {theme === 'minimal' ? 'Delete' : 'DELETE'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Leave Workspace Confirmation Modal */}
+      {workspaceToLeave && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="fixed inset-0 bg-black/50" onClick={() => setWorkspaceToLeave(null)} />
+          <div className={`relative z-10 w-80 border ${theme === 'dark' ? 'bg-[#1A1A1A] border-white/10' : theme === 'minimal' ? 'bg-[#D4D8C8] border-[#1A1A1A]/20 rounded-lg' : 'bg-white border-[#1A1A1A]'}`}>
+            <div className={`px-4 py-3 border-b ${theme === 'dark' ? 'border-white/10' : theme === 'minimal' ? 'border-[#1A1A1A]/20' : 'border-[#1A1A1A]'} flex items-center justify-between ${theme === 'minimal' ? 'bg-[#1A1A1A]/5' : 'bg-[#FF5A47]'}`}>
+              <h3 className={`font-bold text-white ${theme === 'minimal' ? 'font-sans tracking-wide text-xs' : 'font-mono uppercase tracking-wider text-[10px]'}`}>
+                {theme === 'minimal' ? 'Leave workspace' : 'LEAVE_WORKSPACE'}
+              </h3>
+              <button onClick={() => setWorkspaceToLeave(null)} className="text-white/70 hover:text-white transition-colors">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="p-4">
+              <p className={`text-sm mb-4 ${theme === 'dark' ? 'text-white/80' : 'text-[#1A1A1A]/80'}`}>
+                {theme === 'minimal'
+                  ? `Are you sure you want to leave "${workspaceToLeave.name}"?`
+                  : `ARE_YOU_SURE_YOU_WANT_TO_LEAVE "${workspaceToLeave.name}"?`
+                }
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setWorkspaceToLeave(null)}
+                  className={`flex-1 px-4 py-2 ${theme === 'dark' ? 'bg-white/10 hover:bg-white/20 text-white' : theme === 'minimal' ? 'bg-[#1A1A1A]/10 hover:bg-[#1A1A1A]/20 text-[#1A1A1A] rounded-lg' : 'bg-[#1A1A1A]/10 hover:bg-[#1A1A1A]/20 text-[#1A1A1A]'} transition-colors ${theme === 'minimal' ? 'font-sans tracking-wide text-xs' : 'font-mono uppercase tracking-wider text-[10px]'}`}
+                >
+                  {theme === 'minimal' ? 'Cancel' : 'CANCEL'}
+                </button>
+                <button
+                  onClick={handleLeaveWorkspace}
+                  className={`flex-1 px-4 py-2 ${theme === 'dark' ? 'bg-[#FF5A47] hover:bg-[#E54A37]' : theme === 'minimal' ? 'bg-[#1A1A1A] hover:bg-[#333] rounded-lg' : 'bg-[#FF5A47] hover:bg-[#E54A37]'} text-white transition-colors ${theme === 'minimal' ? 'font-sans tracking-wide text-xs' : 'font-mono uppercase tracking-wider text-[10px]'}`}
+                >
+                  {theme === 'minimal' ? 'Leave' : 'LEAVE'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Auth Modal */}

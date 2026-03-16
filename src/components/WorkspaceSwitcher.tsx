@@ -10,6 +10,8 @@ interface WorkspaceSwitcherProps {
   onSwitch: (workspaceId: string | null) => void;
   onCreate: () => void;
   onJoin: () => void;
+  onDelete: (workspace: Workspace) => void;
+  onLeave: (workspace: Workspace) => void;
   theme?: 'light' | 'dark' | 'minimal';
 }
 
@@ -20,6 +22,8 @@ export function WorkspaceSwitcher({
   onSwitch,
   onCreate,
   onJoin,
+  onDelete,
+  onLeave,
   theme = 'light'
 }: WorkspaceSwitcherProps) {
   const [isOpen, setIsOpen] = useState(false);
@@ -143,26 +147,49 @@ export function WorkspaceSwitcher({
                       {workspace.name}
                     </span>
                   </button>
-                  {isOwner && (
+                  <div className="flex items-center gap-1">
+                    {isOwner && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          copyInviteCode(workspace.inviteCode, workspace.id);
+                        }}
+                        className={`p-1.5 ${isActive ? 'hover:bg-white/20' : tc.hoverBg} ${tc.roundedClass} transition-colors relative`}
+                        title="Copy invite code"
+                      >
+                        {copiedId === workspace.id ? (
+                          <svg className={`w-3.5 h-3.5 ${isMinimal ? 'text-[#1A1A1A]' : 'text-green-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                        ) : (
+                          <svg className={`w-3.5 h-3.5 ${isActive ? 'text-white/70' : tc.textMuted}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                          </svg>
+                        )}
+                      </button>
+                    )}
+                    {/* Delete/Leave button */}
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        copyInviteCode(workspace.inviteCode, workspace.id);
+                        if (isOwner) {
+                          onDelete(workspace);
+                        } else {
+                          onLeave(workspace);
+                        }
                       }}
-                      className={`p-1.5 ${isActive ? 'hover:bg-white/20' : tc.hoverBg} ${tc.roundedClass} transition-colors relative`}
-                      title="Copy invite code"
+                      className={`p-1.5 ${isActive ? 'hover:bg-white/20' : tc.hoverBg} ${tc.roundedClass} transition-colors`}
+                      title={isOwner ? 'Delete workspace' : 'Leave workspace'}
                     >
-                      {copiedId === workspace.id ? (
-                        <svg className={`w-3.5 h-3.5 ${isMinimal ? 'text-[#1A1A1A]' : 'text-green-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                      ) : (
-                        <svg className={`w-3.5 h-3.5 ${isActive ? 'text-white/70' : tc.textMuted}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-                        </svg>
-                      )}
+                      <svg className={`w-3.5 h-3.5 ${isActive ? 'text-white/70' : tc.textMuted}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        {isOwner ? (
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        ) : (
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                        )}
+                      </svg>
                     </button>
-                  )}
+                  </div>
                 </div>
               );
             })}
