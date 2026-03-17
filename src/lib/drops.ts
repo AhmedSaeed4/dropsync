@@ -44,12 +44,25 @@ export function createDropListener(
 ): () => void {
   // Query based on workspaceId
   // For personal drops (null), filter by userId AND workspaceId == null
-  // For workspace drops, filter by workspaceId
-  const q = query(
-    collection(db, DROPS_COLLECTION),
-    where('workspaceId', '==', workspaceId),
-    limit(MAX_DROPS)
-  );
+  // For workspace drops, filter by workspaceId only
+  let q;
+
+  if (workspaceId) {
+    // Workspace drops - filter by workspaceId
+    q = query(
+      collection(db, DROPS_COLLECTION),
+      where('workspaceId', '==', workspaceId),
+      limit(MAX_DROPS)
+    );
+  } else {
+    // Personal drops - filter by BOTH userId AND workspaceId == null
+    q = query(
+      collection(db, DROPS_COLLECTION),
+      where('userId', '==', userId),
+      where('workspaceId', '==', null),
+      limit(MAX_DROPS)
+    );
+  }
 
   return onSnapshot(q, (snapshot) => {
     const now = new Date();
