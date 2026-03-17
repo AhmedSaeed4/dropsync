@@ -10,6 +10,9 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "DROPSYNC // OP/INTELLIGENCE",
   description: "Secure file transfer system. Drop anywhere, pickup anywhere. Auto-expire 2hrs.",
+  icons: {
+    icon: "/icon.svg",
+  },
 };
 
 export default function RootLayout({
