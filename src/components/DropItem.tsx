@@ -1,12 +1,12 @@
 'use client';
 
 import { Drop } from '@/types';
-import { formatFileSize, getTimeRemaining, deleteDrop, decryptDrop } from '@/lib/drops';
+import { formatFileSize, getTimeRemaining, decryptDrop } from '@/lib/drops';
 import { useState, useEffect } from 'react';
 
 interface DropItemProps {
   drop: Drop;
-  onDelete: () => void;
+  onDelete: (drop: Drop) => void;
   onPreview: (drop: Drop) => void;
   selected: boolean;
   onSelect: (id: string) => void;
@@ -37,7 +37,7 @@ function getFileContent(drop: Drop): string {
 }
 
 export function DropItem({ drop, onDelete, onPreview, selected, onSelect, selectionMode, theme = 'light', currentUserId }: DropItemProps) {
-  const [deleting, setDeleting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [copied, setCopied] = useState(false);
   const [decryptedContent, setDecryptedContent] = useState<string>('');
   const [decryptedFileData, setDecryptedFileData] = useState<string>('');
@@ -89,9 +89,9 @@ export function DropItem({ drop, onDelete, onPreview, selected, onSelect, select
 
   const handleDownload = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (drop.type === 'file' && drop.fileData) {
+    if (drop.type === 'file' && displayFileData) {
       const link = document.createElement('a');
-      link.href = drop.fileData;
+      link.href = displayFileData;
       link.download = drop.name;
       document.body.appendChild(link);
       link.click();
@@ -101,7 +101,15 @@ export function DropItem({ drop, onDelete, onPreview, selected, onSelect, select
 
   const handleCopy = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    const content = getFileContent(drop);
+    // Use decrypted content for encrypted drops
+    const content = drop.type === 'text' ? displayContent : (displayFileData ? (() => {
+      try {
+        const base64 = displayFileData.split(',')[1];
+        return atob(base64);
+      } catch {
+        return '';
+      }
+    })() : '');
     if (content) {
       await navigator.clipboard.writeText(content);
       setCopied(true);
@@ -109,12 +117,19 @@ export function DropItem({ drop, onDelete, onPreview, selected, onSelect, select
     }
   };
 
-  const handleDelete = async (e: React.MouseEvent) => {
+  const handleDeleteClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    setDeleting(true);
-    await deleteDrop(drop);
-    onDelete();
-    setDeleting(false);
+    setConfirmDelete(true);
+  };
+
+  const handleConfirmDelete = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onDelete(drop);
+  };
+
+  const handleCancelDelete = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setConfirmDelete(false);
   };
 
   const handleSelect = (e: React.MouseEvent) => {
@@ -248,16 +263,40 @@ export function DropItem({ drop, onDelete, onPreview, selected, onSelect, select
                 </svg>
               </button>
             )}
-            <button
-              onClick={handleDelete}
-              disabled={deleting}
-              className={`w-12 h-full flex items-center justify-center ${tc.textMuted} hover:bg-[${isMinimal ? '#1A1A1A' : '#FF5A47'}] hover:text-white disabled:opacity-50 transition-colors`}
-              title={isMinimal ? 'Delete' : 'DELETE'}
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
-                <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-              </svg>
-            </button>
+            {/* Delete button with inline confirmation */}
+            {confirmDelete ? (
+              <div className="flex items-center h-full">
+                <button
+                  onClick={handleCancelDelete}
+                  className={`h-full px-3 flex items-center justify-center ${tc.textMuted} hover:bg-[#1A1A1A]/10 transition-colors`}
+                  title="Cancel"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+                <button
+                  onClick={handleConfirmDelete}
+                  className={`h-full px-3 flex items-center justify-center gap-1 text-white ${isMinimal ? 'bg-[#1A1A1A]' : 'bg-[#FF5A47]'} hover:opacity-80 transition-colors`}
+                  title="Confirm delete"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                  <span className={`text-xs ${isMinimal ? 'font-medium' : 'font-mono uppercase'}`}>Delete</span>
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={handleDeleteClick}
+                className={`w-12 h-full flex items-center justify-center ${tc.textMuted} hover:bg-[${isMinimal ? '#1A1A1A' : '#FF5A47'}] hover:text-white transition-colors`}
+                title={isMinimal ? 'Delete' : 'DELETE'}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                  <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </button>
+            )}
           </div>
         )}
       </div>

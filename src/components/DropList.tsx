@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { Drop } from '@/types';
 import { DropItem } from './DropItem';
+import { UndoToast } from './UndoToast';
 import { deleteDrop } from '@/lib/drops';
 
 interface DropListProps {
@@ -14,10 +15,16 @@ interface DropListProps {
   currentUserId?: string;
 }
 
+interface PendingDeletion {
+  drop: Drop;
+  timeoutId: NodeJS.Timeout;
+}
+
 export function DropList({ drops, loading, onDelete, onPreview, theme = 'light', currentUserId }: DropListProps) {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
+  const [pendingDeletions, setPendingDeletions] = useState<Map<string, PendingDeletion>>(new Map());
   const isDark = theme === 'dark';
   const isMinimal = theme === 'minimal';
 
@@ -32,10 +39,10 @@ export function DropList({ drops, loading, onDelete, onPreview, theme = 'light',
   };
 
   const selectAll = () => {
-    if (selectedIds.size === drops.length) {
+    if (selectedIds.size === visibleDrops.length) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(drops.map(d => d.id)));
+      setSelectedIds(new Set(visibleDrops.map(d => d.id)));
     }
   };
 
@@ -57,6 +64,58 @@ export function DropList({ drops, loading, onDelete, onPreview, theme = 'light',
     setSelectedIds(new Set());
     setSelectionMode(false);
   };
+
+  // Handle single drop deletion with undo
+  const handleDeleteWithUndo = useCallback((drop: Drop) => {
+    // Set up new pending deletion with 30 second timeout
+    const timeoutId = setTimeout(async () => {
+      await deleteDrop(drop);
+      setPendingDeletions(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(drop.id);
+        return newMap;
+      });
+      onDelete();
+    }, 30000);
+
+    setPendingDeletions(prev => {
+      const newMap = new Map(prev);
+      newMap.set(drop.id, { drop, timeoutId });
+      return newMap;
+    });
+  }, [onDelete]);
+
+  // Undo the deletion for a specific drop
+  const handleUndoDeletion = useCallback((dropId: string) => {
+    setPendingDeletions(prev => {
+      const pending = prev.get(dropId);
+      if (pending) {
+        clearTimeout(pending.timeoutId);
+      }
+      const newMap = new Map(prev);
+      newMap.delete(dropId);
+      return newMap;
+    });
+  }, []);
+
+  // Dismiss the toast (continue with deletion) for a specific drop
+  const handleDismissToast = useCallback((dropId: string) => {
+    setPendingDeletions(prev => {
+      const pending = prev.get(dropId);
+      if (pending) {
+        clearTimeout(pending.timeoutId);
+        deleteDrop(pending.drop).then(() => {
+          onDelete();
+        });
+      }
+      const newMap = new Map(prev);
+      newMap.delete(dropId);
+      return newMap;
+    });
+  }, [onDelete]);
+
+  // Filter out all pending deletions from displayed drops
+  const visibleDrops = drops.filter(d => !pendingDeletions.has(d.id));
 
   // Theme colors
   const getThemeColors = () => {
@@ -99,7 +158,7 @@ export function DropList({ drops, loading, onDelete, onPreview, theme = 'light',
     );
   }
 
-  if (drops.length === 0) {
+  if (visibleDrops.length === 0 && pendingDeletions.size === 0) {
     return (
       <div className={`border ${tc.borderColor} ${tc.bgColor} ${tc.roundedClass} p-12 text-center transition-colors duration-300`}>
         <div className={`w-20 h-20 mx-auto border ${tc.borderColor} flex items-center justify-center mb-4 relative ${tc.roundedClass}`}>
@@ -127,7 +186,7 @@ export function DropList({ drops, loading, onDelete, onPreview, theme = 'light',
             {isMinimal ? 'Active drops' : 'ACTIVE/DROPS'}
           </span>
           <span className={`${tc.fontClass} ${isMinimal ? 'text-[#1A1A1A]/40' : 'text-[#FF5A47]'}`}>
-            {isMinimal ? `${drops.length}/50` : `${drops.length.toString().padStart(2, '0')}/50`}
+            {isMinimal ? `${visibleDrops.length}/50` : `${visibleDrops.length.toString().padStart(2, '0')}/50`}
           </span>
         </div>
 
@@ -146,7 +205,7 @@ export function DropList({ drops, loading, onDelete, onPreview, theme = 'light',
               onClick={selectAll}
               className={`${tc.fontClass} ${isMinimal ? 'text-[#1A1A1A]/50 hover:text-[#1A1A1A]' : 'text-white/60 hover:text-white'} transition-colors`}
             >
-              {selectedIds.size === drops.length ? (isMinimal ? 'Deselect all' : 'DESELECT_ALL') : (isMinimal ? 'Select all' : 'SELECT_ALL')}
+              {selectedIds.size === visibleDrops.length ? (isMinimal ? 'Deselect all' : 'DESELECT_ALL') : (isMinimal ? 'Select all' : 'SELECT_ALL')}
             </button>
             {!isMinimal && <span className="text-white/30">|</span>}
             <button
@@ -171,11 +230,11 @@ export function DropList({ drops, loading, onDelete, onPreview, theme = 'light',
 
       {/* Drop items */}
       <div className={`border ${tc.borderColor} ${tc.roundedClass} transition-colors duration-300 ${isMinimal ? 'rounded-b-lg' : ''} overflow-hidden`}>
-        {drops.map((drop, index) => (
+        {visibleDrops.map((drop, index) => (
           <div key={drop.id} className={`overflow-hidden ${index > 0 ? `border-t ${tc.borderColor}` : ''}`}>
             <DropItem
               drop={drop}
-              onDelete={onDelete}
+              onDelete={handleDeleteWithUndo}
               onPreview={onPreview}
               selected={selectedIds.has(drop.id)}
               onSelect={toggleSelect}
@@ -186,6 +245,20 @@ export function DropList({ drops, loading, onDelete, onPreview, theme = 'light',
           </div>
         ))}
       </div>
+
+      {/* Undo Toasts - one per pending deletion */}
+      {Array.from(pendingDeletions.values()).map((pending, index) => (
+        <UndoToast
+          key={pending.drop.id}
+          message="Drop deleted"
+          dropName={pending.drop.name}
+          onUndo={() => handleUndoDeletion(pending.drop.id)}
+          onDismiss={() => handleDismissToast(pending.drop.id)}
+          duration={30}
+          theme={theme}
+          index={index}
+        />
+      ))}
     </div>
   );
 }
