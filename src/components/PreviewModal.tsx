@@ -8,6 +8,7 @@ interface PreviewModalProps {
   drop: Drop;
   onClose: () => void;
   theme?: 'light' | 'dark' | 'minimal';
+  isLoading?: boolean;
 }
 
 function isTextFile(drop: Drop): boolean {
@@ -18,7 +19,7 @@ function isTextFile(drop: Drop): boolean {
          textExtensions.some(ext => drop.name.toLowerCase().endsWith(ext));
 }
 
-export function PreviewModal({ drop, onClose, theme = 'light' }: PreviewModalProps) {
+export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false }: PreviewModalProps) {
   const [copied, setCopied] = useState(false);
   const isImage = drop.mimeType?.startsWith('image/');
   const isText = isTextFile(drop);
@@ -72,6 +73,8 @@ export function PreviewModal({ drop, onClose, theme = 'light' }: PreviewModalPro
         fontClass: 'font-sans tracking-wide text-xs',
         roundedClass: 'rounded-lg',
         overlayBg: 'bg-[#1A1A1A]/70',
+        skeletonBg: 'bg-[#1A1A1A]/10',
+        skeletonPulse: 'animate-pulse bg-[#1A1A1A]/20',
       };
     }
     return {
@@ -85,6 +88,8 @@ export function PreviewModal({ drop, onClose, theme = 'light' }: PreviewModalPro
       fontClass: 'font-mono uppercase tracking-wider text-[10px]',
       roundedClass: '',
       overlayBg: 'bg-[#1A1A1A]/90',
+      skeletonBg: isDark ? 'bg-white/10' : 'bg-[#1A1A1A]/10',
+      skeletonPulse: isDark ? 'animate-pulse bg-white/20' : 'animate-pulse bg-[#1A1A1A]/20',
     };
   };
 
@@ -137,8 +142,26 @@ export function PreviewModal({ drop, onClose, theme = 'light' }: PreviewModalPro
 
         {/* Content */}
         <div className={`flex-1 overflow-auto ${tc.contentBg} transition-colors duration-300`}>
+          {/* Loading Skeleton */}
+          {isLoading && (
+            <div className="p-6 space-y-4">
+              {/* Skeleton header */}
+              <div className={`${tc.skeletonPulse} h-4 w-1/3 ${tc.roundedClass}`} />
+              {/* Skeleton content lines */}
+              <div className={`${tc.skeletonPulse} h-3 w-full ${tc.roundedClass}`} />
+              <div className={`${tc.skeletonPulse} h-3 w-5/6 ${tc.roundedClass}`} />
+              <div className={`${tc.skeletonPulse} h-3 w-4/5 ${tc.roundedClass}`} />
+              <div className={`${tc.skeletonPulse} h-3 w-full ${tc.roundedClass}`} />
+              <div className={`${tc.skeletonPulse} h-3 w-3/4 ${tc.roundedClass}`} />
+              {/* Decrypting text */}
+              <p className={`${tc.fontClass} ${tc.textMuted} text-center pt-4`}>
+                {isMinimal ? 'Decrypting...' : 'DECRYPTING...'}
+              </p>
+            </div>
+          )}
+
           {/* Text Snippet */}
-          {drop.type === 'text' && drop.content && (
+          {!isLoading && drop.type === 'text' && drop.content && (
             <div className="p-6">
               <div className={`border ${tc.borderColor} ${tc.bgColor} p-4 ${tc.roundedClass}`}>
                 <pre className={`${isMinimal ? 'text-sm font-sans' : 'text-sm font-mono'} ${tc.textColor} whitespace-pre-wrap`}>
@@ -149,7 +172,7 @@ export function PreviewModal({ drop, onClose, theme = 'light' }: PreviewModalPro
           )}
 
           {/* Image Preview */}
-          {drop.type === 'file' && isImage && drop.fileData && (
+          {!isLoading && drop.type === 'file' && isImage && drop.fileData && (
             <div className="flex items-center justify-center p-6 min-h-[300px]">
               <img
                 src={drop.fileData}
@@ -160,7 +183,7 @@ export function PreviewModal({ drop, onClose, theme = 'light' }: PreviewModalPro
           )}
 
           {/* Text File Preview */}
-          {drop.type === 'file' && isText && drop.fileData && (
+          {!isLoading && drop.type === 'file' && isText && drop.fileData && (
             <div className="p-6">
               <div className={`border ${tc.borderColor} ${tc.bgColor} p-4 ${tc.roundedClass}`}>
                 <pre className={`${isMinimal ? 'text-sm font-sans' : 'text-sm font-mono'} ${tc.textColor} whitespace-pre-wrap overflow-x-auto`}>
@@ -171,7 +194,7 @@ export function PreviewModal({ drop, onClose, theme = 'light' }: PreviewModalPro
           )}
 
           {/* Other File Types */}
-          {drop.type === 'file' && !isImage && !isText && (
+          {!isLoading && drop.type === 'file' && !isImage && !isText && (
             <div className="flex flex-col items-center justify-center py-16 px-6">
               <div className={`w-20 h-20 border ${tc.borderColor} flex items-center justify-center mb-4 ${tc.roundedClass}`}>
                 <svg className={`w-8 h-8 ${tc.textMuted}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">

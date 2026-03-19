@@ -26,6 +26,7 @@ const THEME_STORAGE_KEY = 'dropsync_theme';
 export default function Home() {
   const { user, loading: authLoading, signIn, signUp, signInWithEmail: emailSignIn, resetPassword, resendVerification, signOutUser } = useAuth();
   const [previewDrop, setPreviewDrop] = useState<Drop | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const [theme, setTheme] = useState<Theme>('light');
   const [themeLoaded, setThemeLoaded] = useState(false);
   const [encryptionInitializing, setEncryptionInitializing] = useState(false);
@@ -169,10 +170,16 @@ export default function Home() {
       return;
     }
 
-    // Decrypt if needed
+    // If encrypted, show modal immediately with skeleton, then decrypt
     if (drop.encrypted) {
-      const decryptedDrop = await decryptDrop(drop, user.uid);
-      setPreviewDrop(decryptedDrop);
+      setPreviewDrop(drop); // Show modal immediately with encrypted drop
+      setPreviewLoading(true); // Show skeleton
+      try {
+        const decryptedDrop = await decryptDrop(drop, user.uid);
+        setPreviewDrop(decryptedDrop); // Update with decrypted content
+      } finally {
+        setPreviewLoading(false); // Hide skeleton
+      }
     } else {
       setPreviewDrop(drop);
     }
@@ -704,8 +711,12 @@ export default function Home() {
       {previewDrop && (
         <PreviewModal
           drop={previewDrop}
-          onClose={() => setPreviewDrop(null)}
+          onClose={() => {
+            setPreviewDrop(null);
+            setPreviewLoading(false);
+          }}
           theme={theme}
+          isLoading={previewLoading}
         />
       )}
 
