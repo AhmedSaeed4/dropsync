@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect, createContext, useContext, ReactNode } from 'react';
-import { onAuthChange, signInWithGoogle, signOut, signUpWithEmail, signInWithEmail, sendPasswordReset, resendVerificationEmail } from '@/lib/auth';
+import { onAuthChange, signInWithGoogle, signOut, signUpWithEmail, signInWithEmail, sendPasswordReset, resendVerificationEmail, getAuthProvider, reauthenticateUser } from '@/lib/auth';
+import { auth } from '@/lib/firebase';
 import { User } from '@/types';
 
 interface AuthContextType {
@@ -13,6 +14,8 @@ interface AuthContextType {
   resetPassword: (email: string) => Promise<{ success: boolean; error?: string }>;
   resendVerification: () => Promise<{ success: boolean; error?: string }>;
   signOutUser: () => Promise<void>;
+  getProvider: () => 'password' | 'google.com' | null;
+  reauthenticate: (password?: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -22,8 +25,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthChange((user) => {
-      setUser(user);
+    const unsubscribe = onAuthChange((authUser) => {
+      if (authUser) {
+        // Add provider detection
+        const providerId = auth.currentUser?.providerData[0]?.providerId as 'password' | 'google.com' | undefined;
+        setUser({ ...authUser, providerId });
+      } else {
+        setUser(null);
+      }
       setLoading(false);
     });
 
@@ -76,6 +85,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         resetPassword: handleResetPassword,
         resendVerification: handleResendVerification,
         signOutUser: handleSignOut,
+        getProvider: getAuthProvider,
+        reauthenticate: reauthenticateUser,
       }}
     >
       {children}

@@ -4,6 +4,7 @@ export interface User {
   displayName: string | null;
   photoURL: string | null;
   emailVerified: boolean;
+  providerId?: 'password' | 'google.com';
 }
 
 export type ExpirationOption = '1h' | '2h' | '6h' | '24h' | 'forever';

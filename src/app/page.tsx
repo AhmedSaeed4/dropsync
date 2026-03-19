@@ -16,6 +16,8 @@ import { VerifyEmailModal } from '@/components/VerifyEmailModal';
 import { Drop, Workspace } from '@/types';
 import { initializeUserKeys, hasUserKeys, hasLocalMasterKey } from '@/lib/keys';
 import { decryptDrop } from '@/lib/drops';
+import { SettingsModal } from '@/components/SettingsModal';
+import { reauthenticateUser } from '@/lib/auth';
 
 type Theme = 'light' | 'dark' | 'minimal';
 
@@ -55,6 +57,7 @@ export default function Home() {
   const [createdWorkspace, setCreatedWorkspace] = useState<{ name: string; inviteCode: string } | null>(null);
   const [workspaceToDelete, setWorkspaceToDelete] = useState<Workspace | null>(null);
   const [workspaceToLeave, setWorkspaceToLeave] = useState<Workspace | null>(null);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
 
   // Auto-close auth modal when user successfully logs in
   useEffect(() => {
@@ -592,7 +595,7 @@ export default function Home() {
           </div>
         </div>
       )}
-      <Header theme={theme} onThemeChange={setTheme}>
+      <Header theme={theme} onThemeChange={setTheme} onOpenSettings={() => setShowSettingsModal(true)}>
         <WorkspaceSwitcher
           workspaces={workspaces}
           currentWorkspace={currentWorkspace}
@@ -826,6 +829,21 @@ export default function Home() {
           onResendVerification={resendVerification}
           onCheckVerification={handleCheckVerification}
           onClose={() => setShowVerifyModal(false)}
+          theme={theme}
+        />
+      )}
+
+      {/* Settings Modal */}
+      {showSettingsModal && user && (
+        <SettingsModal
+          user={user}
+          onResetPassword={resetPassword}
+          onReauthenticate={reauthenticateUser}
+          onClose={() => setShowSettingsModal(false)}
+          onDeleted={() => {
+            setShowSettingsModal(false);
+            signOutUser();
+          }}
           theme={theme}
         />
       )}

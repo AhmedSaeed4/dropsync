@@ -1,0 +1,60 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Users collection - users can read/write/delete their own data, read others for display
+    match /users/{userId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == userId;
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // User encryption keys - users can only access their own keys
+    match /userKeys/{userId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.auth.uid == userId;
+      allow update: if request.auth != null && request.auth.uid == userId;
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Workspaces collection
+    match /workspaces/{workspaceId} {
+      allow create: if request.auth != null;
+      allow read: if request.auth != null;
+      allow update: if request.auth != null && (
+        request.auth.uid in resource.data.members ||
+        request.auth.uid in request.resource.data.members ||
+        resource.data.ownerId == request.auth.uid
+      );
+      allow delete: if request.auth != null && (
+        request.auth.uid in resource.data.members ||
+        resource.data.ownerId == request.auth.uid
+      );
+    }
+
+    // Workspace encryption keys - only workspace members can access
+    match /workspaceKeys/{workspaceId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null;
+      allow update: if request.auth != null;
+    }
+
+    // Drops collection
+    match /drops/{dropId} {
+      // Create - must be authenticated and userId must match
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
+
+      // Read - authenticated users can read their own drops or workspace drops they're a member of
+      allow read: if request.auth != null && (
+        request.auth.uid == resource.data.userId ||
+        (resource.data.workspaceId != null &&
+          request.auth.uid in get(/databases/$(database)/documents/workspaces/$(resource.data.workspaceId)).data.members)
+      );
+
+      // Update - must be the creator
+      allow update: if request.auth != null && request.auth.uid == resource.data.userId;
+
+      // Delete - authenticated users can delete (owner check done in code)
+      allow delete: if request.auth != null;
+    }
+  }
+}

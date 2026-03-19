@@ -8,10 +8,11 @@ type Theme = 'light' | 'dark' | 'minimal';
 interface HeaderProps {
   theme?: Theme;
   onThemeChange?: (theme: Theme) => void;
+  onOpenSettings?: () => void;
   children?: ReactNode;
 }
 
-export function Header({ theme = 'light', onThemeChange, children }: HeaderProps) {
+export function Header({ theme = 'light', onThemeChange, onOpenSettings, children }: HeaderProps) {
   const { user, loading, signIn, signOutUser } = useAuth();
   const isDark = theme === 'dark';
   const isMinimal = theme === 'minimal';
@@ -76,6 +77,14 @@ export function Header({ theme = 'light', onThemeChange, children }: HeaderProps
             {user ? (
               <>
                 <span className="text-xs text-[#1A1A1A]/50 hidden sm:block">{user.email}</span>
+                {onOpenSettings && (
+                  <button
+                    onClick={onOpenSettings}
+                    className="border border-[#1A1A1A]/30 text-[#1A1A1A] px-4 py-2 text-xs tracking-wider hover:bg-[#1A1A1A] hover:text-white transition-all rounded-full"
+                  >
+                    Settings
+                  </button>
+                )}
                 <button
                   onClick={signOutUser}
                   className="border border-[#1A1A1A]/30 text-[#1A1A1A] px-4 py-2 text-xs tracking-wider hover:bg-[#1A1A1A] hover:text-white transition-all rounded-full"
@@ -135,6 +144,15 @@ export function Header({ theme = 'light', onThemeChange, children }: HeaderProps
                   <span className={`${styles.textColor} truncate max-w-[120px]`}>{user.email}</span>
                 </div>
               </div>
+
+              {onOpenSettings && (
+                <button
+                  onClick={onOpenSettings}
+                  className={`px-5 py-2 text-xs font-semibold uppercase tracking-wider transition-colors ${styles.buttonClass}`}
+                >
+                  SETTINGS
+                </button>
+              )}
 
               <button
                 onClick={signOutUser}

@@ -7,7 +7,10 @@ import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   sendEmailVerification,
-  sendPasswordResetEmail
+  sendPasswordResetEmail,
+  reauthenticateWithCredential,
+  reauthenticateWithPopup,
+  EmailAuthProvider
 } from 'firebase/auth';
 import { doc, setDoc, serverTimestamp, getDoc } from 'firebase/firestore';
 import { auth, db } from './firebase';
@@ -206,5 +209,42 @@ export async function resendVerificationEmail(): Promise<{ success: boolean; err
     return { success: false, error: 'No user to verify.' };
   } catch (error) {
     return { success: false, error: 'Failed to send verification email.' };
+  }
+}
+
+// Get the auth provider for the current user
+export function getAuthProvider(): 'password' | 'google.com' | null {
+  const user = auth.currentUser;
+  if (!user) return null;
+  return user.providerData[0]?.providerId as 'password' | 'google.com' | null;
+}
+
+// Re-authenticate user (required for account deletion)
+export async function reauthenticateUser(password?: string): Promise<{ success: boolean; error?: string }> {
+  const user = auth.currentUser;
+  if (!user) return { success: false, error: 'No user logged in' };
+
+  const provider = getAuthProvider();
+
+  try {
+    if (provider === 'password' && password) {
+      const credential = EmailAuthProvider.credential(user.email!, password);
+      await reauthenticateWithCredential(user, credential);
+      return { success: true };
+    } else if (provider === 'google.com') {
+      const googleProvider = new GoogleAuthProvider();
+      await reauthenticateWithPopup(user, googleProvider);
+      return { success: true };
+    }
+    return { success: false, error: 'Unsupported authentication method' };
+  } catch (error: unknown) {
+    const errorCode = (error as { code?: string })?.code;
+    let errorMessage = 'Re-authentication failed';
+    if (errorCode === 'auth/wrong-password' || errorCode === 'auth/invalid-credential') {
+      errorMessage = 'Incorrect password';
+    } else if (errorCode === 'auth/popup-closed-by-user') {
+      errorMessage = 'Authentication cancelled';
+    }
+    return { success: false, error: errorMessage };
   }
 }
