@@ -14,7 +14,7 @@ import { JoinWorkspaceModal } from '@/components/JoinWorkspaceModal';
 import { AuthModal } from '@/components/AuthModal';
 import { VerifyEmailModal } from '@/components/VerifyEmailModal';
 import { Drop, Workspace } from '@/types';
-import { initializeUserKeys, hasUserKeys, hasLocalMasterKey } from '@/lib/keys';
+import { initializeUserKeys, hasUserKeys, getUserKeys } from '@/lib/keys';
 import { decryptDrop } from '@/lib/drops';
 import { SettingsModal } from '@/components/SettingsModal';
 import { reauthenticateUser } from '@/lib/auth';
@@ -77,12 +77,11 @@ export default function Home() {
   const initializeEncryption = async () => {
     if (!user) return;
 
-    // Check if user already has keys
+    // Check if user already has keys in Firestore
     const hasKeys = await hasUserKeys(user.uid);
-    const hasLocalKey = await hasLocalMasterKey(user.uid);
 
-    // If no keys, auto-initialize
-    if (!hasKeys || !hasLocalKey) {
+    if (!hasKeys) {
+      // No keys at all - create new ones
       setEncryptionInitializing(true);
       try {
         await initializeUserKeys(user.uid);
@@ -90,6 +89,22 @@ export default function Home() {
         console.error('Failed to initialize encryption keys:', error);
       } finally {
         setEncryptionInitializing(false);
+      }
+    } else {
+      // Keys exist - check if they have masterKey (migration case)
+      // getUserKeys will handle restoring from Firestore or returning null
+      const keys = await getUserKeys(user.uid);
+      if (!keys) {
+        // Old keys without masterKey backup - need to reinitialize
+        console.log('Migrating keys to include masterKey backup...');
+        setEncryptionInitializing(true);
+        try {
+          await initializeUserKeys(user.uid);
+        } catch (error) {
+          console.error('Failed to reinitialize encryption keys:', error);
+        } finally {
+          setEncryptionInitializing(false);
+        }
       }
     }
   };

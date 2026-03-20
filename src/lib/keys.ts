@@ -2,6 +2,7 @@
  * Key management for end-to-end encryption
  * Handles user key pairs, storage, and key exchange for workspaces
  * Uses IndexedDB for secure non-extractable key storage
+ * Master key is backed up to Firestore for cross-device access
  */
 
 import {
@@ -13,7 +14,6 @@ import { db } from './firebase';
 import {
   generateKeyPair,
   generateAESKey,
-  generateNonExtractableAESKey,
   exportPublicKey,
   exportPrivateKey,
   importPublicKey,
@@ -37,6 +37,7 @@ export interface UserKey {
   publicKey: string; // Base64 encoded SPKI
   encryptedPrivateKey: string; // Encrypted with user's master key
   iv: string; // IV for private key encryption
+  masterKey?: string; // Master key stored for cross-device access (base64)
   createdAt: Date;
 }
 
@@ -49,8 +50,8 @@ export async function initializeUserKeys(userId: string): Promise<{
   // Generate a new key pair
   const keyPair = await generateKeyPair();
 
-  // Generate a NON-EXTRACTABLE master key for secure storage in IndexedDB
-  const masterKey = await generateNonExtractableAESKey();
+  // Generate an EXTRACTABLE master key (so we can back it up to Firestore)
+  const masterKey = await generateAESKey(); // extractable by default
 
   // Export and encrypt the private key
   const privateKeyData = await exportPrivateKey(keyPair.privateKey);
@@ -59,16 +60,20 @@ export async function initializeUserKeys(userId: string): Promise<{
   // Export public key
   const publicKeyData = await exportPublicKey(keyPair.publicKey);
 
-  // Store in Firestore
+  // Export master key for cloud backup
+  const masterKeyData = await exportKey(masterKey);
+
+  // Store in Firestore (including master key for cross-device access)
   await setDoc(doc(db, KEYS_COLLECTION, userId), {
     userId,
     publicKey: publicKeyData,
     encryptedPrivateKey,
     iv,
+    masterKey: masterKeyData, // Cloud backup of master key
     createdAt: new Date(),
   });
 
-  // Store master key in IndexedDB (non-extractable, secure)
+  // Store master key in IndexedDB for faster local access
   await storeMasterKeySecurely(userId, masterKey);
 
   return { keyPair, masterKey };
@@ -89,15 +94,23 @@ export async function getUserKeys(userId: string): Promise<{
 
   const data = docSnap.data() as UserKey;
 
-  // Get master key from IndexedDB (non-extractable)
-  const masterKey = await getMasterKeySecurely(userId);
+  // Try to get master key from IndexedDB first (faster)
+  let masterKey = await getMasterKeySecurely(userId);
+
+  // If not in IndexedDB, try to restore from Firestore
+  if (!masterKey && data.masterKey) {
+    console.log('Restoring master key from cloud backup...');
+    masterKey = await importAESKey(data.masterKey);
+    // Store in IndexedDB for future use
+    await storeMasterKeySecurely(userId, masterKey);
+  }
 
   if (!masterKey) {
-    console.error('Master key not found in IndexedDB');
+    console.error('Master key not found in IndexedDB or Firestore');
     return null;
   }
 
-  // Decrypt private key using the non-extractable master key
+  // Decrypt private key using the master key
   const privateKeyData = await decryptData(data.encryptedPrivateKey, masterKey, data.iv);
   const privateKey = await importPrivateKey(privateKeyData);
   const publicKey = await importPublicKey(data.publicKey);
