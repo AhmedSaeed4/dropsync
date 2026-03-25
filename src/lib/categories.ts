@@ -20,7 +20,7 @@ export const BUILT_IN_CATEGORIES = ['password', 'link'] as const;
 
 // Create a custom category
 export async function createCategory(
-  workspaceId: string,
+  workspaceId: string | null,
   name: string,
   userId: string
 ): Promise<Category | null> {
