@@ -164,7 +164,7 @@ export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false
           {!isLoading && drop.type === 'text' && drop.content && (
             <div className="p-6">
               <div className={`border ${tc.borderColor} ${tc.bgColor} p-4 ${tc.roundedClass}`}>
-                <pre className={`${isMinimal ? 'text-sm font-sans' : 'text-sm font-mono'} ${tc.textColor} whitespace-pre-wrap`}>
+                <pre className={`${isMinimal ? 'text-sm font-sans' : 'text-sm font-mono'} ${tc.textColor} whitespace-pre-wrap break-all`}>
                   {drop.content}
                 </pre>
               </div>

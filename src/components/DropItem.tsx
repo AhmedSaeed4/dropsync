@@ -178,7 +178,7 @@ export function DropItem({ drop, onDelete, onPreview, selected, onSelect, select
         selected ? `${tc.selectedBg} ${tc.selectedBorder}` : tc.hoverBg
       }`}
     >
-      <div className="flex items-stretch">
+      <div className="flex items-stretch min-w-0 overflow-hidden">
         {/* Selection checkbox or icon */}
         {selectionMode ? (
           <button
@@ -211,7 +211,7 @@ export function DropItem({ drop, onDelete, onPreview, selected, onSelect, select
 
         {/* Info */}
         <div className="flex-1 min-w-0 px-4 py-3">
-          <h3 className={`text-sm ${isMinimal ? 'font-medium tracking-wide' : 'font-semibold uppercase tracking-wider'} truncate ${selected ? 'text-white' : tc.textColor}`} title={drop.name}>
+          <h3 className={`text-sm ${isMinimal ? 'font-medium tracking-wide' : 'font-semibold uppercase tracking-wider'} line-clamp-1 ${selected ? 'text-white' : tc.textColor}`} title={drop.name}>
             {drop.name}
           </h3>
           <div className={`flex items-center gap-3 mt-1 ${isMinimal ? 'text-xs tracking-wide' : 'text-[10px] font-mono uppercase tracking-wider'}`}>
@@ -304,7 +304,7 @@ export function DropItem({ drop, onDelete, onPreview, selected, onSelect, select
       {/* Text Preview */}
       {!selectionMode && drop.type === 'text' && displayContent && (
         <div className={`border-t ${tc.borderColor} px-4 py-3 ${tc.textPreviewBg} overflow-hidden`}>
-          <p className={`${isMinimal ? 'text-sm font-sans tracking-wide' : 'text-xs font-mono'} ${tc.textPreviewColor} line-clamp-3 break-words`}>
+          <p className={`${isMinimal ? 'text-sm font-sans tracking-wide' : 'text-xs font-mono'} ${tc.textPreviewColor} line-clamp-3 break-all`}>
             {displayContent}
           </p>
         </div>

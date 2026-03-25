@@ -48,6 +48,24 @@ body {
   overflow: hidden;
 }
 
+/* Single line clamp for names */
+.line-clamp-1 {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-all;
+}
+
+/* Force text truncation in flex containers */
+.truncate-force {
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  width: 100%;
+  display: block;
+}
+
 /* Geometric Patterns */
 .geo-grid {
   background-image:
