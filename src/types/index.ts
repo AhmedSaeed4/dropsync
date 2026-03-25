@@ -36,6 +36,16 @@ export interface Drop {
   iv?: string; // Initialization vector for content encryption
   encryptedDEK?: string; // For personal drops: DEK encrypted with user's key
   encryptedDEKs?: { [userId: string]: { encryptedDEK: string; iv: string } }; // For workspace drops
+  // Category field
+  category?: string; // 'password', 'link', or custom category name
+}
+
+export interface Category {
+  id: string;
+  name: string;
+  workspaceId: string;
+  createdBy: string;
+  createdAt: Date;
 }
 
 export interface DropFormData {

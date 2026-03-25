@@ -10,6 +10,8 @@ interface DropZoneProps {
   theme?: 'light' | 'dark' | 'minimal';
   workspaceId?: string | null;
   workspaceMembers?: string[];
+  customCategories?: string[];
+  onCreateCategory?: (name: string) => Promise<string | null>;
 }
 
 const EXPIRATION_OPTIONS: { value: ExpirationOption; label: string }[] = [
@@ -20,7 +22,13 @@ const EXPIRATION_OPTIONS: { value: ExpirationOption; label: string }[] = [
   { value: 'forever', label: '∞' },
 ];
 
-export function DropZone({ theme = 'light', workspaceId = null, workspaceMembers = [] }: DropZoneProps) {
+export function DropZone({
+  theme = 'light',
+  workspaceId = null,
+  workspaceMembers = [],
+  customCategories = [],
+  onCreateCategory
+}: DropZoneProps) {
   const { user } = useAuth();
   const [isDragging, setIsDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -82,11 +90,11 @@ export function DropZone({ theme = 'light', workspaceId = null, workspaceMembers
     }
   }, [user, expiration, workspaceId, workspaceMembers]);
 
-  const handleTextSubmit = async (name: string, content: string, textExpiration: ExpirationOption) => {
+  const handleTextSubmit = async (name: string, content: string, textExpiration: ExpirationOption, category?: string) => {
     if (!user) return;
 
     setUploading(true);
-    await createTextDrop(user.uid, name, content, textExpiration, workspaceId, workspaceMembers);
+    await createTextDrop(user.uid, name, content, textExpiration, workspaceId, workspaceMembers, category);
     setUploading(false);
     setShowTextModal(false);
   };
@@ -274,6 +282,8 @@ export function DropZone({ theme = 'light', workspaceId = null, workspaceMembers
           onSubmit={handleTextSubmit}
           onClose={() => setShowTextModal(false)}
           theme={theme}
+          customCategories={customCategories}
+          onCreateCategory={onCreateCategory}
         />
       )}
     </>
