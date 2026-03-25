@@ -43,7 +43,7 @@ export interface Drop {
 export interface Category {
   id: string;
   name: string;
-  workspaceId: string;
+  workspaceId: string | null; // null = personal workspace
   createdBy: string;
   createdAt: Date;
 }
