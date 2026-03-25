@@ -144,3 +144,11 @@ body {
 .animate-slide-up {
   animation: slide-up 0.3s ease-out forwards;
 }
+
+/* Toast positioning - center on mobile, slightly left on desktop */
+@media (min-width: 1024px) {
+  .toast-container {
+    left: 40% !important;
+    transform: translateX(-50%) !important;
+  }
+}

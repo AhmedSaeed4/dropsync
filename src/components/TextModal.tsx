@@ -181,7 +181,7 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
                 )}
               </div>
             ) : (
-              <div className="flex gap-2">
+              <div className="flex flex-col sm:flex-row gap-2">
                 <input
                   type="text"
                   value={customCategoryName}
@@ -190,24 +190,26 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
                   className={`flex-1 border ${tc.borderColor} ${tc.inputBg} ${tc.textColor} px-3 py-2 text-sm ${tc.placeholderColor} focus:outline-none focus:ring-2 focus:ring-[#1A1A1A] focus:border-transparent transition-colors duration-300 ${tc.roundedClass}`}
                   autoFocus
                 />
-                <button
-                  type="button"
-                  onClick={handleCreateCustomCategory}
-                  disabled={!customCategoryName.trim() || creatingCategory}
-                  className={`px-3 py-2 bg-[#1A1A1A] text-white text-xs ${isMinimal ? 'rounded-full' : ''} hover:bg-[#2A2A2A] disabled:bg-[#C4C4C4] disabled:cursor-not-allowed transition-colors`}
-                >
-                  {creatingCategory ? '...' : isMinimal ? 'Add' : 'ADD'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowCustomInput(false);
-                    setCustomCategoryName('');
-                  }}
-                  className={`px-3 py-2 border ${tc.borderColor} ${tc.textColor} text-xs ${isMinimal ? 'rounded-full' : ''} hover:bg-[#1A1A1A]/10 transition-colors`}
-                >
-                  {isMinimal ? 'Cancel' : 'CANCEL'}
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handleCreateCustomCategory}
+                    disabled={!customCategoryName.trim() || creatingCategory}
+                    className={`flex-1 sm:flex-none px-3 py-2 bg-[#1A1A1A] text-white text-xs ${isMinimal ? 'rounded-full' : ''} hover:bg-[#2A2A2A] disabled:bg-[#C4C4C4] disabled:cursor-not-allowed transition-colors`}
+                  >
+                    {creatingCategory ? '...' : isMinimal ? 'Add' : 'ADD'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowCustomInput(false);
+                      setCustomCategoryName('');
+                    }}
+                    className={`flex-1 sm:flex-none px-3 py-2 border ${tc.borderColor} ${tc.textColor} text-xs ${isMinimal ? 'rounded-full' : ''} hover:bg-[#1A1A1A]/10 transition-colors`}
+                  >
+                    {isMinimal ? 'Cancel' : 'CANCEL'}
+                  </button>
+                </div>
               </div>
             )}
           </div>
