@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
+import { createPortal } from 'react-dom';
 
 interface UndoToastProps {
   message: string;
@@ -82,10 +83,18 @@ export function UndoToast({ message, dropName, onUndo, onDismiss, duration = 30,
     }
   };
 
-  return (
+  return createPortal(
     <div
-      className={`fixed left-1/2 -translate-x-1/2 z-50 ${themeStyles.bg} ${themeStyles.text} shadow-lg ${themeStyles.rounded} overflow-hidden animate-slide-up w-80`}
-      style={{ bottom: `${bottomOffset}px` }}
+      className={`toast-container ${themeStyles.bg} ${themeStyles.text} shadow-lg ${themeStyles.rounded} overflow-hidden animate-slide-up`}
+      style={{
+        position: 'fixed',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        bottom: `${bottomOffset}px`,
+        width: 'calc(100% - 32px)',
+        maxWidth: '320px',
+        zIndex: 9999
+      }}
     >
       <div className="flex items-center gap-3 px-4 py-3">
         <span className={`${isMinimal ? 'text-sm font-medium' : 'text-xs font-mono uppercase'} truncate flex-1`}>
@@ -108,6 +117,7 @@ export function UndoToast({ message, dropName, onUndo, onDismiss, duration = 30,
           style={{ width: `${progress}%` }}
         />
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
