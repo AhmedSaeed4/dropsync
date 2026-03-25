@@ -56,5 +56,12 @@ service cloud.firestore {
       // Delete - authenticated users can delete (owner check done in code)
       allow delete: if request.auth != null;
     }
+
+    // Categories collection - authenticated users can manage categories
+    match /categories/{categoryId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.createdBy;
+      allow delete: if request.auth != null;
+    }
   }
 }

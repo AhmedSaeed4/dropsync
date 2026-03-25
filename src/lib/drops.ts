@@ -91,6 +91,7 @@ export function createDropListener(
           iv: data.iv,
           encryptedDEK: data.encryptedDEK,
           encryptedDEKs: data.encryptedDEKs,
+          category: data.category || undefined,
         });
       }
     });
@@ -110,7 +111,8 @@ export async function createTextDrop(
   content: string,
   expirationOption: ExpirationOption = '2h',
   workspaceId: string | null = null,
-  workspaceMembers?: string[]
+  workspaceMembers?: string[],
+  category?: string
 ): Promise<Drop | null> {
   try {
     const now = new Date();
@@ -167,6 +169,7 @@ export async function createTextDrop(
       expiresAt: expiresAt ? Timestamp.fromDate(expiresAt) : null,
       expirationOption,
       workspaceId,
+      category: category || null, // Add category field
     };
 
     // Only add encryption fields if encryption is enabled
@@ -191,6 +194,7 @@ export async function createTextDrop(
       encrypted,
       iv,
       encryptedDEK,
+      category,
     };
   } catch (error) {
     console.error('Error creating text drop:', error);

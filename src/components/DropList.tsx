@@ -1,10 +1,12 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { Drop } from '@/types';
 import { DropItem } from './DropItem';
 import { UndoToast } from './UndoToast';
+import { CategoryFilter } from './CategoryFilter';
 import { deleteDrop } from '@/lib/drops';
+import { Category } from '@/types';
 
 interface DropListProps {
   drops: Drop[];
@@ -13,6 +15,8 @@ interface DropListProps {
   onPreview: (drop: Drop) => void;
   theme?: 'light' | 'dark' | 'minimal';
   currentUserId?: string;
+  categories?: Category[];
+  onDeleteCategory?: (categoryId: string, categoryName: string) => void;
 }
 
 interface PendingDeletion {
@@ -20,11 +24,13 @@ interface PendingDeletion {
   timeoutId: NodeJS.Timeout;
 }
 
-export function DropList({ drops, loading, onDelete, onPreview, theme = 'light', currentUserId }: DropListProps) {
+export function DropList({ drops, loading, onDelete, onPreview, theme = 'light', currentUserId, categories = [], onDeleteCategory }: DropListProps) {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
   const [pendingDeletions, setPendingDeletions] = useState<Map<string, PendingDeletion>>(new Map());
+  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState('');
   const isDark = theme === 'dark';
   const isMinimal = theme === 'minimal';
 
@@ -39,10 +45,10 @@ export function DropList({ drops, loading, onDelete, onPreview, theme = 'light',
   };
 
   const selectAll = () => {
-    if (selectedIds.size === visibleDrops.length) {
+    if (selectedIds.size === filteredDrops.length) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(visibleDrops.map(d => d.id)));
+      setSelectedIds(new Set(filteredDrops.map(d => d.id)));
     }
   };
 
@@ -50,7 +56,7 @@ export function DropList({ drops, loading, onDelete, onPreview, theme = 'light',
     if (selectedIds.size === 0) return;
 
     setDeleting(true);
-    const selectedDrops = drops.filter(d => selectedIds.has(d.id));
+    const selectedDrops = filteredDrops.filter(d => selectedIds.has(d.id));
 
     await Promise.all(selectedDrops.map(drop => deleteDrop(drop)));
 
@@ -117,6 +123,40 @@ export function DropList({ drops, loading, onDelete, onPreview, theme = 'light',
   // Filter out all pending deletions from displayed drops
   const visibleDrops = drops.filter(d => !pendingDeletions.has(d.id));
 
+  // Calculate drop counts for categories
+  const dropCounts = useMemo(() => {
+    const counts: { [key: string]: number } = {
+      all: visibleDrops.length,
+      files: visibleDrops.filter(d => d.type === 'file').length,
+      password: visibleDrops.filter(d => d.category === 'password').length,
+      link: visibleDrops.filter(d => d.category === 'link').length,
+      uncategorized: visibleDrops.filter(d => d.type === 'text' && !d.category).length,
+    };
+
+    // Add custom category counts
+    categories.forEach(cat => {
+      counts[cat.name] = visibleDrops.filter(d => d.category === cat.name).length;
+    });
+
+    return counts;
+  }, [visibleDrops, categories]);
+
+  // Filter drops based on category and search
+  const filteredDrops = useMemo(() => {
+    return visibleDrops.filter(drop => {
+      // Search filter
+      if (searchQuery && !drop.name.toLowerCase().includes(searchQuery.toLowerCase())) {
+        return false;
+      }
+
+      // Category filter
+      if (selectedCategory === 'all') return true;
+      if (selectedCategory === 'files') return drop.type === 'file';
+      if (selectedCategory === 'uncategorized') return drop.type === 'text' && !drop.category;
+      return drop.category === selectedCategory;
+    });
+  }, [visibleDrops, selectedCategory, searchQuery]);
+
   // Theme colors
   const getThemeColors = () => {
     if (isMinimal) {
@@ -128,6 +168,8 @@ export function DropList({ drops, loading, onDelete, onPreview, theme = 'light',
         textColor: 'text-[#1A1A1A]',
         fontClass: 'font-sans tracking-wide text-xs',
         roundedClass: 'rounded-lg',
+        inputBg: 'bg-[#C5C9B8]',
+        placeholderColor: 'placeholder:text-[#1A1A1A]/30',
       };
     }
     return {
@@ -138,6 +180,8 @@ export function DropList({ drops, loading, onDelete, onPreview, theme = 'light',
       textColor: isDark ? 'text-white' : 'text-[#1A1A1A]',
       fontClass: 'font-mono uppercase tracking-wider text-[10px]',
       roundedClass: '',
+      inputBg: isDark ? 'bg-[#0D0D0D]' : 'bg-white',
+      placeholderColor: isDark ? 'placeholder:text-white/30' : 'placeholder:text-[#1A1A1A]/30',
     };
   };
 
@@ -179,71 +223,120 @@ export function DropList({ drops, loading, onDelete, onPreview, theme = 'light',
 
   return (
     <div className="space-y-0">
-      {/* Header with actions */}
-      <div className={`border ${tc.borderColor} border-b-0 ${tc.roundedClass} ${tc.headerBg} px-4 py-3 flex items-center justify-between transition-colors duration-300 ${isMinimal ? 'rounded-t-lg' : ''}`}>
-        <div className="flex items-center gap-3">
-          <span className={`${tc.fontClass} ${isMinimal ? 'text-[#1A1A1A]/60' : 'text-white/60'}`}>
-            {isMinimal ? 'Active drops' : 'ACTIVE/DROPS'}
-          </span>
-          <span className={`${tc.fontClass} ${isMinimal ? 'text-[#1A1A1A]/40' : 'text-[#FF5A47]'}`}>
-            {isMinimal ? `${visibleDrops.length}/50` : `${visibleDrops.length.toString().padStart(2, '0')}/50`}
-          </span>
-        </div>
+      <div className={`border ${tc.borderColor} ${tc.bgColor} ${tc.roundedClass} transition-colors duration-300 ${isMinimal ? 'rounded-lg' : ''} overflow-hidden`}>
+        {/* Category Filter */}
+        <CategoryFilter
+          categories={categories}
+          selectedCategory={selectedCategory}
+          onSelectCategory={setSelectedCategory}
+          dropCounts={dropCounts}
+          onDeleteCategory={onDeleteCategory}
+          theme={theme}
+        />
 
-        {/* Action buttons */}
-        {!selectionMode ? (
-          <button
-            onClick={() => setSelectionMode(true)}
-            className={`${tc.fontClass} ${isMinimal ? 'text-[#1A1A1A]/50 hover:text-[#1A1A1A]' : 'text-white/60 hover:text-white'} transition-colors flex items-center gap-2`}
-          >
-            {!isMinimal && <span className="w-3 h-3 border border-white/30" />}
-            {isMinimal ? 'Select' : 'SELECT'}
-          </button>
-        ) : (
-          <div className="flex items-center gap-3">
-            <button
-              onClick={selectAll}
-              className={`${tc.fontClass} ${isMinimal ? 'text-[#1A1A1A]/50 hover:text-[#1A1A1A]' : 'text-white/60 hover:text-white'} transition-colors`}
-            >
-              {selectedIds.size === visibleDrops.length ? (isMinimal ? 'Deselect all' : 'DESELECT_ALL') : (isMinimal ? 'Select all' : 'SELECT_ALL')}
-            </button>
-            {!isMinimal && <span className="text-white/30">|</span>}
-            <button
-              onClick={cancelSelection}
-              className={`${tc.fontClass} ${isMinimal ? 'text-[#1A1A1A]/50 hover:text-[#1A1A1A]' : 'text-white/60 hover:text-white'} transition-colors`}
-            >
-              {isMinimal ? 'Cancel' : 'CANCEL'}
-            </button>
-            {selectedIds.size > 0 && (
+        {/* Search Bar */}
+        <div className={`border-b ${tc.borderColor} px-4 py-3 ${tc.bgColor} transition-colors duration-300`}>
+          <div className="relative">
+            <svg className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${tc.textMuted}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+            </svg>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={isMinimal ? 'Search drops...' : 'SEARCH_DROPS...'}
+              className={`w-full ${tc.inputBg} border ${tc.borderColor} ${tc.textColor} pl-10 pr-4 py-2 text-sm ${tc.placeholderColor} focus:outline-none focus:ring-1 focus:ring-[#1A1A1A] transition-colors duration-300 ${isMinimal ? 'rounded-lg' : ''}`}
+            />
+            {searchQuery && (
               <button
-                onClick={handleBulkDelete}
-                disabled={deleting}
-                className={`${tc.fontClass} ${isMinimal ? 'text-[#FF5A47] hover:text-[#1A1A1A]' : 'text-[#FF5A47] hover:text-white'} transition-colors disabled:opacity-50 flex items-center gap-2`}
+                onClick={() => setSearchQuery('')}
+                className={`absolute right-3 top-1/2 -translate-y-1/2 ${tc.textMuted} hover:${tc.textColor} transition-colors`}
               >
-                {!isMinimal && <span className="w-2 h-2 bg-[#FF5A47]" />}
-                {deleting ? (isMinimal ? 'Deleting...' : 'DELETING...') : (isMinimal ? `Delete ${selectedIds.size}` : `DELETE_${selectedIds.size}`)}
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
               </button>
             )}
           </div>
-        )}
-      </div>
+        </div>
 
-      {/* Drop items */}
-      <div className={`border ${tc.borderColor} ${tc.roundedClass} transition-colors duration-300 ${isMinimal ? 'rounded-b-lg' : ''} overflow-hidden`}>
-        {visibleDrops.map((drop, index) => (
-          <div key={drop.id} className={`overflow-hidden ${index > 0 ? `border-t ${tc.borderColor}` : ''}`}>
-            <DropItem
-              drop={drop}
-              onDelete={handleDeleteWithUndo}
-              onPreview={onPreview}
-              selected={selectedIds.has(drop.id)}
-              onSelect={toggleSelect}
-              selectionMode={selectionMode}
-              theme={theme}
-              currentUserId={currentUserId}
-            />
+        {/* Header with actions */}
+        <div className={`border-b ${tc.borderColor} ${tc.headerBg} px-4 py-3 flex items-center justify-between transition-colors duration-300`}>
+          <div className="flex items-center gap-3">
+            <span className={`${tc.fontClass} ${isMinimal ? 'text-[#1A1A1A]/60' : 'text-white/60'}`}>
+              {isMinimal ? 'Active drops' : 'ACTIVE/DROPS'}
+            </span>
+            <span className={`${tc.fontClass} ${isMinimal ? 'text-[#1A1A1A]/40' : 'text-[#FF5A47]'}`}>
+              {isMinimal ? `${filteredDrops.length}/${visibleDrops.length}` : `${filteredDrops.length.toString().padStart(2, '0')}/${visibleDrops.length}`}
+            </span>
           </div>
-        ))}
+
+          {/* Action buttons */}
+          {!selectionMode ? (
+            <button
+              onClick={() => setSelectionMode(true)}
+              className={`${tc.fontClass} ${isMinimal ? 'text-[#1A1A1A]/50 hover:text-[#1A1A1A]' : 'text-white/60 hover:text-white'} transition-colors flex items-center gap-2`}
+            >
+              {!isMinimal && <span className="w-3 h-3 border border-white/30" />}
+              {isMinimal ? 'Select' : 'SELECT'}
+            </button>
+          ) : (
+            <div className="flex items-center gap-3">
+              <button
+                onClick={selectAll}
+                className={`${tc.fontClass} ${isMinimal ? 'text-[#1A1A1A]/50 hover:text-[#1A1A1A]' : 'text-white/60 hover:text-white'} transition-colors`}
+              >
+                {selectedIds.size === filteredDrops.length ? (isMinimal ? 'Deselect all' : 'DESELECT_ALL') : (isMinimal ? 'Select all' : 'SELECT_ALL')}
+              </button>
+              {!isMinimal && <span className="text-white/30">|</span>}
+              <button
+                onClick={cancelSelection}
+                className={`${tc.fontClass} ${isMinimal ? 'text-[#1A1A1A]/50 hover:text-[#1A1A1A]' : 'text-white/60 hover:text-white'} transition-colors`}
+              >
+                {isMinimal ? 'Cancel' : 'CANCEL'}
+              </button>
+              {selectedIds.size > 0 && (
+                <button
+                  onClick={handleBulkDelete}
+                  disabled={deleting}
+                  className={`${tc.fontClass} ${isMinimal ? 'text-[#FF5A47] hover:text-[#1A1A1A]' : 'text-[#FF5A47] hover:text-white'} transition-colors disabled:opacity-50 flex items-center gap-2`}
+                >
+                  {!isMinimal && <span className="w-2 h-2 bg-[#FF5A47]" />}
+                  {deleting ? (isMinimal ? 'Deleting...' : 'DELETING...') : (isMinimal ? `Delete ${selectedIds.size}` : `DELETE_${selectedIds.size}`)}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Drop items */}
+        <div className={`transition-colors duration-300`}>
+          {filteredDrops.length === 0 ? (
+            <div className="p-8 text-center">
+              <p className={`${tc.fontClass} ${tc.textMuted}`}>
+                {searchQuery
+                  ? (isMinimal ? 'No drops found' : 'NO_MATCHES_FOUND')
+                  : (isMinimal ? 'No drops in this category' : 'NO_DROPS_IN_CATEGORY')
+                }
+              </p>
+            </div>
+          ) : (
+            filteredDrops.map((drop, index) => (
+              <div key={drop.id} className={`overflow-hidden ${index > 0 ? `border-t ${tc.borderColor}` : ''}`}>
+                <DropItem
+                  drop={drop}
+                  onDelete={handleDeleteWithUndo}
+                  onPreview={onPreview}
+                  selected={selectedIds.has(drop.id)}
+                  onSelect={toggleSelect}
+                  selectionMode={selectionMode}
+                  theme={theme}
+                  currentUserId={currentUserId}
+                />
+              </div>
+            ))
+          )}
+        </div>
       </div>
 
       {/* Undo Toasts - one per pending deletion */}

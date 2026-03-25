@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { useDrops } from '@/hooks/useDrops';
 import { useWorkspaces } from '@/hooks/useWorkspaces';
+import { useCategories } from '@/hooks/useCategories';
 import { Header } from '@/components/Header';
 import { DropZone } from '@/components/DropZone';
 import { DropList } from '@/components/DropList';
@@ -51,6 +52,9 @@ export default function Home() {
 
   // Pass currentWorkspaceId to useDrops
   const { drops, loading: dropsLoading, refreshDrops } = useDrops(currentWorkspaceId);
+
+  // Categories for current workspace
+  const { categories, addCategory, removeCategory } = useCategories(currentWorkspaceId, user?.uid);
 
   // Modal states
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -202,6 +206,21 @@ export default function Home() {
 
   // Get workspace members for encryption
   const workspaceMembers = currentWorkspace?.members || [];
+
+  // Handle category creation
+  const handleCreateCategory = async (name: string): Promise<string | null> => {
+    if (!user) return null;
+    const category = await addCategory(name, user.uid);
+    return category ? category.name : null;
+  };
+
+  // Handle category deletion
+  const handleDeleteCategory = async (categoryId: string, categoryName: string) => {
+    const result = await removeCategory(categoryId, categoryName);
+    if (!result.success) {
+      console.error('Failed to delete category:', result.error);
+    }
+  };
 
   // Theme configuration
   const getThemeColors = (theme: Theme) => {
@@ -638,6 +657,8 @@ export default function Home() {
                 theme={theme}
                 workspaceId={currentWorkspaceId}
                 workspaceMembers={workspaceMembers}
+                customCategories={categories.map(c => c.name)}
+                onCreateCategory={handleCreateCategory}
               />
             </section>
             <section>
@@ -648,6 +669,8 @@ export default function Home() {
                 onPreview={handlePreview}
                 theme={theme}
                 currentUserId={user?.uid}
+                categories={categories}
+                onDeleteCategory={handleDeleteCategory}
               />
             </section>
           </div>

@@ -4,9 +4,11 @@ import { useState } from 'react';
 import { ExpirationOption } from '@/types';
 
 interface TextModalProps {
-  onSubmit: (name: string, content: string, expiration: ExpirationOption) => Promise<void>;
+  onSubmit: (name: string, content: string, expiration: ExpirationOption, category?: string) => Promise<void>;
   onClose: () => void;
   theme?: 'light' | 'dark' | 'minimal';
+  customCategories?: string[];
+  onCreateCategory?: (name: string) => Promise<string | null>;
 }
 
 const EXPIRATION_OPTIONS: { value: ExpirationOption; label: string }[] = [
@@ -17,11 +19,20 @@ const EXPIRATION_OPTIONS: { value: ExpirationOption; label: string }[] = [
   { value: 'forever', label: 'Forever' },
 ];
 
-export function TextModal({ onSubmit, onClose, theme = 'light' }: TextModalProps) {
+const BUILT_IN_CATEGORIES = [
+  { value: 'password', label: 'Password' },
+  { value: 'link', label: 'Link' },
+];
+
+export function TextModal({ onSubmit, onClose, theme = 'light', customCategories = [], onCreateCategory }: TextModalProps) {
   const [name, setName] = useState('');
   const [content, setContent] = useState('');
   const [loading, setLoading] = useState(false);
   const [expiration, setExpiration] = useState<ExpirationOption>('2h');
+  const [category, setCategory] = useState<string>('');
+  const [showCustomInput, setShowCustomInput] = useState(false);
+  const [customCategoryName, setCustomCategoryName] = useState('');
+  const [creatingCategory, setCreatingCategory] = useState(false);
   const isDark = theme === 'dark';
   const isMinimal = theme === 'minimal';
 
@@ -30,8 +41,26 @@ export function TextModal({ onSubmit, onClose, theme = 'light' }: TextModalProps
     if (!content.trim()) return;
 
     setLoading(true);
-    await onSubmit(name.trim() || (isMinimal ? 'Text snippet' : 'TEXT_SNIPPET'), content, expiration);
+    await onSubmit(name.trim() || (isMinimal ? 'Text snippet' : 'TEXT_SNIPPET'), content, expiration, category || undefined);
     setLoading(false);
+  };
+
+  const handleCreateCustomCategory = async () => {
+    if (!customCategoryName.trim()) return;
+    if (!onCreateCategory) return;
+
+    setCreatingCategory(true);
+    try {
+      const newCategory = await onCreateCategory(customCategoryName.trim());
+      if (newCategory) {
+        setCategory(newCategory);
+        setShowCustomInput(false);
+        setCustomCategoryName('');
+      }
+    } catch (error) {
+      console.error('Error creating category:', error);
+    }
+    setCreatingCategory(false);
   };
 
   // Theme colors
@@ -88,6 +117,102 @@ export function TextModal({ onSubmit, onClose, theme = 'light' }: TextModalProps
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          {/* Category Selection */}
+          <div>
+            <label className={`block ${tc.fontClass} ${tc.textMuted} mb-2`}>
+              {isMinimal ? 'Category' : 'CATEGORY'}
+            </label>
+            {!showCustomInput ? (
+              <div className="flex flex-wrap gap-2">
+                {/* No category option */}
+                <button
+                  type="button"
+                  onClick={() => setCategory('')}
+                  className={`px-3 py-2 text-xs ${isMinimal ? 'rounded-full' : ''} border transition-colors ${
+                    category === ''
+                      ? 'bg-[#1A1A1A] text-white border-[#1A1A1A]'
+                      : `${tc.borderColor} ${tc.textColor} hover:bg-[#1A1A1A]/10`
+                  }`}
+                >
+                  {isMinimal ? 'None' : 'NONE'}
+                </button>
+                {/* Built-in categories */}
+                {BUILT_IN_CATEGORIES.map((cat) => (
+                  <button
+                    key={cat.value}
+                    type="button"
+                    onClick={() => setCategory(cat.value)}
+                    className={`px-3 py-2 text-xs ${isMinimal ? 'rounded-full' : ''} border transition-colors ${
+                      category === cat.value
+                        ? 'bg-[#1A1A1A] text-white border-[#1A1A1A]'
+                        : `${tc.borderColor} ${tc.textColor} hover:bg-[#1A1A1A]/10`
+                    }`}
+                  >
+                    {isMinimal ? cat.label : cat.label.toUpperCase()}
+                  </button>
+                ))}
+                {/* Custom categories */}
+                {customCategories.map((cat) => (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => setCategory(cat)}
+                    className={`px-3 py-2 text-xs ${isMinimal ? 'rounded-full' : ''} border transition-colors ${
+                      category === cat
+                        ? 'bg-[#1A1A1A] text-white border-[#1A1A1A]'
+                        : `${tc.borderColor} ${tc.textColor} hover:bg-[#1A1A1A]/10`
+                    }`}
+                  >
+                    {isMinimal ? cat : cat.toUpperCase()}
+                  </button>
+                ))}
+                {/* Add custom button */}
+                {onCreateCategory && (
+                  <button
+                    type="button"
+                    onClick={() => setShowCustomInput(true)}
+                    className={`px-3 py-2 text-xs ${isMinimal ? 'rounded-full' : ''} border ${tc.borderColor} ${tc.textColor} hover:bg-[#1A1A1A]/10 transition-colors flex items-center gap-1`}
+                  >
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                    </svg>
+                    {isMinimal ? 'Custom' : 'CUSTOM'}
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={customCategoryName}
+                  onChange={(e) => setCustomCategoryName(e.target.value)}
+                  placeholder={isMinimal ? 'Category name...' : 'CATEGORY_NAME...'}
+                  className={`flex-1 border ${tc.borderColor} ${tc.inputBg} ${tc.textColor} px-3 py-2 text-sm ${tc.placeholderColor} focus:outline-none focus:ring-2 focus:ring-[#1A1A1A] focus:border-transparent transition-colors duration-300 ${tc.roundedClass}`}
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  onClick={handleCreateCustomCategory}
+                  disabled={!customCategoryName.trim() || creatingCategory}
+                  className={`px-3 py-2 bg-[#1A1A1A] text-white text-xs ${isMinimal ? 'rounded-full' : ''} hover:bg-[#2A2A2A] disabled:bg-[#C4C4C4] disabled:cursor-not-allowed transition-colors`}
+                >
+                  {creatingCategory ? '...' : isMinimal ? 'Add' : 'ADD'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowCustomInput(false);
+                    setCustomCategoryName('');
+                  }}
+                  className={`px-3 py-2 border ${tc.borderColor} ${tc.textColor} text-xs ${isMinimal ? 'rounded-full' : ''} hover:bg-[#1A1A1A]/10 transition-colors`}
+                >
+                  {isMinimal ? 'Cancel' : 'CANCEL'}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Name */}
           <div>
             <label className={`block ${tc.fontClass} ${tc.textMuted} mb-2`}>
               {isMinimal ? 'Name (optional)' : 'IDENTIFIER (OPTIONAL)'}
