@@ -16,6 +16,7 @@ interface AuthContextType {
   signOutUser: () => Promise<void>;
   getProvider: () => 'password' | 'google.com' | null;
   reauthenticate: (password?: string) => Promise<{ success: boolean; error?: string }>;
+  updateDisplayName: (name: string) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -74,6 +75,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return await resendVerificationEmail();
   };
 
+  const handleUpdateDisplayName = (name: string) => {
+    if (user) {
+      setUser({ ...user, displayName: name });
+    }
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -87,6 +94,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signOutUser: handleSignOut,
         getProvider: getAuthProvider,
         reauthenticate: reauthenticateUser,
+        updateDisplayName: handleUpdateDisplayName,
       }}
     >
       {children}

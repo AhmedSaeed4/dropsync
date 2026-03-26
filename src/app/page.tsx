@@ -25,7 +25,7 @@ type Theme = 'light' | 'dark' | 'minimal';
 const THEME_STORAGE_KEY = 'dropsync_theme';
 
 export default function Home() {
-  const { user, loading: authLoading, signIn, signUp, signInWithEmail: emailSignIn, resetPassword, resendVerification, signOutUser } = useAuth();
+  const { user, loading: authLoading, signIn, signUp, signInWithEmail: emailSignIn, resetPassword, resendVerification, signOutUser, updateDisplayName } = useAuth();
   const [previewDrop, setPreviewDrop] = useState<Drop | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [theme, setTheme] = useState<Theme>('light');
@@ -893,6 +893,7 @@ export default function Home() {
             setShowSettingsModal(false);
             signOutUser();
           }}
+          onNameUpdate={updateDisplayName}
           theme={theme}
         />
       )}

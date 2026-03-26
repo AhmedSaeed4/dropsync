@@ -59,8 +59,10 @@ export function DropZone({
     const files = Array.from(e.dataTransfer.files);
     if (files.length > 0) {
       setUploading(true);
+      // Use displayName if set, otherwise fall back to email prefix
+      const creatorName = user.displayName || user.email?.split('@')[0] || undefined;
       for (const file of files) {
-        const result = await createFileDrop(user.uid, file, expiration, workspaceId, workspaceMembers, user.displayName || undefined);
+        const result = await createFileDrop(user.uid, file, expiration, workspaceId, workspaceMembers, creatorName);
         if (result.error) {
           setError(result.error);
         }
@@ -76,8 +78,10 @@ export function DropZone({
     const files = Array.from(e.target.files);
     if (files.length > 0) {
       setUploading(true);
+      // Use displayName if set, otherwise fall back to email prefix
+      const creatorName = user.displayName || user.email?.split('@')[0] || undefined;
       for (const file of files) {
-        const result = await createFileDrop(user.uid, file, expiration, workspaceId, workspaceMembers, user.displayName || undefined);
+        const result = await createFileDrop(user.uid, file, expiration, workspaceId, workspaceMembers, creatorName);
         if (result.error) {
           setError(result.error);
         }
@@ -93,8 +97,11 @@ export function DropZone({
   const handleTextSubmit = async (name: string, content: string, textExpiration: ExpirationOption, category?: string) => {
     if (!user) return;
 
+    // Use displayName if set, otherwise fall back to email prefix
+    const creatorName = user.displayName || user.email?.split('@')[0] || undefined;
+
     setUploading(true);
-    await createTextDrop(user.uid, name, content, textExpiration, workspaceId, workspaceMembers, category, user.displayName || undefined);
+    await createTextDrop(user.uid, name, content, textExpiration, workspaceId, workspaceMembers, category, creatorName);
     setUploading(false);
     setShowTextModal(false);
   };
