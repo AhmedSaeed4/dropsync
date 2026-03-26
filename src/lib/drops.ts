@@ -92,6 +92,7 @@ export function createDropListener(
           encryptedDEK: data.encryptedDEK,
           encryptedDEKs: data.encryptedDEKs,
           category: data.category || undefined,
+          creatorName: data.creatorName || undefined,
         });
       }
     });
@@ -112,7 +113,8 @@ export async function createTextDrop(
   expirationOption: ExpirationOption = '2h',
   workspaceId: string | null = null,
   workspaceMembers?: string[],
-  category?: string
+  category?: string,
+  creatorName?: string
 ): Promise<Drop | null> {
   try {
     const now = new Date();
@@ -172,6 +174,11 @@ export async function createTextDrop(
       category: category || null, // Add category field
     };
 
+    // Add creator info for workspace drops
+    if (workspaceId && creatorName) {
+      docData.creatorName = creatorName;
+    }
+
     // Only add encryption fields if encryption is enabled
     if (encrypted) {
       docData.encrypted = encrypted;
@@ -195,6 +202,7 @@ export async function createTextDrop(
       iv,
       encryptedDEK,
       category,
+      creatorName: workspaceId ? creatorName : undefined,
     };
   } catch (error) {
     console.error('Error creating text drop:', error);
@@ -207,7 +215,8 @@ export async function createFileDrop(
   file: File,
   expirationOption: ExpirationOption = '2h',
   workspaceId: string | null = null,
-  workspaceMembers?: string[]
+  workspaceMembers?: string[],
+  creatorName?: string
 ): Promise<{ drop: Drop | null; error?: string }> {
   try {
     // Check file size
@@ -286,6 +295,11 @@ export async function createFileDrop(
       if (encryptedDEK) docData.encryptedDEK = encryptedDEK;
     }
 
+    // Add creator name for workspace drops
+    if (workspaceId && creatorName) {
+      docData.creatorName = creatorName;
+    }
+
     // Create document
     const docRef = await addDoc(collection(db, DROPS_COLLECTION), docData);
 
@@ -305,6 +319,7 @@ export async function createFileDrop(
         encrypted,
         iv,
         encryptedDEK,
+        creatorName: workspaceId ? creatorName : undefined,
       }
     };
   } catch (error) {

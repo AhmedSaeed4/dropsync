@@ -60,7 +60,7 @@ export function DropZone({
     if (files.length > 0) {
       setUploading(true);
       for (const file of files) {
-        const result = await createFileDrop(user.uid, file, expiration, workspaceId, workspaceMembers);
+        const result = await createFileDrop(user.uid, file, expiration, workspaceId, workspaceMembers, user.displayName || undefined);
         if (result.error) {
           setError(result.error);
         }
@@ -77,7 +77,7 @@ export function DropZone({
     if (files.length > 0) {
       setUploading(true);
       for (const file of files) {
-        const result = await createFileDrop(user.uid, file, expiration, workspaceId, workspaceMembers);
+        const result = await createFileDrop(user.uid, file, expiration, workspaceId, workspaceMembers, user.displayName || undefined);
         if (result.error) {
           setError(result.error);
         }
@@ -94,7 +94,7 @@ export function DropZone({
     if (!user) return;
 
     setUploading(true);
-    await createTextDrop(user.uid, name, content, textExpiration, workspaceId, workspaceMembers, category);
+    await createTextDrop(user.uid, name, content, textExpiration, workspaceId, workspaceMembers, category, user.displayName || undefined);
     setUploading(false);
     setShowTextModal(false);
   };
