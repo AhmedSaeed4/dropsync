@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { User } from '@/types';
 import { previewAccountDeletion, deleteAccount, DeletionPreview, SelectedOwners } from '@/lib/accountDeletion';
+import { updateUserDisplayName } from '@/lib/auth';
 
 interface SettingsModalProps {
   user: User;
@@ -10,6 +11,7 @@ interface SettingsModalProps {
   onReauthenticate: (password?: string) => Promise<{ success: boolean; error?: string }>;
   onClose: () => void;
   onDeleted: () => void;
+  onNameUpdate?: (name: string) => void;
   theme?: 'light' | 'dark' | 'minimal';
 }
 
@@ -21,12 +23,18 @@ export function SettingsModal({
   onReauthenticate,
   onClose,
   onDeleted,
+  onNameUpdate,
   theme = 'light',
 }: SettingsModalProps) {
   const [step, setStep] = useState<Step>('main');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  // Profile name state
+  const [profileName, setProfileName] = useState(user.displayName || '');
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileSuccess, setProfileSuccess] = useState<string | null>(null);
 
   // Password reset state
   const [resetLoading, setResetLoading] = useState(false);
@@ -98,6 +106,26 @@ export function SettingsModal({
     }
   };
 
+  const handleUpdateProfileName = async () => {
+    if (!profileName.trim()) return;
+    setProfileLoading(true);
+    setProfileSuccess(null);
+    setError(null);
+
+    const result = await updateUserDisplayName(user.uid, profileName.trim());
+    setProfileLoading(false);
+
+    if (result.success) {
+      setProfileSuccess('Name updated successfully!');
+      if (onNameUpdate) {
+        onNameUpdate(profileName.trim());
+      }
+      setTimeout(() => setProfileSuccess(null), 3000);
+    } else {
+      setError(result.error || 'Failed to update name');
+    }
+  };
+
   const handleStartDeletion = () => {
     setError(null);
     setStep('delete-preview');
@@ -155,6 +183,39 @@ export function SettingsModal({
 
   const renderMainSettings = () => (
     <div className="p-6">
+      {/* Profile Section */}
+      <div className="mb-6">
+        <h3 className={`text-sm font-semibold mb-3 ${isMinimal ? 'font-sans tracking-wide' : 'font-mono uppercase tracking-wider'} ${tc.textColor}`}>
+          {isMinimal ? 'Profile' : 'PROFILE'}
+        </h3>
+        <p className={`text-xs mb-3 ${tc.textMuted}`}>
+          {isMinimal ? 'Set your display name for workspace drops' : 'SET_YOUR_DISPLAY_NAME_FOR_WORKSPACE_DROPS'}
+        </p>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={profileName}
+            onChange={(e) => setProfileName(e.target.value)}
+            placeholder={user.email?.split('@')[0] || 'Your name'}
+            className={`flex-1 px-4 py-3 ${tc.inputBg} border ${tc.borderColor} ${tc.roundedClass} ${tc.textColor} text-xs focus:outline-none focus:ring-1 focus:ring-[#FF5A47]`}
+          />
+          <button
+            onClick={handleUpdateProfileName}
+            disabled={profileLoading || !profileName.trim()}
+            className={`px-4 py-3 ${tc.buttonPrimary} ${tc.roundedClass} text-xs ${isMinimal ? 'font-sans tracking-wide' : 'font-mono uppercase tracking-wider'} transition-colors disabled:opacity-50`}
+          >
+            {profileLoading ? '...' : isMinimal ? 'Save' : 'SAVE'}
+          </button>
+        </div>
+        {profileSuccess && (
+          <div className={`mt-3 p-3 ${isMinimal ? 'bg-[#1A1A1A]/5' : isDark ? 'bg-green-500/10' : 'bg-green-50'} ${tc.roundedClass}`}>
+            <p className={`text-xs ${isMinimal ? 'text-[#1A1A1A]' : 'text-green-600'}`}>
+              {profileSuccess}
+            </p>
+          </div>
+        )}
+      </div>
+
       {/* Password Reset Section - Only for password users */}
       {isPasswordProvider && (
         <div className="mb-6">

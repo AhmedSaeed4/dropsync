@@ -212,6 +212,21 @@ export async function resendVerificationEmail(): Promise<{ success: boolean; err
   }
 }
 
+// Update user's display name in Firestore
+export async function updateUserDisplayName(userId: string, displayName: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const userRef = doc(db, 'users', userId);
+    await setDoc(userRef, {
+      displayName,
+      lastActive: serverTimestamp(),
+    }, { merge: true });
+    return { success: true };
+  } catch (error) {
+    console.error('Error updating display name:', error);
+    return { success: false, error: 'Failed to update name. Please try again.' };
+  }
+}
+
 // Get the auth provider for the current user
 export function getAuthProvider(): 'password' | 'google.com' | null {
   const user = auth.currentUser;
