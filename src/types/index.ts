@@ -38,6 +38,8 @@ export interface Drop {
   encryptedDEKs?: { [userId: string]: { encryptedDEK: string; iv: string } }; // For workspace drops
   // Category field
   category?: string; // 'password', 'link', or custom category name
+  // Creator name for workspace drops
+  creatorName?: string;
 }
 
 export interface Category {

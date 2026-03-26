@@ -211,9 +211,16 @@ export function DropItem({ drop, onDelete, onPreview, selected, onSelect, select
 
         {/* Info */}
         <div className="flex-1 min-w-0 px-4 py-3">
-          <h3 className={`text-sm ${isMinimal ? 'font-medium tracking-wide' : 'font-semibold uppercase tracking-wider'} line-clamp-1 ${selected ? 'text-white' : tc.textColor}`} title={drop.name}>
-            {drop.name}
-          </h3>
+          <div className="flex items-center gap-2">
+            <h3 className={`text-sm ${isMinimal ? 'font-medium tracking-wide' : 'font-semibold uppercase tracking-wider'} line-clamp-1 ${selected ? 'text-white' : tc.textColor}`} title={drop.name}>
+              {drop.name}
+            </h3>
+            {drop.creatorName && (
+              <span className={`text-[10px] px-2 py-0.5 rounded-full ${selected ? 'bg-white/20 text-white' : isMinimal ? 'bg-[#1A1A1A]/10 text-[#1A1A1A]/60' : isDark ? 'bg-white/10 text-white/50' : 'bg-[#1A1A1A]/10 text-[#1A1A1A]/50'}`}>
+                {drop.creatorName}
+              </span>
+            )}
+          </div>
           <div className={`flex items-center gap-3 mt-1 ${isMinimal ? 'text-xs tracking-wide' : 'text-[10px] font-mono uppercase tracking-wider'}`}>
             {drop.type === 'file' && drop.fileSize && (
               <span className={selected ? 'text-white/70' : tc.textMuted}>
