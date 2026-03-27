@@ -10,7 +10,8 @@ import {
   sendPasswordResetEmail,
   reauthenticateWithCredential,
   reauthenticateWithPopup,
-  EmailAuthProvider
+  EmailAuthProvider,
+  updateProfile
 } from 'firebase/auth';
 import { doc, setDoc, serverTimestamp, getDoc } from 'firebase/firestore';
 import { auth, db } from './firebase';
@@ -212,14 +213,22 @@ export async function resendVerificationEmail(): Promise<{ success: boolean; err
   }
 }
 
-// Update user's display name in Firestore
+// Update user's display name in Firestore and Firebase Auth
 export async function updateUserDisplayName(userId: string, displayName: string): Promise<{ success: boolean; error?: string }> {
   try {
+    // Update in Firestore
     const userRef = doc(db, 'users', userId);
     await setDoc(userRef, {
       displayName,
       lastActive: serverTimestamp(),
     }, { merge: true });
+
+    // Also update Firebase Auth profile so it persists on refresh
+    const currentUser = auth.currentUser;
+    if (currentUser) {
+      await updateProfile(currentUser, { displayName });
+    }
+
     return { success: true };
   } catch (error) {
     console.error('Error updating display name:', error);
