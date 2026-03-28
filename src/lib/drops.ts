@@ -11,7 +11,7 @@ import {
   Timestamp,
   getDocs
 } from 'firebase/firestore';
-import { db } from './firebase';
+import { db, auth } from './firebase';
 import { Drop, ExpirationOption } from '@/types';
 import { generateAESKey, encryptData, decryptData, importAESKey, exportKey } from './crypto';
 import {
@@ -26,7 +26,8 @@ import {
 
 const DROPS_COLLECTION = 'drops';
 const MAX_DROPS = 50;
-const MAX_FILE_SIZE = 800 * 1024; // 800KB limit (Firestore doc limit is 1MB)
+const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB limit
+const MAX_ENCRYPTION_SIZE = 10 * 1024 * 1024; // 10MB - files larger than this won't be encrypted
 
 // Calculate expiration date based on option
 function getExpirationDate(option: ExpirationOption): Date | null {
@@ -81,6 +82,8 @@ export function createDropListener(
           name: data.name,
           content: data.content,
           fileData: data.fileData,
+          fileUrl: data.fileUrl, // NEW: R2 URL
+          r2Key: data.r2Key,     // NEW: R2 key for deletion
           fileSize: data.fileSize,
           mimeType: data.mimeType,
           createdAt: data.createdAt?.toDate() || new Date(),
@@ -101,6 +104,13 @@ export function createDropListener(
     drops.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
     callback(drops);
   }, (error) => {
+    // Handle permission errors gracefully (e.g., workspace deleted)
+    if (error.code === 'permission-denied' || error.message?.includes('permissions')) {
+      console.log('Drops listener: Access denied, workspace may have been deleted');
+      // Return empty array instead of erroring
+      callback([]);
+      return;
+    }
     console.error('Firestore listener error:', error);
     callback([]);
   });
@@ -219,7 +229,7 @@ export async function createFileDrop(
   creatorName?: string
 ): Promise<{ drop: Drop | null; error?: string }> {
   try {
-    // Check file size
+    // Check file size (NOW UP TO 50MB instead of 800KB)
     if (file.size > MAX_FILE_SIZE) {
       return {
         drop: null,
@@ -237,49 +247,85 @@ export async function createFileDrop(
     let encrypted = false;
     let iv: string | undefined;
     let encryptedDEK: string | undefined;
+    let fileUrl: string | undefined;
+    let r2Key: string | undefined;
 
-    // For workspace drops, use workspace key (no personal keys needed)
-    if (workspaceId) {
-      const workspaceKey = await getWorkspaceKey(workspaceId, userId);
-      if (workspaceKey) {
-        // Encrypt content with workspace key
-        const encryptedData = await encryptData(fileData, workspaceKey);
-        encryptedFileData = encryptedData.encrypted;
-        iv = encryptedData.iv;
-        encrypted = true;
+    // Only encrypt files smaller than MAX_ENCRYPTION_SIZE (10MB)
+    const shouldEncrypt = file.size < MAX_ENCRYPTION_SIZE;
+
+    if (shouldEncrypt) {
+      // For workspace drops, use workspace key (no personal keys needed)
+      if (workspaceId) {
+        const workspaceKey = await getWorkspaceKey(workspaceId, userId);
+        if (workspaceKey) {
+          // Encrypt content with workspace key
+          const encryptedData = await encryptData(fileData, workspaceKey);
+          encryptedFileData = encryptedData.encrypted;
+          iv = encryptedData.iv;
+          encrypted = true;
+
+          // Upload encrypted data to R2
+          try {
+            const uploadResult = await uploadToR2(encryptedFileData);
+            fileUrl = uploadResult.url;
+            r2Key = uploadResult.key;
+          } catch (uploadError) {
+            console.error('R2 upload failed:', uploadError);
+            return { drop: null, error: 'Failed to upload file to storage. Please try again.' };
+          }
+        }
+      } else {
+        // Personal drop - need user's personal keys
+        const keys = await getUserKeys(userId);
+        if (keys) {
+          // Generate DEK
+          const dek = await generateAESKey();
+
+          // Encrypt file data with DEK
+          const encryptedData = await encryptData(fileData, dek);
+          encryptedFileData = encryptedData.encrypted;
+          iv = encryptedData.iv;
+          encrypted = true;
+
+          // Encrypt DEK with user's own key
+          const publicKey = await getUserPublicKey(userId);
+          if (publicKey) {
+            const { encryptedDEK: encDEK, iv: dekIv } = await encryptDEKForUser(
+              dek,
+              publicKey,
+              keys.privateKey
+            );
+            encryptedDEK = JSON.stringify({ encryptedDEK: encDEK, iv: dekIv });
+          }
+
+          // Upload encrypted data to R2
+          try {
+            const uploadResult = await uploadToR2(encryptedFileData);
+            fileUrl = uploadResult.url;
+            r2Key = uploadResult.key;
+          } catch (uploadError) {
+            console.error('R2 upload failed:', uploadError);
+            return { drop: null, error: 'Failed to upload file to storage. Please try again.' };
+          }
+        }
       }
     } else {
-      // Personal drop - need user's personal keys
-      const keys = await getUserKeys(userId);
-      if (keys) {
-        // Generate DEK
-        const dek = await generateAESKey();
-
-        // Encrypt file data with DEK
-        const encryptedData = await encryptData(fileData, dek);
-        encryptedFileData = encryptedData.encrypted;
-        iv = encryptedData.iv;
-        encrypted = true;
-
-        // Encrypt DEK with user's own key
-        const publicKey = await getUserPublicKey(userId);
-        if (publicKey) {
-          const { encryptedDEK: encDEK, iv: dekIv } = await encryptDEKForUser(
-            dek,
-            publicKey,
-            keys.privateKey
-          );
-          encryptedDEK = JSON.stringify({ encryptedDEK: encDEK, iv: dekIv });
-        }
+      // Large file - upload directly without encryption
+      try {
+        const uploadResult = await uploadToR2(fileData);
+        fileUrl = uploadResult.url;
+        r2Key = uploadResult.key;
+      } catch (uploadError) {
+        console.error('R2 upload failed:', uploadError);
+        return { drop: null, error: 'Failed to upload file to storage. Please try again.' };
       }
     }
 
-    // Build document data, excluding undefined fields
+    // Build document data
     const docData: Record<string, unknown> = {
       userId,
       type: 'file',
       name: file.name,
-      fileData: encryptedFileData,
       fileSize: file.size,
       mimeType: file.type || 'application/octet-stream',
       createdAt: serverTimestamp(),
@@ -288,7 +334,13 @@ export async function createFileDrop(
       workspaceId,
     };
 
-    // Only add encryption fields if encryption is enabled
+    // Add R2 URL and key (NEW)
+    if (fileUrl) {
+      docData.fileUrl = fileUrl;
+      docData.r2Key = r2Key;
+    }
+
+    // Add encryption fields
     if (encrypted) {
       docData.encrypted = encrypted;
       if (iv) docData.iv = iv;
@@ -309,7 +361,8 @@ export async function createFileDrop(
         userId,
         type: 'file',
         name: file.name,
-        fileData: encrypted ? undefined : fileData, // Don't return encrypted data
+        fileUrl,
+        r2Key,
         fileSize: file.size,
         mimeType: file.type || 'application/octet-stream',
         createdAt: now,
@@ -339,6 +392,16 @@ function fileToBase64(file: File): Promise<string> {
 
 export async function deleteDrop(drop: Drop): Promise<boolean> {
   try {
+    // Delete from R2 if file has R2 key
+    if (drop.r2Key) {
+      try {
+        await deleteFromR2(drop.r2Key, drop.workspaceId);
+      } catch (error) {
+        console.error('Failed to delete from R2:', error);
+        // Continue to delete Firestore doc even if R2 delete fails
+      }
+    }
+
     await deleteDoc(doc(db, DROPS_COLLECTION, drop.id));
     return true;
   } catch (error) {
@@ -358,7 +421,9 @@ export async function cleanupExpiredDrops(userId: string): Promise<void> {
   );
 
   const snapshot = await getDocs(q);
-  snapshot.forEach(async (document) => {
+  const deletePromises: Promise<void>[] = [];
+
+  snapshot.forEach((document) => {
     const data = document.data();
 
     // Skip if no expiresAt (forever drops)
@@ -368,22 +433,28 @@ export async function cleanupExpiredDrops(userId: string): Promise<void> {
 
     // Only delete if expired
     if (expiresAt <= now) {
-      await deleteDrop({
-        id: document.id,
-        userId: data.userId,
-        type: data.type,
-        name: data.name,
-        content: data.content,
-        fileData: data.fileData,
-        fileSize: data.fileSize,
-        mimeType: data.mimeType,
-        createdAt: data.createdAt?.toDate() || new Date(),
-        expiresAt: expiresAt,
-        expirationOption: data.expirationOption,
-        workspaceId: data.workspaceId || null,
-      });
+      // Create a promise for each deletion
+      const deletePromise = async () => {
+        // Delete from R2 first if file has r2Key
+        if (data.r2Key) {
+          try {
+            await deleteFromR2(data.r2Key, data.workspaceId || null);
+          } catch (error) {
+            console.error('Failed to delete R2 file:', error);
+            // Continue to delete Firestore doc even if R2 delete fails
+          }
+        }
+
+        // Then delete Firestore document
+        await deleteDoc(doc(db, DROPS_COLLECTION, document.id));
+      };
+
+      deletePromises.push(deletePromise());
     }
   });
+
+  // Process all deletions
+  await Promise.allSettled(deletePromises);
 }
 
 export function formatFileSize(bytes: number): string {
@@ -414,8 +485,23 @@ export function getTimeRemaining(expiresAt: Date | null): string {
 
 // Decrypt a drop's content
 export async function decryptDrop(drop: Drop, currentUserId: string): Promise<Drop> {
-  // If not encrypted, return as-is
+  // If not encrypted, still need to fetch R2 files
   if (!drop.encrypted) {
+    // For non-encrypted files with R2 URL, fetch the data
+    if (drop.type === 'file' && drop.fileUrl && !drop.fileData) {
+      try {
+        const response = await fetch(drop.fileUrl);
+        if (!response.ok) {
+          console.error('Failed to fetch file from R2');
+          return drop;
+        }
+        const fileData = await response.text();
+        return { ...drop, fileData };
+      } catch (error) {
+        console.error('Failed to fetch non-encrypted file:', error);
+        return drop;
+      }
+    }
     return drop;
   }
 
@@ -453,8 +539,29 @@ export async function decryptDrop(drop: Drop, currentUserId: string): Promise<Dr
       dek = await decryptDEKForUser(parsed.encryptedDEK, parsed.iv, creatorPublicKey, keys.privateKey);
     }
 
-    // Decrypt the content
-    const dataToDecrypt = drop.type === 'text' ? drop.content : drop.fileData;
+    // NEW: For file drops with R2 URL, fetch the encrypted data first
+    let dataToDecrypt: string;
+    if (drop.type === 'file') {
+      if (drop.fileUrl) {
+        // NEW: Fetch from R2
+        const response = await fetch(drop.fileUrl);
+        if (!response.ok) {
+          console.error('Failed to fetch encrypted file from R2');
+          return drop;
+        }
+        dataToDecrypt = await response.text();
+      } else if (drop.fileData) {
+        // OLD: Backward compatibility for existing drops
+        dataToDecrypt = drop.fileData;
+      } else {
+        console.error('No file data or URL available');
+        return drop;
+      }
+    } else {
+      // Text drop - content is already in Firestore
+      dataToDecrypt = drop.content || '';
+    }
+
     if (!dataToDecrypt || !drop.iv) {
       return drop;
     }
@@ -470,5 +577,66 @@ export async function decryptDrop(drop: Drop, currentUserId: string): Promise<Dr
   } catch (error) {
     console.error('Failed to decrypt drop:', error);
     return drop;
+  }
+}
+
+// =============================================
+// Helper function to upload to R2
+// Uses Firebase ID token for authentication
+// =============================================
+async function uploadToR2(encryptedData: string): Promise<{ url: string; key: string }> {
+  // Get Firebase ID token from current user
+  const currentUser = auth.currentUser;
+  if (!currentUser) {
+    throw new Error('Not authenticated');
+  }
+
+  const idToken = await currentUser.getIdToken();
+
+  const response = await fetch('/api/upload', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'text/plain',
+      'Authorization': `Bearer ${idToken}`,
+    },
+    body: encryptedData,
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Upload failed');
+  }
+
+  return await response.json();
+}
+
+// =============================================
+// Helper function to delete from R2
+// Uses Firebase ID token for authentication
+// =============================================
+export async function deleteFromR2(
+  key: string,
+  workspaceId: string | null
+): Promise<void> {
+  // Get Firebase ID token from current user
+  const currentUser = auth.currentUser;
+  if (!currentUser) {
+    throw new Error('Not authenticated');
+  }
+
+  const idToken = await currentUser.getIdToken();
+
+  const response = await fetch('/api/delete', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({ key, workspaceId }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || `R2 delete failed: ${response.status}`);
   }
 }

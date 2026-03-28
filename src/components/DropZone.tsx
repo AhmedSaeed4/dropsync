@@ -151,7 +151,7 @@ export function DropZone({
             {isMinimal ? 'Upload files' : 'DROP/INTERFACE // SECURE'}
           </span>
           <span className={`${tc.fontClass} ${isMinimal ? 'text-[#1A1A1A]/70' : 'text-[#FF5A47]'}`}>
-            {isMinimal ? 'Max 800KB' : 'MAX: 800KB'}
+            {isMinimal ? 'Max 500MB' : 'MAX: 500MB'}
           </span>
         </div>
 

@@ -195,11 +195,30 @@ export async function deleteWorkspace(userId: string, workspaceId: string): Prom
     // Only owner can delete
     if (data.ownerId !== userId) return false;
 
+    // Delete all drops in the workspace first
+    const dropsQuery = query(
+      collection(db, 'drops'),
+      where('workspaceId', '==', workspaceId)
+    );
+    const dropsSnapshot = await getDocs(dropsQuery);
+
+    // Delete drops from R2 and Firestore
+    const { deleteFromR2 } = await import('./drops');
+    for (const dropDoc of dropsSnapshot.docs) {
+      const dropData = dropDoc.data();
+      if (dropData.r2Key) {
+        try {
+          await deleteFromR2(dropData.r2Key, workspaceId);
+        } catch (error) {
+          console.error('Failed to delete R2 file:', error);
+          // Continue deleting other files
+        }
+      }
+      await deleteDoc(doc(db, 'drops', dropDoc.id));
+    }
+
     // Delete the workspace
     await deleteDoc(workspaceRef);
-
-    // Note: We don't delete the workspaceKey or drops here
-    // They will be orphaned but inaccessible due to Firestore rules
 
     return true;
   } catch (error) {
