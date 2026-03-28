@@ -15,7 +15,7 @@ A secure, temporary file sharing app. Drop files on one device, pick them up on 
 - **Workspace Management** - Owners can delete workspaces, members can leave
 - **Real-Time Updates** - See changes instantly across devices
 - **Three Themes** - Light (Operational Intelligence), Dark, and Minimal
-- **Cloudflare R2 Storage** - Files stored securely in R2 with 50MB max size
+- **Cloudflare R2 Storage** - Files stored securely in R2 with 500MB max size
 
 ## Limits
 
@@ -114,7 +114,7 @@ npm run dev
    [
      {
        "AllowedOrigins": ["*"],
-       "AllowedMethods": ["GET", "HEAD"],
+       "AllowedMethods": ["GET", "HEAD", "PUT"],
        "AllowedHeaders": ["*"],
        "MaxAgeSeconds": 3600
      }
