@@ -584,7 +584,7 @@ export async function decryptDrop(drop: Drop, currentUserId: string): Promise<Dr
 // Helper function to upload to R2
 // Uses Firebase ID token for authentication
 // =============================================
-async function uploadToR2(encryptedData: string): Promise<{ url: string; key: string }> {
+async function uploadToR2(fileData: string): Promise<{ url: string; key: string }> {
   // Get Firebase ID token from current user
   const currentUser = auth.currentUser;
   if (!currentUser) {
@@ -593,21 +593,35 @@ async function uploadToR2(encryptedData: string): Promise<{ url: string; key: st
 
   const idToken = await currentUser.getIdToken();
 
-  const response = await fetch('/api/upload', {
+  // Step 1: Get presigned URL from our API
+  const presignResponse = await fetch('/api/presign', {
     method: 'POST',
     headers: {
-      'Content-Type': 'text/plain',
       'Authorization': `Bearer ${idToken}`,
     },
-    body: encryptedData,
   });
 
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Upload failed');
+  if (!presignResponse.ok) {
+    const error = await presignResponse.json();
+    throw new Error(error.error || 'Failed to get upload URL');
   }
 
-  return await response.json();
+  const { presignedUrl, key, fileUrl } = await presignResponse.json();
+
+  // Step 2: Upload directly to R2 using presigned URL
+  const uploadResponse = await fetch(presignedUrl, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/octet-stream',
+    },
+    body: fileData,
+  });
+
+  if (!uploadResponse.ok) {
+    throw new Error(`R2 upload failed: ${uploadResponse.status}`);
+  }
+
+  return { url: fileUrl, key };
 }
 
 // =============================================
