@@ -42,6 +42,7 @@ export function DropItem({ drop, onDelete, onPreview, selected, onSelect, select
   const [decryptedContent, setDecryptedContent] = useState<string>('');
   const [decryptedFileData, setDecryptedFileData] = useState<string>('');
   const [decryptError, setDecryptError] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
   const isDark = theme === 'dark';
   const isMinimal = theme === 'minimal';
 
@@ -87,15 +88,40 @@ export function DropItem({ drop, onDelete, onPreview, selected, onSelect, select
   // What to display for file data (images)
   const displayFileData = drop.encrypted ? decryptedFileData : (drop.fileData || '');
 
-  const handleDownload = (e: React.MouseEvent) => {
+  const handleDownload = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (drop.type === 'file' && displayFileData) {
+
+    // If already decrypted, download immediately
+    if (displayFileData) {
       const link = document.createElement('a');
       link.href = displayFileData;
       link.download = drop.name;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+      return;
+    }
+
+    // Need to decrypt first (R2 files)
+    if (!currentUserId) return;
+
+    setIsDownloading(true);
+    try {
+      const decrypted = await decryptDrop(drop, currentUserId);
+      if (decrypted.fileData) {
+        const link = document.createElement('a');
+        link.href = decrypted.fileData;
+        link.download = drop.name;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        // Cache for future use
+        setDecryptedFileData(decrypted.fileData);
+      }
+    } catch (error) {
+      console.error('Download failed:', error);
+    } finally {
+      setIsDownloading(false);
     }
   };
 
@@ -223,9 +249,27 @@ export function DropItem({ drop, onDelete, onPreview, selected, onSelect, select
           </div>
           <div className={`flex items-center gap-3 mt-1 ${isMinimal ? 'text-xs tracking-wide' : 'text-[10px] font-mono uppercase tracking-wider'}`}>
             {drop.type === 'file' && drop.fileSize && (
-              <span className={selected ? 'text-white/70' : tc.textMuted}>
-                {isMinimal ? formatFileSize(drop.fileSize).toLowerCase() : formatFileSize(drop.fileSize)}
-              </span>
+              <>
+                <span className={selected ? 'text-white/70' : tc.textMuted}>
+                  {isMinimal ? formatFileSize(drop.fileSize).toLowerCase() : formatFileSize(drop.fileSize)}
+                </span>
+                {/* Encryption status indicator */}
+                {drop.encrypted ? (
+                  <span className={`flex items-center gap-1 ${selected ? 'text-white/50' : isDark ? 'text-green-400/70' : 'text-green-600/70'}`} title="Encrypted">
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                      <path d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                    </svg>
+                    {isMinimal ? 'Encrypted' : 'ENCRYPTED'}
+                  </span>
+                ) : (
+                  <span className={`flex items-center gap-1 ${selected ? 'text-white/50' : tc.textMuted}`} title="Not encrypted (large file)">
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                      <path d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
+                    </svg>
+                    {isMinimal ? 'Not encrypted' : 'UNENCRYPTED'}
+                  </span>
+                )}
+              </>
             )}
             {drop.type === 'text' && (
               <span className={selected ? 'text-white/70' : tc.textMuted}>
@@ -262,12 +306,17 @@ export function DropItem({ drop, onDelete, onPreview, selected, onSelect, select
             {drop.type === 'file' && (
               <button
                 onClick={handleDownload}
-                className={`w-12 h-full flex items-center justify-center border-r ${tc.borderColor} ${tc.textMuted} hover:bg-[#1A1A1A] hover:text-white transition-colors`}
+                disabled={isDownloading}
+                className={`w-12 h-full flex items-center justify-center border-r ${tc.borderColor} ${tc.textMuted} hover:bg-[#1A1A1A] hover:text-white transition-colors disabled:opacity-50`}
                 title={isMinimal ? 'Download' : 'DOWNLOAD'}
               >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
-                  <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                </svg>
+                {isDownloading ? (
+                  <div className={`w-4 h-4 border-2 border-current border-t-transparent animate-spin ${isMinimal ? 'rounded-full' : ''}`} />
+                ) : (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                    <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                )}
               </button>
             )}
             {/* Delete button with inline confirmation */}

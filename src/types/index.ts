@@ -24,7 +24,9 @@ export interface Drop {
   type: 'file' | 'text';
   name: string;
   content?: string;
-  fileData?: string; // base64 encoded file (encrypted if encrypted=true)
+  fileData?: string; // base64 encoded file (encrypted if encrypted=true) - KEEP for backward compatibility
+  fileUrl?: string;  // R2 URL for encrypted file (NEW)
+  r2Key?: string;    // R2 object key for deletion (NEW)
   fileSize?: number;
   mimeType?: string;
   createdAt: Date;
