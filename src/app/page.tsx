@@ -18,6 +18,7 @@ import { Drop, Workspace } from '@/types';
 import { initializeUserKeys, hasUserKeys, getUserKeys } from '@/lib/keys';
 import { decryptDrop } from '@/lib/drops';
 import { SettingsModal } from '@/components/SettingsModal';
+import { ChatPanel } from '@/components/ChatPanel';
 import { reauthenticateUser } from '@/lib/auth';
 
 type Theme = 'light' | 'dark' | 'minimal';
@@ -65,6 +66,7 @@ export default function Home() {
   const [isDeletingWorkspace, setIsDeletingWorkspace] = useState(false);
   const [isLeavingWorkspace, setIsLeavingWorkspace] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showChat, setShowChat] = useState(false);
 
   // Auto-close auth modal when user successfully logs in
   useEffect(() => {
@@ -652,7 +654,7 @@ export default function Home() {
           </div>
         </div>
       )}
-      <Header theme={theme} onThemeChange={setTheme} onOpenSettings={() => setShowSettingsModal(true)}>
+      <Header theme={theme} onThemeChange={setTheme} onOpenSettings={() => setShowSettingsModal(true)} onToggleChat={() => setShowChat(!showChat)} chatOpen={showChat}>
         <WorkspaceSwitcher
           workspaces={workspaces}
           currentWorkspace={currentWorkspace}
@@ -691,7 +693,11 @@ export default function Home() {
             </section>
           </div>
 
-          <div className="w-full lg:w-80 space-y-6">
+          <div className="w-full lg:w-80 flex flex-col min-h-0">
+            {showChat ? (
+              <ChatPanel theme={theme} onClose={() => setShowChat(false)} />
+            ) : (
+              <div className="space-y-6">
             {/* Theme Toggle Panel */}
             <div className={`border ${themeColors.borderColor} ${themeColors.cardBg} transition-colors duration-300 ${theme === 'minimal' ? 'rounded-lg' : ''}`}>
               <div className={`border-b ${themeColors.borderColor} px-4 py-3 ${theme === 'minimal' ? 'bg-[#1A1A1A]/5' : themeColors.isDark ? 'bg-white/5' : 'bg-[#1A1A1A]'}`}>
@@ -758,6 +764,8 @@ export default function Home() {
                 </ul>
               </div>
             </div>
+              </div>
+            )}
           </div>
         </div>
       </main>

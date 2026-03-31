@@ -9,10 +9,12 @@ interface HeaderProps {
   theme?: Theme;
   onThemeChange?: (theme: Theme) => void;
   onOpenSettings?: () => void;
+  onToggleChat?: () => void;
+  chatOpen?: boolean;
   children?: ReactNode;
 }
 
-export function Header({ theme = 'light', onThemeChange, onOpenSettings, children }: HeaderProps) {
+export function Header({ theme = 'light', onThemeChange, onOpenSettings, onToggleChat, chatOpen, children }: HeaderProps) {
   const { user, loading, signIn, signOutUser } = useAuth();
   const isDark = theme === 'dark';
   const isMinimal = theme === 'minimal';
@@ -89,6 +91,18 @@ export function Header({ theme = 'light', onThemeChange, onOpenSettings, childre
                       </svg>
                     </span>
                     <span className="hidden sm:inline">Settings</span>
+                  </button>
+                )}
+                {onToggleChat && (
+                  <button
+                    onClick={onToggleChat}
+                    className={`px-3 py-2 sm:px-4 text-xs tracking-wider transition-all rounded-full ${
+                      chatOpen
+                        ? 'bg-[#1A1A1A] text-white border border-[#1A1A1A]'
+                        : 'border border-[#1A1A1A]/30 text-[#1A1A1A] hover:bg-[#1A1A1A] hover:text-white'
+                    }`}
+                  >
+                    AI
                   </button>
                 )}
                 <button
@@ -175,6 +189,24 @@ export function Header({ theme = 'light', onThemeChange, onOpenSettings, childre
                 >
                   <span className="sm:hidden">⚙</span>
                   <span className="hidden sm:inline">SETTINGS</span>
+                </button>
+              )}
+
+              {onToggleChat && (
+                <button
+                  onClick={onToggleChat}
+                  className={`px-3 py-2 sm:px-5 text-[10px] sm:text-xs font-semibold uppercase tracking-wider transition-colors ${
+                    chatOpen
+                      ? 'bg-[#FF5A47] text-white border border-[#FF5A47]'
+                      : styles.buttonClass
+                  }`}
+                >
+                  <span className="sm:hidden flex items-center justify-center">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                    </svg>
+                  </span>
+                  <span className="hidden sm:inline">AI ASSISTANT</span>
                 </button>
               )}
 
