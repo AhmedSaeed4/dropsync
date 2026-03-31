@@ -63,5 +63,24 @@ service cloud.firestore {
       allow create: if request.auth != null && request.auth.uid == request.resource.data.createdBy;
       allow delete: if request.auth != null;
     }
+
+    // Chat conversations - users can only access their own
+    match /chats/{userId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow write: if request.auth != null && request.auth.uid == userId;
+      allow delete: if request.auth != null && request.auth.uid == userId;
+
+      match /conversations/{convId} {
+        allow read: if request.auth != null && request.auth.uid == userId;
+        allow write: if request.auth != null && request.auth.uid == userId;
+        allow delete: if request.auth != null && request.auth.uid == userId;
+
+        match /messages/{msgId} {
+          allow read: if request.auth != null && request.auth.uid == userId;
+          allow write: if request.auth != null && request.auth.uid == userId;
+          allow delete: if request.auth != null && request.auth.uid == userId;
+        }
+      }
+    }
   }
 }
