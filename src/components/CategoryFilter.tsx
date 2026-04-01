@@ -81,7 +81,7 @@ export function CategoryFilter({
 
   return (
     <div className={`border-b ${tc.borderColor} px-4 py-3 ${tc.bgColor} transition-colors duration-300`}>
-      <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
+      <div className="flex flex-wrap gap-2 max-h-20 overflow-y-auto overflow-x-hidden pb-1 scrollbar-hide">
         {/* Built-in categories */}
         {BUILT_IN_CATEGORIES.map((cat) => (
           <button
