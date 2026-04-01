@@ -693,7 +693,7 @@ export default function Home() {
             </section>
           </div>
 
-          <div className="w-full lg:w-80 flex flex-col min-h-0">
+          <div className={`w-full flex flex-col min-h-0 transition-all duration-300 ease-out ${showChat ? 'lg:w-[480px]' : 'lg:w-80'}`}>
             {showChat ? (
               <ChatPanel theme={theme} onClose={() => setShowChat(false)} />
             ) : (
