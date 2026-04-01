@@ -45,29 +45,41 @@ function getThemeStyles(theme: 'light' | 'dark' | 'minimal') {
         sendBtn: 'bg-[#FF5A47] hover:bg-[#E54A37]',
         spinnerBorder: 'border-white/30 border-t-white',
         dotColor: 'bg-white',
+        panelShadow: '',
+        panelBorderWidth: 'border',
+        msgAnimation: 'animate-chat-msg',
+        enterAnimation: 'animate-fade-in-dark',
+        exitAnimation: 'animate-fade-out-dark',
+        animDuration: 'duration-250',
       };
     case 'minimal':
       return {
         panelBg: 'bg-[#D4D8C8]',
-        borderColor: 'border-[#1A1A1A]/20',
+        borderColor: 'border-transparent',
         headerBg: 'bg-[#1A1A1A]/5',
         headerText: 'text-[#1A1A1A]',
-        inputBg: 'bg-white/60',
+        inputBg: 'bg-white',
         inputText: 'text-[#1A1A1A]',
-        inputBorder: 'border-[#1A1A1A]/20',
+        inputBorder: 'border-transparent',
         userBubble: 'bg-[#1A1A1A] text-white',
-        assistantBubble: 'bg-white/60 text-[#1A1A1A]',
+        assistantBubble: 'bg-white text-[#1A1A1A] shadow-[0_2px_8px_rgba(0,0,0,0.06)]',
         placeholder: 'placeholder-[#1A1A1A]/30',
         fontClass: 'font-sans',
         roundedClass: 'rounded-lg',
         muted: 'text-[#1A1A1A]/40',
-        hoverBg: 'hover:bg-[#1A1A1A]/10',
-        activeBg: 'bg-[#1A1A1A]/10',
+        hoverBg: 'hover:bg-[#1A1A1A]/8',
+        activeBg: 'bg-[#1A1A1A]/15 text-[#1A1A1A]',
         dangerBtn: 'text-red-500 hover:text-red-400',
-        focusRing: 'focus:ring-[#1A1A1A]/30',
+        focusRing: 'focus:shadow-[0_4px_16px_rgba(0,0,0,0.1)] focus:outline-none',
         sendBtn: 'bg-[#1A1A1A] hover:bg-[#333]',
         spinnerBorder: 'border-[#1A1A1A]/30 border-t-[#1A1A1A]',
         dotColor: 'bg-[#1A1A1A]',
+        panelShadow: 'shadow-[0_8px_32px_rgba(0,0,0,0.1)]',
+        panelBorderWidth: 'border-0',
+        msgAnimation: 'animate-spring-msg',
+        enterAnimation: 'animate-fade-in-minimal',
+        exitAnimation: 'animate-fade-out-minimal',
+        animDuration: 'duration-300',
       };
     default:
       return {
@@ -77,20 +89,26 @@ function getThemeStyles(theme: 'light' | 'dark' | 'minimal') {
         headerText: 'text-white',
         inputBg: 'bg-[#F5F2ED]',
         inputText: 'text-[#1A1A1A]',
-        inputBorder: 'border-[#1A1A1A]/20',
+        inputBorder: 'border-[#1A1A1A]',
         userBubble: 'bg-[#FF5A47] text-white',
-        assistantBubble: 'bg-[#F5F2ED] text-[#1A1A1A]',
-        placeholder: 'placeholder-[#1A1A1A]/30',
+        assistantBubble: 'bg-[#F5F2ED] text-[#1A1A1A] border border-[#1A1A1A]',
+        placeholder: 'placeholder-[#1A1A1A]/40',
         fontClass: 'font-mono',
         roundedClass: '',
         muted: 'text-[#1A1A1A]/40',
         hoverBg: 'hover:bg-[#1A1A1A]/10',
-        activeBg: 'bg-[#1A1A1A]/10',
+        activeBg: 'bg-[#FF5A47]/10 text-[#1A1A1A]',
         dangerBtn: 'text-red-500 hover:text-red-400',
-        focusRing: 'focus:ring-[#1A1A1A]/30',
+        focusRing: 'focus:ring-[#FF5A47]/30 focus:border-[#FF5A47]',
         sendBtn: 'bg-[#FF5A47] hover:bg-[#E54A37]',
         spinnerBorder: 'border-[#1A1A1A]/30 border-t-[#1A1A1A]',
         dotColor: 'bg-[#1A1A1A]',
+        panelShadow: 'shadow-[8px_8px_0_#1A1A1A]',
+        panelBorderWidth: 'border-2',
+        msgAnimation: 'animate-chat-msg',
+        enterAnimation: 'animate-fade-in-light',
+        exitAnimation: 'animate-fade-out-light',
+        animDuration: 'duration-200',
       };
   }
 }
@@ -103,11 +121,23 @@ export function ChatPanel({ theme, onClose }: ChatPanelProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [messagesLoading, setMessagesLoading] = useState(false);
   const [showSidebar, setShowSidebar] = useState(false);
+  const [isExiting, setIsExiting] = useState(false);
+  const [showWelcome, setShowWelcome] = useState(false);
+  const [animateMessages, setAnimateMessages] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const unsubRef = useRef<(() => void) | null>(null);
   const s = getThemeStyles(theme);
   const userId = auth.currentUser?.uid;
+
+  // Delay welcome message fade-in until panel animation completes
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setShowWelcome(true);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, []);
 
   // Load conversations list
   useEffect(() => {
@@ -119,10 +149,12 @@ export function ChatPanel({ theme, onClose }: ChatPanelProps) {
   useEffect(() => {
     if (!userId || !activeConvId) return;
 
+    setMessagesLoading(true);
     if (unsubRef.current) unsubRef.current();
 
     unsubRef.current = subscribeToMessages(userId, activeConvId, (msgs) => {
       setMessages(msgs);
+      setMessagesLoading(false);
     });
 
     return () => {
@@ -142,10 +174,32 @@ export function ChatPanel({ theme, onClose }: ChatPanelProps) {
     setShowSidebar(false);
   };
 
+  const [switchingConv, setSwitchingConv] = useState<string | null>(null);
+
   const handleSwitchConv = (convId: string) => {
+    if (switchingConv) return;
+    if (convId === activeConvId) {
+      // Already on this chat, just close sidebar
+      setShowSidebar(false);
+      return;
+    }
+    setSwitchingConv(convId);
+    setMessages([]);
+    setMessagesLoading(true);
     setActiveConvId(convId);
-    setShowSidebar(false);
   };
+
+  // Close sidebar when messages finish loading after switching
+  useEffect(() => {
+    if (switchingConv && !messagesLoading) {
+      setAnimateMessages(true);
+      setShowSidebar(false);
+      setSwitchingConv(null);
+      // Turn off animation after it completes
+      const timer = setTimeout(() => setAnimateMessages(false), 500);
+      return () => clearTimeout(timer);
+    }
+  }, [messagesLoading, switchingConv]);
 
   const handleDeleteConv = async (convId: string) => {
     if (!userId) return;
@@ -209,8 +263,17 @@ export function ChatPanel({ theme, onClose }: ChatPanelProps) {
 
   const activeConv = conversations.find((c) => c.id === activeConvId);
 
+  const handleClose = () => {
+    setIsExiting(true);
+    setTimeout(() => {
+      onClose();
+    }, theme === 'light' ? 200 : theme === 'dark' ? 250 : 300);
+  };
+
+  const animationClass = isExiting ? s.exitAnimation : s.enterAnimation;
+
   return (
-    <div className={`relative flex flex-col h-[500px] border ${s.borderColor} ${s.panelBg} transition-colors duration-300 ${s.roundedClass}`}>
+    <div className={`relative flex flex-col h-[520px] ${s.panelBorderWidth} ${s.borderColor} ${s.panelBg} ${s.panelShadow} ${animationClass} ${s.roundedClass}`}>
       {/* Header */}
       <div className={`border-b ${s.borderColor} px-4 py-3 ${s.headerBg} flex items-center justify-between shrink-0`}>
         <div className="flex items-center gap-2">
@@ -238,7 +301,7 @@ export function ChatPanel({ theme, onClose }: ChatPanelProps) {
             </svg>
           </button>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className={`${s.headerText} opacity-60 hover:opacity-100 transition-opacity`}
             title="Close"
           >
@@ -275,15 +338,20 @@ export function ChatPanel({ theme, onClose }: ChatPanelProps) {
                   onClick={() => handleSwitchConv(conv.id)}
                 >
                   <span className={`flex-1 text-xs ${s.inputText} truncate`}>{conv.title}</span>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleDeleteConv(conv.id); }}
-                    className={`opacity-0 group-hover:opacity-60 hover:!opacity-100 ${s.dangerBtn} transition-opacity`}
-                    title="Delete conversation"
-                  >
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
+                  {switchingConv === conv.id && (
+                    <div className={`w-3 h-3 border-2 ${s.spinnerBorder} rounded-full animate-spin`} />
+                  )}
+                  {switchingConv !== conv.id && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleDeleteConv(conv.id); }}
+                      className={`opacity-0 group-hover:opacity-60 hover:!opacity-100 ${s.dangerBtn} transition-opacity`}
+                      title="Delete conversation"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  )}
                 </div>
               ))}
               {conversations.length === 0 && (
@@ -296,15 +364,20 @@ export function ChatPanel({ theme, onClose }: ChatPanelProps) {
 
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3 min-h-0">
-        {messages.length === 0 && (
-          <div className="flex justify-start">
+        {messages.length === 0 && showWelcome && (
+          <div className="flex justify-start animate-fade-in-welcome">
             <div className={`max-w-[90%] px-3 py-2 text-xs leading-relaxed ${s.assistantBubble} ${s.roundedClass}`}>
               <ReactMarkdown>{WELCOME}</ReactMarkdown>
             </div>
           </div>
         )}
-        {messages.map((msg) => (
-          <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+        {/* Messages - only show when sidebar is closed to prevent double render */}
+        {!showSidebar && messages.map((msg, idx) => (
+          <div
+            key={msg.id}
+            className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} ${animateMessages ? 'animate-fade-in-msg' : ''}`}
+            style={animateMessages ? { animationDelay: `${idx * 50}ms` } : {}}
+          >
             <div
               className={`max-w-[90%] px-3 py-2 text-xs leading-relaxed ${
                 msg.role === 'user' ? s.userBubble : s.assistantBubble
