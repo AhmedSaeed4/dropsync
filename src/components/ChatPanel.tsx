@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkBreaks from 'remark-breaks';
 import { auth } from '@/lib/firebase';
 import {
   subscribeToMessages,
@@ -384,8 +385,8 @@ export function ChatPanel({ theme, onClose }: ChatPanelProps) {
               } ${s.roundedClass}`}
             >
               {msg.role === 'assistant' ? (
-                <div className="prose prose-sm max-w-none [&_table]:text-[10px] [&_td]:px-2 [&_th]:px-2 [&_td]:py-1 [&_th]:py-1 [&_table]:border-collapse [&_td]:border [&_th]:border [&_td]:border-current/20 [&_th]:border-current/20 [&_code]:bg-black/10 [&_code]:px-1 [&_code]:rounded [&_strong]:font-bold [&_a]:underline">
-                  <ReactMarkdown>{msg.content}</ReactMarkdown>
+                <div className="break-words [&_p]:mb-1 [&_p:last-child]:mb-0">
+                  <ReactMarkdown remarkPlugins={[remarkBreaks]}>{msg.content}</ReactMarkdown>
                 </div>
               ) : (
                 <div className="whitespace-pre-wrap break-words">{msg.content}</div>
