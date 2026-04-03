@@ -403,7 +403,7 @@ export default function Home() {
                 SIMPLE. SECURE. TEMPORARY.
               </p>
               <p className="text-[#1A1A1A]/60 text-xs tracking-wider mb-12">
-                Auto-expire: 1h - Forever • Max 500MB • 50 drops
+                Auto-expire: 1h - Forever • Max 500MB • 200 drops
               </p>
 
               {/* Auth Button - Pill Style */}
@@ -510,7 +510,7 @@ export default function Home() {
                 </li>
                 <li className="flex justify-between py-1 border-b border-white/10">
                   <span className="text-white/60">CAPACITY</span>
-                  <span className="text-white">50 DROPS</span>
+                  <span className="text-white">200 DROPS</span>
                 </li>
                 <li className="flex justify-between py-1 border-b border-white/10">
                   <span className="text-white/60">MAX_SIZE</span>
