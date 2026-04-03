@@ -127,6 +127,7 @@ export function ChatPanel({ theme, onClose }: ChatPanelProps) {
   const [isExiting, setIsExiting] = useState(false);
   const [showWelcome, setShowWelcome] = useState(false);
   const [animateMessages, setAnimateMessages] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const unsubRef = useRef<(() => void) | null>(null);
   const s = getThemeStyles(theme);
@@ -271,6 +272,14 @@ export function ChatPanel({ theme, onClose }: ChatPanelProps) {
     }, theme === 'light' ? 200 : theme === 'dark' ? 250 : 300);
   };
 
+  const handleCopy = async (msgId: string, content: string, messageElement: HTMLElement) => {
+    const codeBlock = messageElement.querySelector('pre code');
+    const textToCopy = codeBlock ? (codeBlock.textContent || '') : content;
+    await navigator.clipboard.writeText(textToCopy);
+    setCopiedId(msgId);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
   const animationClass = isExiting ? s.exitAnimation : s.enterAnimation;
 
   return (
@@ -380,10 +389,33 @@ export function ChatPanel({ theme, onClose }: ChatPanelProps) {
             style={animateMessages ? { animationDelay: `${idx * 50}ms` } : {}}
           >
             <div
-              className={`max-w-[90%] px-3 py-2 text-xs leading-relaxed overflow-x-auto ${
+              className={`relative max-w-[90%] px-3 py-2 text-xs leading-relaxed overflow-x-auto group ${
                 msg.role === 'user' ? s.userBubble : s.assistantBubble
               } ${s.roundedClass}`}
             >
+              {msg.role === 'assistant' && (
+                <button
+                  onClick={(e) => handleCopy(msg.id, msg.content, e.currentTarget.parentElement!)}
+                  aria-label="Copy message"
+                  className={`absolute top-1 right-1 p-1 rounded transition-opacity ${
+                    theme === 'minimal'
+                      ? 'opacity-40 hover:opacity-100'
+                      : 'opacity-0 group-hover:opacity-70 hover:!opacity-100'
+                  } ${theme === 'dark' ? 'text-white/60 hover:text-white' : 'text-[#1A1A1A]/40 hover:text-[#1A1A1A]'}`}
+                  title={copiedId === msg.id ? 'Copied!' : 'Copy'}
+                >
+                  {copiedId === msg.id ? (
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                  ) : (
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                      <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                    </svg>
+                  )}
+                </button>
+              )}
               {msg.role === 'assistant' ? (
                 <div className="break-words [&_p]:mb-1 [&_p:last-child]:mb-0 [&_pre]:overflow-x-auto [&_pre]:max-w-full [&_code]:break-all">
                   <ReactMarkdown remarkPlugins={[remarkBreaks]}>{msg.content}</ReactMarkdown>
