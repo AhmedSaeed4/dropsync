@@ -261,7 +261,7 @@ export function DropZone({
           </button>
           <div className={`px-4 py-3 ${tc.fontClass} ${tc.textMuted} flex items-center gap-2 ${isMinimal ? 'rounded-br-lg' : ''}`}>
             {!isMinimal && <span className="w-1.5 h-1.5 bg-[#FF5A47]" />}
-            {isMinimal ? '50 max' : '50_MAX_DROPS'}
+            {isMinimal ? '200 max' : '200_MAX_DROPS'}
           </div>
         </div>
       </div>

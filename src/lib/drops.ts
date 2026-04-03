@@ -25,7 +25,7 @@ import {
 } from './keys';
 
 const DROPS_COLLECTION = 'drops';
-const MAX_DROPS = 50;
+const MAX_DROPS = 200;
 const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB limit
 const MAX_ENCRYPTION_SIZE = 10 * 1024 * 1024; // 10MB - files larger than this won't be encrypted
 
