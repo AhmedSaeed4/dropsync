@@ -40,6 +40,25 @@ body {
   background: var(--coral);
 }
 
+/* Minimal theme scrollbar - neutral instead of coral */
+.minimal-scroll ::-webkit-scrollbar,
+.minimal-scroll::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+.minimal-scroll ::-webkit-scrollbar-thumb,
+.minimal-scroll::-webkit-scrollbar-thumb {
+  background: rgba(26, 26, 26, 0.4);
+}
+.minimal-scroll ::-webkit-scrollbar-thumb:hover,
+.minimal-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(26, 26, 26, 0.7);
+}
+.minimal-scroll ::-webkit-scrollbar-track,
+.minimal-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 /* Line clamp utility */
 .line-clamp-3 {
   display: -webkit-box;
