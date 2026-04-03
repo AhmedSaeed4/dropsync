@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { createFileDrop, createTextDrop } from '@/lib/drops';
 import { useAuth } from '@/hooks/useAuth';
 import { TextModal } from './TextModal';
@@ -105,6 +105,49 @@ export function DropZone({
     setUploading(false);
     setShowTextModal(false);
   };
+
+  // Handle clipboard paste (Ctrl+V) for images
+  useEffect(() => {
+    const handlePaste = async (e: ClipboardEvent) => {
+      if (!user || uploading) return;
+
+      // Skip if user is typing in a text field (chat input, etc.)
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
+
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      const imageFiles: File[] = [];
+      for (const item of items) {
+        if (item.type.startsWith('image/')) {
+          const blob = item.getAsFile();
+          if (blob) {
+            const ext = item.type.split('/')[1] || 'png';
+            const file = new File([blob], `pasted-image-${Date.now()}.${ext}`, { type: item.type });
+            imageFiles.push(file);
+          }
+        }
+      }
+
+      if (imageFiles.length > 0) {
+        e.preventDefault();
+        setError(null);
+        setUploading(true);
+        const creatorName = user.displayName || user.email?.split('@')[0] || undefined;
+        for (const file of imageFiles) {
+          const result = await createFileDrop(user.uid, file, expiration, workspaceId, workspaceMembers, creatorName);
+          if (result.error) {
+            setError(result.error);
+          }
+        }
+        setUploading(false);
+      }
+    };
+
+    document.addEventListener('paste', handlePaste);
+    return () => document.removeEventListener('paste', handlePaste);
+  }, [user, uploading, expiration, workspaceId, workspaceMembers]);
 
   // Theme colors
   const getThemeColors = () => {
