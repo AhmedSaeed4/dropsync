@@ -129,6 +129,7 @@ export function ChatPanel({ theme, onClose }: ChatPanelProps) {
   const [animateMessages, setAnimateMessages] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const unsubRef = useRef<(() => void) | null>(null);
   const s = getThemeStyles(theme);
   const userId = auth.currentUser?.uid;
@@ -260,6 +261,9 @@ export function ChatPanel({ theme, onClose }: ChatPanelProps) {
       await saveMessage(userId, convId, 'assistant', `Error: ${e.message || 'Something went wrong'}`);
     } finally {
       setLoading(false);
+      requestAnimationFrame(() => {
+        inputRef.current?.focus();
+      });
     }
   };
 
@@ -283,7 +287,7 @@ export function ChatPanel({ theme, onClose }: ChatPanelProps) {
   const animationClass = isExiting ? s.exitAnimation : s.enterAnimation;
 
   return (
-    <div className={`relative flex flex-col h-[520px] ${s.panelBorderWidth} ${s.borderColor} ${s.panelBg} ${s.panelShadow} ${animationClass} ${s.roundedClass} ${theme === 'minimal' ? 'minimal-scroll' : ''}`}>
+    <div onClick={() => inputRef.current?.focus()} className={`relative flex flex-col h-[520px] ${s.panelBorderWidth} ${s.borderColor} ${s.panelBg} ${s.panelShadow} ${animationClass} ${s.roundedClass} ${theme === 'minimal' ? 'minimal-scroll' : ''}`}>
       {/* Header */}
       <div className={`border-b ${s.borderColor} px-4 py-3 ${s.headerBg} flex items-center justify-between shrink-0`}>
         <div className="flex items-center gap-2">
@@ -447,6 +451,7 @@ export function ChatPanel({ theme, onClose }: ChatPanelProps) {
           className="flex gap-2"
         >
           <input
+            ref={inputRef}
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
