@@ -274,7 +274,7 @@ export function ChatPanel({ theme, onClose }: ChatPanelProps) {
   const animationClass = isExiting ? s.exitAnimation : s.enterAnimation;
 
   return (
-    <div className={`relative flex flex-col h-[520px] ${s.panelBorderWidth} ${s.borderColor} ${s.panelBg} ${s.panelShadow} ${animationClass} ${s.roundedClass}`}>
+    <div className={`relative flex flex-col h-[520px] ${s.panelBorderWidth} ${s.borderColor} ${s.panelBg} ${s.panelShadow} ${animationClass} ${s.roundedClass} ${theme === 'minimal' ? 'minimal-scroll' : ''}`}>
       {/* Header */}
       <div className={`border-b ${s.borderColor} px-4 py-3 ${s.headerBg} flex items-center justify-between shrink-0`}>
         <div className="flex items-center gap-2">
@@ -380,12 +380,12 @@ export function ChatPanel({ theme, onClose }: ChatPanelProps) {
             style={animateMessages ? { animationDelay: `${idx * 50}ms` } : {}}
           >
             <div
-              className={`max-w-[90%] px-3 py-2 text-xs leading-relaxed ${
+              className={`max-w-[90%] px-3 py-2 text-xs leading-relaxed overflow-x-auto ${
                 msg.role === 'user' ? s.userBubble : s.assistantBubble
               } ${s.roundedClass}`}
             >
               {msg.role === 'assistant' ? (
-                <div className="break-words [&_p]:mb-1 [&_p:last-child]:mb-0">
+                <div className="break-words [&_p]:mb-1 [&_p:last-child]:mb-0 [&_pre]:overflow-x-auto [&_pre]:max-w-full [&_code]:break-all">
                   <ReactMarkdown remarkPlugins={[remarkBreaks]}>{msg.content}</ReactMarkdown>
                 </div>
               ) : (
