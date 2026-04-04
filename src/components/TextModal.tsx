@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { ExpirationOption } from '@/types';
 
 interface TextModalProps {
@@ -33,6 +33,10 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
   const [showCustomInput, setShowCustomInput] = useState(false);
   const [customCategoryName, setCustomCategoryName] = useState('');
   const [creatingCategory, setCreatingCategory] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
   const isDark = theme === 'dark';
   const isMinimal = theme === 'minimal';
 
@@ -62,6 +66,50 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
     }
     setCreatingCategory(false);
   };
+
+  const toggleRecording = useCallback(async () => {
+    if (isRecording && mediaRecorderRef.current) {
+      // Stop recording
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      mediaRecorderRef.current = mediaRecorder;
+      chunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
+
+      mediaRecorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+
+        setIsTranscribing(true);
+        try {
+          const formData = new FormData();
+          formData.append('file', blob, 'recording.webm');
+          const res = await fetch('/api/transcribe', { method: 'POST', body: formData });
+          const data = await res.json();
+          if (data.text) {
+            setContent(prev => prev ? prev + '\n' + data.text : data.text);
+          }
+        } catch (err) {
+          console.error('Transcription failed:', err);
+        }
+        setIsTranscribing(false);
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+    } catch (err) {
+      console.error('Mic access denied:', err);
+    }
+  }, [isRecording]);
 
   // Theme colors
   const getThemeColors = () => {
@@ -229,9 +277,42 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
           </div>
 
           <div>
-            <label className={`block ${tc.fontClass} ${tc.textMuted} mb-2`}>
-              {isMinimal ? 'Content' : 'CONTENT/DATA'}
-            </label>
+            <div className="flex items-center justify-between mb-2">
+              <label className={`block ${tc.fontClass} ${tc.textMuted}`}>
+                {isMinimal ? 'Content' : 'CONTENT/DATA'}
+              </label>
+              <button
+                type="button"
+                onClick={toggleRecording}
+                disabled={isTranscribing}
+                className={`flex items-center gap-1.5 px-2.5 py-1 text-xs border transition-colors ${
+                  isRecording
+                    ? 'bg-red-500 border-red-500 text-white'
+                    : isTranscribing
+                      ? `${tc.borderColor} ${tc.textMuted} opacity-50 cursor-wait`
+                      : `${tc.borderColor} ${tc.textColor} hover:bg-[#1A1A1A] hover:text-white`
+                } ${isMinimal ? 'rounded-full' : ''}`}
+              >
+                {isTranscribing ? (
+                  <>
+                    <div className="w-3 h-3 border border-current/30 border-t-current animate-spin rounded-full" />
+                    {isMinimal ? 'Transcribing...' : 'TRANSCRIBING...'}
+                  </>
+                ) : isRecording ? (
+                  <>
+                    <span className="w-2 h-2 bg-white rounded-sm" />
+                    {isMinimal ? 'Stop' : 'STOP'}
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
+                    </svg>
+                    {isMinimal ? 'Voice' : 'VOICE'}
+                  </>
+                )}
+              </button>
+            </div>
             <textarea
               value={content}
               onChange={(e) => setContent(e.target.value)}
