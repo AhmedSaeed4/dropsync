@@ -5,7 +5,9 @@ A secure, temporary file sharing app. Drop files on one device, pick them up on 
 ## Features
 
 - **Drag & Drop** - Upload files or paste text instantly
-- **Cross-Device Sync** - Access your drops from any device
+- **Clipboard Paste** - Copy an image and Ctrl+V to upload directly
+- **Voice to Text** - Record your voice in the text modal, AI transcribes it using Groq Whisper
+- **Cross-Device Sync** - Access your drops from any device in real-time
 - **Multiple Auth Options** - Sign in with Google or Email/Password with email verification
 - **End-to-End Encryption** - Client-side encryption for text and files under 10MB using AES-GCM
 - **Smart Encryption** - Files over 10MB are stored without encryption for performance (HTTPS still secures transit)
@@ -13,22 +15,27 @@ A secure, temporary file sharing app. Drop files on one device, pick them up on 
 - **Custom Expiration** - Choose when drops expire: 1h, 2h, 6h, 24h, or keep forever
 - **Shared Workspaces** - Create workspaces, invite others with a code, collaborate on drops together
 - **Workspace Management** - Owners can delete workspaces, members can leave
-- **Real-Time Updates** - See changes instantly across devices
-- **Three Themes** - Light (Operational Intelligence), Dark, and Minimal
-- **Cloudflare R2 Storage** - Files stored securely in R2 with 500MB max size
+- **Categories** - Organize drops with built-in (Password, Link) or custom categories
+- **AI Chat Assistant** - Talk to your drops naturally — search, create, delete, and get stats via the built-in AI agent
+- **Real-Time Updates** - See changes instantly across devices via Firestore onSnapshot
+- **Three Themes** - Light (Operational Intelligence), Dark, and Minimal (sage green editorial)
+- **Account Settings** - Update display name, change password, delete account
+- **Cloudflare R2 Storage** - Files stored securely in R2 with 500MB max file size
 
 ## Limits
 
-- Maximum 50 drops per user/workspace
-- 500MB max file size
+- Maximum 200 drops per user/workspace
+- 500MB max file size (per individual file)
 - Files under 10MB are encrypted, 10MB+ files are not encrypted (for performance)
-- 10GB free storage (Cloudflare R2 free tier)
+- No total storage limit (10GB free on Cloudflare R2 free tier)
 
 ## Tech Stack
 
 - **Frontend**: Next.js 16, React 19, TypeScript, Tailwind CSS 4
 - **Backend**: Firebase (Auth, Firestore)
 - **File Storage**: Cloudflare R2 (S3-compatible)
+- **AI Agent**: [DropSync Agent](https://github.com/AhmedSaeed4/dropsync-agent) (FastAPI, OpenAI Agents SDK, MCP)
+- **Voice Transcription**: Groq Whisper Large v3
 - **Real-time**: Firestore onSnapshot listeners
 
 ## Getting Started
