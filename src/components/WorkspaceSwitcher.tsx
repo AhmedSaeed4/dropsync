@@ -177,10 +177,6 @@ export function WorkspaceSwitcher({
                       <span className={`${tc.fontClass} ${isActive ? 'text-white' : tc.textColor} truncate`}>
                         {workspace.name}
                       </span>
-                      {/* Member count badge */}
-                      <span className={`shrink-0 ${isMinimal ? 'text-[10px]' : 'text-[9px]'} ${isActive ? (isMinimal ? 'text-white/60' : 'text-white/70') : tc.textMuted}`}>
-                        {workspace.members.length}
-                      </span>
                     </div>
                     <div className="flex items-center gap-1 z-10">
                       {/* Members toggle */}
