@@ -8,6 +8,7 @@ import {
   where,
   onSnapshot,
   getDocs,
+  getDoc,
   serverTimestamp,
   Timestamp
 } from 'firebase/firestore';
@@ -16,6 +17,41 @@ import { Workspace } from '@/types';
 import { createWorkspaceKey, addMemberToWorkspaceKey, removeMemberFromWorkspaceKey } from './keys';
 
 const WORKSPACES_COLLECTION = 'workspaces';
+const USERS_COLLECTION = 'users';
+
+export interface MemberInfo {
+  uid: string;
+  displayName: string;
+  isOwner: boolean;
+}
+
+// Fetch display names for workspace members
+export async function getWorkspaceMembers(
+  memberIds: string[],
+  ownerId: string
+): Promise<MemberInfo[]> {
+  const members: MemberInfo[] = [];
+
+  const fetchPromises = memberIds.map(async (uid) => {
+    const userSnap = await getDoc(doc(db, USERS_COLLECTION, uid));
+    let displayName = uid;
+    if (userSnap.exists()) {
+      const data = userSnap.data();
+      displayName = data.displayName || data.email?.split('@')[0] || uid;
+    }
+    return { uid, displayName, isOwner: uid === ownerId };
+  });
+
+  const results = await Promise.all(fetchPromises);
+
+  // Owner first, then alphabetically
+  results.sort((a, b) => {
+    if (a.isOwner !== b.isOwner) return a.isOwner ? -1 : 1;
+    return a.displayName.localeCompare(b.displayName);
+  });
+
+  return results;
+}
 
 // Generate a random 6-character invite code
 function generateInviteCode(): string {
