@@ -403,9 +403,8 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
               ))}
             </div>
           </div>
-          </div>
 
-          <div className={`flex gap-3 px-6 py-4 border-t ${tc.borderColor} shrink-0`}>
+          <div className="flex gap-3 pt-2">
             <button
               type="button"
               onClick={onClose}
@@ -427,6 +426,7 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
                 isMinimal ? 'Save' : 'CONFIRM'
               )}
             </button>
+          </div>
           </div>
         </form>
       </div>
