@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { User } from '@/types';
+import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { previewAccountDeletion, deleteAccount, DeletionPreview, SelectedOwners } from '@/lib/accountDeletion';
 import { updateUserDisplayName } from '@/lib/auth';
 
@@ -26,6 +27,7 @@ export function SettingsModal({
   onNameUpdate,
   theme = 'light',
 }: SettingsModalProps) {
+  useBodyScrollLock();
   const [step, setStep] = useState<Step>('main');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -485,7 +487,7 @@ export function SettingsModal({
   );
 
   return (
-    <div className={`fixed inset-0 ${tc.overlayBg} flex items-center justify-center z-50 p-4`} onClick={(e) => e.target === e.currentTarget && onClose()}>
+    <div className={`fixed inset-0 ${tc.overlayBg} flex items-center justify-center z-50 p-4 overscroll-contain`} onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className={`relative w-full max-w-md ${tc.bgColor} border ${tc.borderColor} ${tc.roundedClass} max-h-[90vh] overflow-y-auto`}>
         {/* Header */}
         <div className={`border-b ${tc.borderColor} px-6 py-4 flex items-center justify-between ${tc.headerBg}`}>

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 
 interface JoinWorkspaceModalProps {
   onSubmit: (inviteCode: string) => Promise<{ success: boolean; error?: string }>;
@@ -9,6 +10,7 @@ interface JoinWorkspaceModalProps {
 }
 
 export function JoinWorkspaceModal({ onSubmit, onClose, theme = 'light' }: JoinWorkspaceModalProps) {
+  useBodyScrollLock();
   const [inviteCode, setInviteCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -70,7 +72,7 @@ export function JoinWorkspaceModal({ onSubmit, onClose, theme = 'light' }: JoinW
 
   return (
     <div
-      className={`fixed inset-0 ${tc.overlayBg} flex items-center justify-center z-50 p-4 transition-colors duration-300`}
+      className={`fixed inset-0 ${tc.overlayBg} flex items-center justify-center z-50 p-4 transition-colors duration-300 overscroll-contain`}
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       <div className={`${tc.bgColor} border ${tc.borderColor} ${tc.roundedClass} w-full max-w-md transition-colors duration-300`}>

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 
 interface VerifyEmailModalProps {
   email: string;
@@ -17,6 +18,7 @@ export function VerifyEmailModal({
   onClose,
   theme = 'light'
 }: VerifyEmailModalProps) {
+  useBodyScrollLock();
   const [loading, setLoading] = useState(false);
   const [resendSuccess, setResendSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -81,7 +83,7 @@ export function VerifyEmailModal({
 
   return (
     <div
-      className={`fixed inset-0 ${tc.overlayBg} flex items-center justify-center z-50 p-4 transition-colors duration-300`}
+      className={`fixed inset-0 ${tc.overlayBg} flex items-center justify-center z-50 p-4 transition-colors duration-300 overscroll-contain`}
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       <div className={`${tc.bgColor} border ${tc.borderColor} ${tc.roundedClass} w-full max-w-md transition-colors duration-300`}>

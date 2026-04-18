@@ -76,6 +76,15 @@ export default function Home() {
     }
   }, [user, showAuthModal]);
 
+  // Lock body scroll for inline modals (delete/leave workspace, encryption overlay)
+  useEffect(() => {
+    if (workspaceToDelete || workspaceToLeave || encryptionInitializing) {
+      const original = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      return () => { document.body.style.overflow = original; };
+    }
+  }, [workspaceToDelete, workspaceToLeave, encryptionInitializing]);
+
   // Auto-initialize encryption keys on user login
   useEffect(() => {
     if (user) {
@@ -644,7 +653,7 @@ export default function Home() {
     <div className={`min-h-screen ${themeColors.bgColor} transition-colors duration-500`}>
       {/* Encryption initializing overlay */}
       {encryptionInitializing && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 overscroll-contain">
           <div className={`${themeColors.cardBg} border ${themeColors.borderColor} p-8 ${theme === 'minimal' ? 'rounded-lg' : ''}`}>
             <div className="flex flex-col items-center gap-4">
               <div className="w-8 h-8 border-2 border-[#FF5A47] border-t-transparent animate-spin rounded-full" />
@@ -806,7 +815,7 @@ export default function Home() {
 
       {/* Delete Workspace Confirmation Modal */}
       {workspaceToDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
+        <div className="fixed inset-0 z-50 flex items-center justify-center overscroll-contain">
           <div className="fixed inset-0 bg-black/50" onClick={() => !isDeletingWorkspace && setWorkspaceToDelete(null)} />
           <div className={`relative z-10 w-80 border ${theme === 'dark' ? 'bg-[#1A1A1A] border-white/10' : theme === 'minimal' ? 'bg-[#D4D8C8] border-[#1A1A1A]/20 rounded-lg' : 'bg-white border-[#1A1A1A]'}`}>
             <div className={`px-4 py-3 border-b ${theme === 'dark' ? 'border-white/10' : theme === 'minimal' ? 'border-[#1A1A1A]/20' : 'border-[#1A1A1A]'} flex items-center justify-between ${theme === 'minimal' ? 'bg-[#1A1A1A]/5' : 'bg-[#FF5A47]'}`}>
@@ -856,7 +865,7 @@ export default function Home() {
 
       {/* Leave Workspace Confirmation Modal */}
       {workspaceToLeave && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
+        <div className="fixed inset-0 z-50 flex items-center justify-center overscroll-contain">
           <div className="fixed inset-0 bg-black/50" onClick={() => !isLeavingWorkspace && setWorkspaceToLeave(null)} />
           <div className={`relative z-10 w-80 border ${theme === 'dark' ? 'bg-[#1A1A1A] border-white/10' : theme === 'minimal' ? 'bg-[#D4D8C8] border-[#1A1A1A]/20 rounded-lg' : 'bg-white border-[#1A1A1A]'}`}>
             <div className={`px-4 py-3 border-b ${theme === 'dark' ? 'border-white/10' : theme === 'minimal' ? 'border-[#1A1A1A]/20' : 'border-[#1A1A1A]'} flex items-center justify-between ${theme === 'minimal' ? 'bg-[#1A1A1A]/5' : 'bg-[#FF5A47]'}`}>

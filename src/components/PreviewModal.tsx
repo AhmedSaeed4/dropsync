@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Drop } from '@/types';
+import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { formatFileSize } from '@/lib/drops';
 
 interface PreviewModalProps {
@@ -20,6 +21,7 @@ function isTextFile(drop: Drop): boolean {
 }
 
 export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false }: PreviewModalProps) {
+  useBodyScrollLock();
   const [copied, setCopied] = useState(false);
   const isImage = drop.mimeType?.startsWith('image/');
   const isText = isTextFile(drop);
@@ -97,7 +99,7 @@ export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false
 
   return (
     <div
-      className={`fixed inset-0 ${tc.overlayBg} flex items-center justify-center z-50 p-4 transition-colors duration-300`}
+      className={`fixed inset-0 ${tc.overlayBg} flex items-center justify-center z-50 p-4 transition-colors duration-300 overscroll-contain`}
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       <div className={`${tc.bgColor} border ${tc.borderColor} ${tc.roundedClass} w-full max-w-3xl max-h-[85vh] overflow-hidden flex flex-col transition-colors duration-300`}>
