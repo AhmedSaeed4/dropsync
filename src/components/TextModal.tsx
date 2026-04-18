@@ -166,12 +166,12 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
 
   return (
     <div
-      className={`fixed inset-0 ${tc.overlayBg} flex items-center justify-center z-50 p-4 transition-colors duration-300 overscroll-contain`}
+      className={`fixed inset-0 ${tc.overlayBg} flex items-center justify-center z-50 p-4 transition-colors duration-300 overscroll-contain overflow-y-auto`}
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div className={`${tc.bgColor} border ${tc.borderColor} ${tc.roundedClass} w-full max-w-lg transition-colors duration-300`}>
+      <div className={`${tc.bgColor} border ${tc.borderColor} ${tc.roundedClass} w-full max-w-lg my-auto max-h-[90vh] flex flex-col overflow-hidden transition-colors duration-300`}>
         {/* Header */}
-        <div className={`border-b ${tc.borderColor} px-6 py-4 flex items-center justify-between ${tc.headerBg} ${tc.roundedClass} ${isMinimal ? 'rounded-bl-none rounded-br-none' : ''}`}>
+        <div className={`border-b ${tc.borderColor} px-6 py-4 flex items-center justify-between shrink-0 ${tc.headerBg} ${tc.roundedClass} ${isMinimal ? 'rounded-bl-none rounded-br-none' : ''}`}>
           <h2 className={`${isMinimal ? 'text-sm font-medium' : 'text-sm font-bold uppercase tracking-wider'} text-white`}>
             {isMinimal ? 'Add text snippet' : 'ADD/TEXT_SNIPPET'}
           </h2>
@@ -185,7 +185,8 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form onSubmit={handleSubmit} className="flex flex-col min-h-0 flex-1">
+          <div className="flex-1 overflow-y-auto p-6 space-y-4">
           {/* Category Selection */}
           <div>
             <label className={`block ${tc.fontClass} ${tc.textMuted} mb-2`}>
@@ -402,8 +403,9 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
               ))}
             </div>
           </div>
+          </div>
 
-          <div className="flex gap-3 pt-2">
+          <div className={`flex gap-3 px-6 py-4 border-t ${tc.borderColor} shrink-0`}>
             <button
               type="button"
               onClick={onClose}
