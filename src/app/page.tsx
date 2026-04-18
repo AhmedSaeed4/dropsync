@@ -19,6 +19,7 @@ import { initializeUserKeys, hasUserKeys, getUserKeys } from '@/lib/keys';
 import { decryptDrop } from '@/lib/drops';
 import { SettingsModal } from '@/components/SettingsModal';
 import { ChatPanel } from '@/components/ChatPanel';
+import { SavedPaths } from '@/components/SavedPaths';
 import { reauthenticateUser } from '@/lib/auth';
 
 type Theme = 'light' | 'dark' | 'minimal';
@@ -764,6 +765,9 @@ export default function Home() {
                 </ul>
               </div>
             </div>
+
+            {/* Saved Paths */}
+            <SavedPaths theme={theme} />
               </div>
             )}
           </div>

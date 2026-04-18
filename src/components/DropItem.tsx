@@ -41,12 +41,14 @@ export function DropItem({ drop, onDelete, onPreview, selected, onSelect, select
   const [copied, setCopied] = useState(false);
   const [decryptedContent, setDecryptedContent] = useState<string>('');
   const [decryptedFileData, setDecryptedFileData] = useState<string>('');
+  const [decryptedImageData, setDecryptedImageData] = useState<string>('');
   const [decryptError, setDecryptError] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const isDark = theme === 'dark';
   const isMinimal = theme === 'minimal';
 
   const isImage = drop.mimeType?.startsWith('image/');
+  const hasAttachedImage = drop.type === 'text' && !!drop.imageR2Key;
 
   // Decrypt content if encrypted
   useEffect(() => {
@@ -62,8 +64,12 @@ export function DropItem({ drop, onDelete, onPreview, selected, onSelect, select
           } else if (decrypted.type === 'file' && decrypted.fileData) {
             setDecryptedFileData(decrypted.fileData);
             setDecryptError(false);
-          } else {
+          } else if (!decrypted.content && !decrypted.fileData) {
             setDecryptError(true);
+          }
+          // Capture decrypted image data if present
+          if (decrypted.imageData) {
+            setDecryptedImageData(decrypted.imageData);
           }
         } catch (error) {
           console.error('Decryption error:', error);
@@ -87,6 +93,9 @@ export function DropItem({ drop, onDelete, onPreview, selected, onSelect, select
 
   // What to display for file data (images)
   const displayFileData = drop.encrypted ? decryptedFileData : (drop.fileData || '');
+
+  // What to display for attached image (text drop with image)
+  const displayImageData = decryptedImageData;
 
   const handleDownload = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -221,7 +230,9 @@ export function DropItem({ drop, onDelete, onPreview, selected, onSelect, select
           </button>
         ) : (
           <div className={`w-14 flex items-center justify-center border-r ${tc.borderColor} ${tc.iconBg}`}>
-            {drop.type === 'text' ? (
+            {drop.type === 'text' && hasAttachedImage && displayImageData ? (
+              <img src={displayImageData} alt={drop.name} className="w-full h-full object-cover" />
+            ) : drop.type === 'text' ? (
               <svg className={`w-5 h-5 ${tc.textColor}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
                 <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
@@ -317,6 +328,26 @@ export function DropItem({ drop, onDelete, onPreview, selected, onSelect, select
                     <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                   </svg>
                 )}
+              </button>
+            )}
+            {hasAttachedImage && (
+              <button
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  if (!displayImageData) return;
+                  const link = document.createElement('a');
+                  link.href = displayImageData;
+                  link.download = `image-${drop.name}.png`;
+                  document.body.appendChild(link);
+                  link.click();
+                  document.body.removeChild(link);
+                }}
+                className={`w-12 h-full flex items-center justify-center border-r ${tc.borderColor} ${tc.textMuted} hover:bg-[#1A1A1A] hover:text-white transition-colors`}
+                title={isMinimal ? 'Download image' : 'DOWNLOAD_IMAGE'}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                  <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
               </button>
             )}
             {/* Delete button with inline confirmation */}

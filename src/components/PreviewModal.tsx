@@ -161,13 +161,24 @@ export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false
           )}
 
           {/* Text Snippet */}
-          {!isLoading && drop.type === 'text' && drop.content && (
-            <div className="p-6">
-              <div className={`border ${tc.borderColor} ${tc.bgColor} p-4 ${tc.roundedClass}`}>
-                <pre className={`${isMinimal ? 'text-sm font-sans' : 'text-sm font-mono'} ${tc.textColor} whitespace-pre-wrap break-all`}>
-                  {drop.content}
-                </pre>
-              </div>
+          {!isLoading && drop.type === 'text' && (drop.content || drop.imageData) && (
+            <div className="p-6 space-y-4">
+              {drop.content && (
+                <div className={`border ${tc.borderColor} ${tc.bgColor} p-4 ${tc.roundedClass}`}>
+                  <pre className={`${isMinimal ? 'text-sm font-sans' : 'text-sm font-mono'} ${tc.textColor} whitespace-pre-wrap break-all`}>
+                    {drop.content}
+                  </pre>
+                </div>
+              )}
+              {drop.imageData && (
+                <div className="flex items-center justify-center">
+                  <img
+                    src={drop.imageData}
+                    alt="Attached image"
+                    className={`max-w-full max-h-[50vh] border ${tc.borderColor} object-contain ${tc.roundedClass}`}
+                  />
+                </div>
+              )}
             </div>
           )}
 
@@ -239,6 +250,24 @@ export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false
                   {isMinimal ? 'Copy' : 'COPY'}
                 </>
               )}
+            </button>
+          )}
+          {drop.type === 'text' && drop.imageData && (
+            <button
+              onClick={() => {
+                const link = document.createElement('a');
+                link.href = drop.imageData!;
+                link.download = `image-${drop.name}.png`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+              }}
+              className="bg-[#1A1A1A] text-white px-5 py-2 text-xs tracking-wider hover:bg-[#2A2A2A] transition-colors flex items-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+              {isMinimal ? 'Download image' : 'DOWNLOAD_IMAGE'}
             </button>
           )}
           {drop.type === 'file' && drop.fileData && (
