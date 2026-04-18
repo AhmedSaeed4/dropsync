@@ -4,7 +4,7 @@ import { useState, useRef, useCallback } from 'react';
 import { ExpirationOption } from '@/types';
 
 interface TextModalProps {
-  onSubmit: (name: string, content: string, expiration: ExpirationOption, category?: string) => Promise<void>;
+  onSubmit: (name: string, content: string, expiration: ExpirationOption, category?: string, imageFile?: File) => Promise<void>;
   onClose: () => void;
   theme?: 'light' | 'dark' | 'minimal';
   customCategories?: string[];
@@ -35,8 +35,11 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
   const [creatingCategory, setCreatingCategory] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
+  const [attachedImage, setAttachedImage] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const isDark = theme === 'dark';
   const isMinimal = theme === 'minimal';
 
@@ -45,7 +48,7 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
     if (!content.trim()) return;
 
     setLoading(true);
-    await onSubmit(name.trim() || (isMinimal ? 'Text snippet' : 'TEXT_SNIPPET'), content, expiration, category || undefined);
+    await onSubmit(name.trim() || (isMinimal ? 'Text snippet' : 'TEXT_SNIPPET'), content, expiration, category || undefined, attachedImage || undefined);
     setLoading(false);
   };
 
@@ -110,6 +113,22 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
       console.error('Mic access denied:', err);
     }
   }, [isRecording]);
+
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) return;
+    setAttachedImage(file);
+    const reader = new FileReader();
+    reader.onload = (ev) => setImagePreview(ev.target?.result as string);
+    reader.readAsDataURL(file);
+    if (imageInputRef.current) imageInputRef.current.value = '';
+  };
+
+  const removeImage = () => {
+    setAttachedImage(null);
+    setImagePreview(null);
+  };
 
   // Theme colors
   const getThemeColors = () => {
@@ -321,6 +340,42 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
               required
               className={`w-full border ${tc.borderColor} ${tc.inputBg} ${tc.textColor} px-4 py-3 text-sm ${isMinimal ? 'font-sans' : 'font-mono'} ${tc.placeholderColor} focus:outline-none focus:ring-2 focus:ring-[#1A1A1A] focus:border-transparent resize-none transition-colors duration-300 ${tc.roundedClass}`}
             />
+          </div>
+
+          {/* Image attachment */}
+          <div>
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleImageSelect}
+              className="hidden"
+            />
+            {imagePreview ? (
+              <div className={`relative border ${tc.borderColor} ${tc.roundedClass} overflow-hidden`}>
+                <img src={imagePreview} alt="Attached" className="w-full max-h-40 object-cover" />
+                <button
+                  type="button"
+                  onClick={removeImage}
+                  className="absolute top-2 right-2 w-6 h-6 bg-[#1A1A1A]/80 text-white rounded-full flex items-center justify-center hover:bg-[#1A1A1A] transition-colors"
+                >
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => imageInputRef.current?.click()}
+                className={`w-full border border-dashed ${tc.borderColor} ${tc.textColor} ${tc.inputBg} px-4 py-3 text-xs ${isMinimal ? 'rounded-lg font-sans tracking-wide' : 'font-mono uppercase tracking-wider'} ${tc.placeholderColor} hover:bg-[#1A1A1A]/5 transition-colors flex items-center justify-center gap-2`}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M18 2.25H6A2.25 2.25 0 003.75 4.5v15A2.25 2.25 0 006 21.75h12A2.25 2.25 0 0020.25 19.5v-15A2.25 2.25 0 0018 2.25z" />
+                </svg>
+                {isMinimal ? 'Attach image (optional)' : 'ATTACH_IMAGE (OPTIONAL)'}
+              </button>
+            )}
           </div>
 
           {/* Expiration selector */}

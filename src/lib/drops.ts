@@ -94,6 +94,11 @@ export function createDropListener(
           iv: data.iv,
           encryptedDEK: data.encryptedDEK,
           encryptedDEKs: data.encryptedDEKs,
+          imageUrl: data.imageUrl || undefined,
+          imageR2Key: data.imageR2Key || undefined,
+          imageSize: data.imageSize || undefined,
+          imageMimeType: data.imageMimeType || undefined,
+          imageIv: data.imageIv || undefined,
           category: data.category || undefined,
           creatorName: data.creatorName || undefined,
         });
@@ -124,7 +129,8 @@ export async function createTextDrop(
   workspaceId: string | null = null,
   workspaceMembers?: string[],
   category?: string,
-  creatorName?: string
+  creatorName?: string,
+  imageFile?: File
 ): Promise<Drop | null> {
   try {
     const now = new Date();
@@ -134,6 +140,10 @@ export async function createTextDrop(
     let encrypted = false;
     let iv: string | undefined;
     let encryptedDEK: string | undefined;
+    let imageUrl: string | undefined;
+    let imageR2Key: string | undefined;
+    let imageEncryptedData: string | undefined;
+    let imageIv: string | undefined;
 
     // For workspace drops, use workspace key (no personal keys needed)
     if (workspaceId) {
@@ -144,6 +154,14 @@ export async function createTextDrop(
         encryptedContent = encryptedData.encrypted;
         iv = encryptedData.iv;
         encrypted = true;
+
+        // Encrypt image if provided
+        if (imageFile) {
+          const imageBase64 = await fileToBase64(imageFile);
+          const encImg = await encryptData(imageBase64, workspaceKey);
+          imageEncryptedData = encImg.encrypted;
+          imageIv = encImg.iv;
+        }
       }
     } else {
       // Personal drop - need user's personal keys
@@ -168,6 +186,26 @@ export async function createTextDrop(
           );
           encryptedDEK = JSON.stringify({ encryptedDEK: encDEK, iv: dekIv });
         }
+
+        // Encrypt image with same DEK
+        if (imageFile) {
+          const imageBase64 = await fileToBase64(imageFile);
+          const encImg = await encryptData(imageBase64, dek);
+          imageEncryptedData = encImg.encrypted;
+          imageIv = encImg.iv;
+        }
+      }
+    }
+
+    // Upload image to R2 if present
+    if (imageFile && imageEncryptedData) {
+      try {
+        const uploadResult = await uploadToR2(imageEncryptedData);
+        imageUrl = uploadResult.url;
+        imageR2Key = uploadResult.key;
+      } catch (uploadError) {
+        console.error('Image R2 upload failed:', uploadError);
+        return null;
       }
     }
 
@@ -181,7 +219,7 @@ export async function createTextDrop(
       expiresAt: expiresAt ? Timestamp.fromDate(expiresAt) : null,
       expirationOption,
       workspaceId,
-      category: category || null, // Add category field
+      category: category || null,
     };
 
     // Add creator info for workspace drops
@@ -196,6 +234,15 @@ export async function createTextDrop(
       if (encryptedDEK) docData.encryptedDEK = encryptedDEK;
     }
 
+    // Add image fields
+    if (imageFile) {
+      docData.imageUrl = imageUrl;
+      docData.imageR2Key = imageR2Key;
+      docData.imageSize = imageFile.size;
+      docData.imageMimeType = imageFile.type || 'image/png';
+      if (imageIv) docData.imageIv = imageIv;
+    }
+
     const docRef = await addDoc(collection(db, DROPS_COLLECTION), docData);
 
     return {
@@ -203,7 +250,7 @@ export async function createTextDrop(
       userId,
       type: 'text',
       name,
-      content: encrypted ? undefined : content, // Don't return encrypted content
+      content: encrypted ? undefined : content,
       createdAt: now,
       expiresAt,
       expirationOption,
@@ -211,6 +258,10 @@ export async function createTextDrop(
       encrypted,
       iv,
       encryptedDEK,
+      imageUrl,
+      imageR2Key,
+      imageSize: imageFile?.size,
+      imageMimeType: imageFile?.type || 'image/png',
       category,
       creatorName: workspaceId ? creatorName : undefined,
     };
@@ -398,7 +449,15 @@ export async function deleteDrop(drop: Drop): Promise<boolean> {
         await deleteFromR2(drop.r2Key, drop.workspaceId);
       } catch (error) {
         console.error('Failed to delete from R2:', error);
-        // Continue to delete Firestore doc even if R2 delete fails
+      }
+    }
+
+    // Delete attached image from R2 if present
+    if (drop.imageR2Key) {
+      try {
+        await deleteFromR2(drop.imageR2Key, drop.workspaceId);
+      } catch (error) {
+        console.error('Failed to delete image from R2:', error);
       }
     }
 
@@ -441,7 +500,15 @@ export async function cleanupExpiredDrops(userId: string): Promise<void> {
             await deleteFromR2(data.r2Key, data.workspaceId || null);
           } catch (error) {
             console.error('Failed to delete R2 file:', error);
-            // Continue to delete Firestore doc even if R2 delete fails
+          }
+        }
+
+        // Delete attached image from R2 if present
+        if (data.imageR2Key) {
+          try {
+            await deleteFromR2(data.imageR2Key, data.workspaceId || null);
+          } catch (error) {
+            console.error('Failed to delete image from R2:', error);
           }
         }
 
@@ -568,11 +635,29 @@ export async function decryptDrop(drop: Drop, currentUserId: string): Promise<Dr
 
     const decryptedData = await decryptData(dataToDecrypt, dek, drop.iv);
 
+    // Decrypt attached image if present (text drop with image)
+    let imageData: string | undefined;
+    if (drop.type === 'text' && drop.imageUrl) {
+      try {
+        const imgResponse = await fetch(drop.imageUrl);
+        if (imgResponse.ok) {
+          const encryptedImageData = await imgResponse.text();
+          const imgIv = drop.imageIv;
+          if (encryptedImageData && imgIv) {
+            imageData = await decryptData(encryptedImageData, dek, imgIv);
+          }
+        }
+      } catch (imgError) {
+        console.error('Failed to decrypt attached image:', imgError);
+      }
+    }
+
     // Return drop with decrypted content
     return {
       ...drop,
       content: drop.type === 'text' ? decryptedData : drop.content,
       fileData: drop.type === 'file' ? decryptedData : drop.fileData,
+      imageData,
     };
   } catch (error) {
     console.error('Failed to decrypt drop:', error);

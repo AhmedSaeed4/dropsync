@@ -38,6 +38,13 @@ export interface Drop {
   iv?: string; // Initialization vector for content encryption
   encryptedDEK?: string; // For personal drops: DEK encrypted with user's key
   encryptedDEKs?: { [userId: string]: { encryptedDEK: string; iv: string } }; // For workspace drops
+  // Image attachment (text drops with image)
+  imageUrl?: string; // R2 URL for attached image
+  imageR2Key?: string; // R2 object key for deletion
+  imageSize?: number;
+  imageMimeType?: string;
+  imageIv?: string; // IV for image encryption
+  imageData?: string; // Runtime only: decrypted base64 image data
   // Category field
   category?: string; // 'password', 'link', or custom category name
   // Creator name for workspace drops
