@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 
 interface AuthModalProps {
   onSignIn: (email: string, password: string) => Promise<{ error?: string; needsVerification?: boolean }>;
@@ -23,6 +24,7 @@ export function AuthModal({
   theme = 'light',
   loading: externalLoading
 }: AuthModalProps) {
+  useBodyScrollLock();
   const [tab, setTab] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -143,7 +145,7 @@ export function AuthModal({
 
   return (
     <div
-      className={`fixed inset-0 ${tc.overlayBg} flex items-center justify-center z-50 p-4 transition-colors duration-300`}
+      className={`fixed inset-0 ${tc.overlayBg} flex items-center justify-center z-50 p-4 transition-colors duration-300 overscroll-contain`}
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       <div className={`${tc.bgColor} border ${tc.borderColor} ${tc.roundedClass} w-full max-w-md transition-colors duration-300`}>

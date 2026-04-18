@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback } from 'react';
 import { ExpirationOption } from '@/types';
+import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 
 interface TextModalProps {
   onSubmit: (name: string, content: string, expiration: ExpirationOption, category?: string, imageFile?: File) => Promise<void>;
@@ -25,6 +26,7 @@ const BUILT_IN_CATEGORIES = [
 ];
 
 export function TextModal({ onSubmit, onClose, theme = 'light', customCategories = [], onCreateCategory }: TextModalProps) {
+  useBodyScrollLock();
   const [name, setName] = useState('');
   const [content, setContent] = useState('');
   const [loading, setLoading] = useState(false);
@@ -164,7 +166,7 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
 
   return (
     <div
-      className={`fixed inset-0 ${tc.overlayBg} flex items-center justify-center z-50 p-4 transition-colors duration-300`}
+      className={`fixed inset-0 ${tc.overlayBg} flex items-center justify-center z-50 p-4 transition-colors duration-300 overscroll-contain`}
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       <div className={`${tc.bgColor} border ${tc.borderColor} ${tc.roundedClass} w-full max-w-lg transition-colors duration-300`}>
