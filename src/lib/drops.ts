@@ -14,6 +14,7 @@ import {
 import { db, auth } from './firebase';
 import { Drop, ExpirationOption } from '@/types';
 import { generateAESKey, encryptData, decryptData, importAESKey, exportKey } from './crypto';
+import { deleteSharesForDrop } from './shares';
 import {
   getUserKeys,
   getUserPublicKey,
@@ -462,6 +463,8 @@ export async function deleteDrop(drop: Drop): Promise<boolean> {
     }
 
     await deleteDoc(doc(db, DROPS_COLLECTION, drop.id));
+    // Delete any associated share links
+    await deleteSharesForDrop(drop.id);
     return true;
   } catch (error) {
     console.error('Error deleting drop:', error);
@@ -514,6 +517,8 @@ export async function cleanupExpiredDrops(userId: string): Promise<void> {
 
         // Then delete Firestore document
         await deleteDoc(doc(db, DROPS_COLLECTION, document.id));
+        // Delete associated share links
+        await deleteSharesForDrop(document.id);
       };
 
       deletePromises.push(deletePromise());
