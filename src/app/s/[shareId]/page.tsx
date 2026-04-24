@@ -9,7 +9,7 @@ interface ShareData {
   content: string | null;
   mimeType: string | null;
   fileSize: number | null;
-  imageData: string | null;
+  imageUrl: string | null;
   youtubeVideoId: string | null;
   expiresAt: string | null;
 }
@@ -54,9 +54,9 @@ export default function SharePage() {
   };
 
   const handleDownload = () => {
-    if (share?.imageData) {
+    if (share?.imageUrl) {
       const link = document.createElement('a');
-      link.href = share.imageData;
+      link.href = share.imageUrl;
       link.download = share.name || 'image.png';
       document.body.appendChild(link);
       link.click();
@@ -152,10 +152,10 @@ export default function SharePage() {
           )}
 
           {/* Attached image */}
-          {share.imageData && (
+          {share.imageUrl && (
             <div className="flex items-center justify-center mb-4">
               <img
-                src={share.imageData}
+                src={share.imageUrl}
                 alt="Attached image"
                 className="max-w-full max-h-[50vh] border border-[#1A1A1A] object-contain"
               />
@@ -186,7 +186,7 @@ export default function SharePage() {
                 )}
               </button>
             )}
-            {share.imageData && (
+            {share.imageUrl && (
               <button
                 onClick={handleDownload}
                 className="bg-[#1A1A1A] text-white px-5 py-2 text-xs tracking-wider hover:bg-[#2A2A2A] transition-colors flex items-center gap-2"
@@ -217,7 +217,7 @@ export default function SharePage() {
       {/* Footer */}
       <footer className="border-t border-[#1A1A1A]/10 px-6 py-4 text-center">
         <a
-          href={window.location.origin}
+          href="/"
           className="text-xs text-[#1A1A1A]/30 font-mono uppercase tracking-wider hover:text-[#1A1A1A]/60 transition-colors"
         >
           Shared via DropSync

@@ -112,7 +112,7 @@ export function DropItem({ drop, onDelete, onPreview, selected, onSelect, select
         type: drop.type,
         name: drop.name,
         content: drop.type === 'text' ? displayContent : undefined,
-        imageData: displayImageData || undefined,
+        imageData: displayImageData || (isImage ? displayFileData : undefined),
         youtubeVideoId: youtubeVideoId || undefined,
         expiresAt: drop.expiresAt,
       });

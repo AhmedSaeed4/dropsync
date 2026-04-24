@@ -27,6 +27,32 @@ export async function createShare(options: {
     const idToken = await currentUser.getIdToken();
     const shareId = generateShareId();
 
+    // If there's image data, upload it to R2 via API
+    let imageUrl: string | undefined;
+    let imageR2Key: string | undefined;
+    if (options.imageData) {
+      try {
+        const uploadRes = await fetch('/api/share', {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({ imageData: options.imageData }),
+        });
+        if (uploadRes.ok) {
+          const uploadData = await uploadRes.json();
+          imageUrl = uploadData.imageUrl;
+          imageR2Key = uploadData.imageR2Key;
+        } else {
+          const err = await uploadRes.json();
+          console.error('Share image upload failed:', err);
+        }
+      } catch (error) {
+        console.error('Share image upload failed:', error);
+      }
+    }
+
     const res = await fetch('/api/share', {
       method: 'POST',
       headers: {
@@ -41,7 +67,8 @@ export async function createShare(options: {
         content: options.content,
         mimeType: options.mimeType,
         fileSize: options.fileSize,
-        imageData: options.imageData,
+        imageUrl,
+        imageR2Key,
         youtubeVideoId: options.youtubeVideoId,
         expiresAt: options.expiresAt?.toISOString() || null,
       }),

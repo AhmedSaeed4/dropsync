@@ -127,6 +127,14 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
     if (imageInputRef.current) imageInputRef.current.value = '';
   };
 
+  const handleImageFile = (file: File) => {
+    if (!file.type.startsWith('image/')) return;
+    setAttachedImage(file);
+    const reader = new FileReader();
+    reader.onload = (ev) => setImagePreview(ev.target?.result as string);
+    reader.readAsDataURL(file);
+  };
+
   const removeImage = () => {
     setAttachedImage(null);
     setImagePreview(null);
@@ -168,6 +176,23 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
     <div
       className={`fixed inset-0 ${tc.overlayBg} flex items-center justify-center z-50 p-4 transition-colors duration-300 overscroll-contain overflow-y-auto`}
       onClick={(e) => e.target === e.currentTarget && onClose()}
+      onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+      onDrop={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const file = e.dataTransfer.files[0];
+        if (file) handleImageFile(file);
+      }}
+      onPaste={(e) => {
+        const items = e.clipboardData.items;
+        for (let i = 0; i < items.length; i++) {
+          if (items[i].type.startsWith('image/')) {
+            const file = items[i].getAsFile();
+            if (file) handleImageFile(file);
+            break;
+          }
+        }
+      }}
     >
       <div className={`${tc.bgColor} border ${tc.borderColor} ${tc.roundedClass} w-full max-w-lg my-auto max-h-[90vh] flex flex-col overflow-hidden transition-colors duration-300`}>
         {/* Header */}
