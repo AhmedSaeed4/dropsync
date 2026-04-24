@@ -109,7 +109,7 @@ export function DropZone({
   // Handle clipboard paste (Ctrl+V) for images
   useEffect(() => {
     const handlePaste = async (e: ClipboardEvent) => {
-      if (!user || uploading) return;
+      if (!user || uploading || showTextModal) return;
 
       // Skip if user is typing in a text field (chat input, etc.)
       const target = e.target as HTMLElement;
@@ -147,7 +147,7 @@ export function DropZone({
 
     document.addEventListener('paste', handlePaste);
     return () => document.removeEventListener('paste', handlePaste);
-  }, [user, uploading, expiration, workspaceId, workspaceMembers]);
+  }, [user, uploading, expiration, workspaceId, workspaceMembers, showTextModal]);
 
   // Theme colors
   const getThemeColors = () => {

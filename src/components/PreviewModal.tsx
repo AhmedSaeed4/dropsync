@@ -73,7 +73,7 @@ export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false
         type: drop.type,
         name: drop.name,
         content: drop.type === 'text' ? (drop.content || textContent) : undefined,
-        imageData: drop.imageData || undefined,
+        imageData: drop.imageData || (isImage ? drop.fileData : undefined),
         youtubeVideoId: youtubeVideoId || undefined,
         expiresAt: drop.expiresAt,
       });
