@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Drop } from '@/types';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { formatFileSize, getYouTubeVideoId } from '@/lib/drops';
+import { createShare } from '@/lib/shares';
 
 interface PreviewModalProps {
   drop: Drop;
@@ -23,6 +24,8 @@ function isTextFile(drop: Drop): boolean {
 export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false }: PreviewModalProps) {
   useBodyScrollLock();
   const [copied, setCopied] = useState(false);
+  const [shareCopied, setShareCopied] = useState(false);
+  const [isSharing, setIsSharing] = useState(false);
   const isImage = drop.mimeType?.startsWith('image/');
   const isText = isTextFile(drop);
   const isDark = theme === 'dark';
@@ -61,6 +64,30 @@ export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false
 
   const textContent = isText ? getTextContent() : '';
   const youtubeVideoId = textContent ? getYouTubeVideoId(textContent) : null;
+
+  const handleShare = async () => {
+    setIsSharing(true);
+    try {
+      const result = await createShare({
+        dropId: drop.id,
+        type: drop.type,
+        name: drop.name,
+        content: drop.type === 'text' ? (drop.content || textContent) : undefined,
+        imageData: drop.imageData || undefined,
+        youtubeVideoId: youtubeVideoId || undefined,
+        expiresAt: drop.expiresAt,
+      });
+      if (result?.url) {
+        await navigator.clipboard.writeText(result.url);
+        setShareCopied(true);
+        setTimeout(() => setShareCopied(false), 2000);
+      }
+    } catch (error) {
+      console.error('Share failed:', error);
+    } finally {
+      setIsSharing(false);
+    }
+  };
 
   // Theme colors
   const getThemeColors = () => {
@@ -238,6 +265,27 @@ export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false
               {isMinimal ? 'Watch on YouTube' : 'WATCH_ON_YOUTUBE'}
             </button>
           )}
+          <button
+            onClick={handleShare}
+            disabled={isSharing}
+            className={`border ${tc.borderColor} ${tc.textColor} px-5 py-2 text-xs tracking-wider hover:bg-[#1A1A1A] hover:text-white transition-colors flex items-center gap-2 disabled:opacity-50 ${isMinimal ? 'rounded-full' : ''}`}
+          >
+            {shareCopied ? (
+              <>
+                <svg className={`w-4 h-4 ${isMinimal ? 'text-[#1A1A1A]' : 'text-[#FF5A47]'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path d="M5 13l4 4L19 7" />
+                </svg>
+                {isMinimal ? 'Link copied' : 'LINK_COPIED'}
+              </>
+            ) : (
+              <>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                  <path d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+                </svg>
+                {isMinimal ? 'Share' : 'SHARE'}
+              </>
+            )}
+          </button>
           <button
             onClick={onClose}
             className={`border ${tc.borderColor} ${tc.textColor} px-5 py-2 text-xs tracking-wider hover:bg-[#1A1A1A] hover:text-white transition-colors ${isMinimal ? 'rounded-full' : ''}`}
