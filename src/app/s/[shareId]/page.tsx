@@ -53,14 +53,22 @@ export default function SharePage() {
     }
   };
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
     if (share?.imageUrl) {
-      const link = document.createElement('a');
-      link.href = share.imageUrl;
-      link.download = share.name || 'image.png';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      try {
+        const res = await fetch(share.imageUrl);
+        const blob = await res.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = share.name || 'image.png';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(blobUrl);
+      } catch {
+        window.open(share.imageUrl, '_blank');
+      }
     }
   };
 
