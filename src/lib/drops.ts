@@ -524,6 +524,17 @@ export async function cleanupExpiredDrops(userId: string): Promise<void> {
   await Promise.allSettled(deletePromises);
 }
 
+export function getYouTubeVideoId(text: string): string | null {
+  const patterns = [
+    /(?:youtube\.com\/watch\?.*v=|youtu\.be\/|youtube\.com\/shorts\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/,
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match) return match[1];
+  }
+  return null;
+}
+
 export function formatFileSize(bytes: number): string {
   if (bytes === 0) return '0 Bytes';
   const k = 1024;

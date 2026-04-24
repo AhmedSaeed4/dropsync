@@ -1,7 +1,7 @@
 'use client';
 
 import { Drop } from '@/types';
-import { formatFileSize, getTimeRemaining, decryptDrop } from '@/lib/drops';
+import { formatFileSize, getTimeRemaining, decryptDrop, getYouTubeVideoId } from '@/lib/drops';
 import { useState, useEffect } from 'react';
 
 interface DropItemProps {
@@ -96,6 +96,9 @@ export function DropItem({ drop, onDelete, onPreview, selected, onSelect, select
 
   // What to display for attached image (text drop with image)
   const displayImageData = decryptedImageData;
+
+  // YouTube thumbnail detection
+  const youtubeVideoId = drop.type === 'text' ? getYouTubeVideoId(displayContent) : null;
 
   const handleDownload = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -232,6 +235,8 @@ export function DropItem({ drop, onDelete, onPreview, selected, onSelect, select
           <div className={`w-14 flex items-center justify-center border-r ${tc.borderColor} ${tc.iconBg}`}>
             {drop.type === 'text' && hasAttachedImage && displayImageData ? (
               <img src={displayImageData} alt={drop.name} className="w-full h-full object-cover" />
+            ) : drop.type === 'text' && youtubeVideoId ? (
+              <img src={`https://img.youtube.com/vi/${youtubeVideoId}/mqdefault.jpg`} alt="YouTube thumbnail" className="w-full h-full object-cover" />
             ) : drop.type === 'text' ? (
               <svg className={`w-5 h-5 ${tc.textColor}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
                 <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
