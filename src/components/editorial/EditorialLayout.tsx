@@ -163,9 +163,9 @@ export function EditorialLayout(props: EditorialLayoutProps) {
       />
 
       {/* Main content - responsive: stacked on mobile, side-by-side on desktop */}
-      <main className={`flex flex-col lg:flex-row py-6 lg:py-[45px] transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] px-4 sm:px-6 ${showChat ? 'lg:px-[80px] lg:gap-8' : 'lg:px-[120px] lg:gap-[60px]'} gap-6`} style={{ minHeight: 'calc(100vh - 65px)' }}>
+      <main className={`flex flex-col lg:flex-row py-6 lg:py-[45px] transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] px-4 sm:px-6 ${showChat ? 'lg:px-[80px] lg:gap-8' : 'lg:px-[80px] lg:gap-[60px]'} gap-6`} style={{ minHeight: 'calc(100vh - 65px)' }}>
         {/* Left column: DropZone + Status + Theme */}
-        <div className={`lg:border-r ${tc.border} overflow-y-auto transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] lg:pl-1.5 lg:pr-5 w-full ${showChat ? 'lg:flex-[1.2_0_0px]' : 'lg:flex-[2.5_0_1080px]'}`}>
+        <div className={`lg:border-r ${tc.border} overflow-y-auto transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] lg:pr-5 w-full min-w-0 ${showChat ? 'lg:flex-[1.2_0_0px] lg:pl-1.5' : 'lg:flex-1 lg:pl-11'}`}>
           <div className="space-y-6">
             <EditorialDropZone
               theme={theme}
