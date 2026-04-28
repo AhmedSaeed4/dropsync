@@ -6,7 +6,7 @@ import { getEditorialThemeColors } from './editorialTheme';
 
 interface EditorialVerifyEmailModalProps {
   email: string;
-  onResend: () => Promise<void>;
+  onResend: () => Promise<{ success: boolean; error?: string }>;
   onClose: () => void;
   theme?: 'light' | 'dark' | 'minimal';
 }
