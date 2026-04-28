@@ -1,0 +1,408 @@
+'use client';
+
+import { useState, useRef, useEffect } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkBreaks from 'remark-breaks';
+import { auth } from '@/lib/firebase';
+import {
+  subscribeToMessages,
+  saveMessage,
+  createConversation,
+  deleteConversation,
+  listConversations,
+  Conversation,
+  ChatMessage,
+} from '@/lib/chat';
+import { getEditorialThemeColors } from './editorialTheme';
+
+interface EditorialChatPanelProps {
+  theme: 'light' | 'dark' | 'minimal';
+  onClose: () => void;
+}
+
+const AGENT_URL = process.env.NEXT_PUBLIC_AGENT_URL || 'http://localhost:8000';
+
+const WELCOME = 'Hi! I can help you manage your drops. Ask me to list drops, search content, check storage stats, or manage workspaces.';
+
+export function EditorialChatPanel({ theme, onClose }: EditorialChatPanelProps) {
+  const tc = getEditorialThemeColors(theme);
+
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [activeConvId, setActiveConvId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [messagesLoading, setMessagesLoading] = useState(false);
+  const [showSidebar, setShowSidebar] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [switchingConv, setSwitchingConv] = useState<string | null>(null);
+  const [animateMessages, setAnimateMessages] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const unsubRef = useRef<(() => void) | null>(null);
+  const userId = auth.currentUser?.uid;
+  const activeConv = conversations.find(c => c.id === activeConvId) || null;
+
+  // Delayed animations for staggered entrance
+  const [showHeader, setShowHeader] = useState(false);
+  const [showContent, setShowContent] = useState(false);
+  const [showInputArea, setShowInputArea] = useState(false);
+
+  // Trigger staggered animations on mount
+  useEffect(() => {
+    setShowHeader(false);
+    setShowContent(false);
+    setShowInputArea(false);
+
+    const t1 = setTimeout(() => setShowHeader(true), 50);
+    const t2 = setTimeout(() => setShowContent(true), 150);
+    const t3 = setTimeout(() => setShowInputArea(true), 280);
+
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+    };
+  }, []);
+
+  // Load conversations list
+  useEffect(() => {
+    if (!userId) return;
+    listConversations(userId).then(setConversations);
+  }, [userId]);
+
+  // Subscribe to messages when active conversation changes
+  useEffect(() => {
+    if (!userId || !activeConvId) return;
+
+    setMessagesLoading(true);
+    if (unsubRef.current) unsubRef.current();
+
+    unsubRef.current = subscribeToMessages(userId, activeConvId, (msgs) => {
+      setMessages(msgs);
+      setMessagesLoading(false);
+    });
+
+    return () => {
+      if (unsubRef.current) unsubRef.current();
+    };
+  }, [userId, activeConvId]);
+
+  // Auto-scroll on new messages
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [messages, loading]);
+
+  // Auto-resize textarea
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + 'px';
+    }
+  }, [input]);
+
+  const handleNewChat = () => {
+    setActiveConvId(null);
+    setMessages([]);
+    setShowSidebar(false);
+  };
+
+  const handleSwitchConv = (convId: string) => {
+    if (switchingConv) return;
+    if (convId === activeConvId) {
+      setShowSidebar(false);
+      return;
+    }
+    setSwitchingConv(convId);
+    setMessages([]);
+    setMessagesLoading(true);
+    setActiveConvId(convId);
+  };
+
+  // Close sidebar when messages finish loading after switching
+  useEffect(() => {
+    if (switchingConv && !messagesLoading) {
+      setAnimateMessages(true);
+      setShowSidebar(false);
+      setSwitchingConv(null);
+      const timer = setTimeout(() => setAnimateMessages(false), 500);
+      return () => clearTimeout(timer);
+    }
+  }, [messagesLoading, switchingConv]);
+
+  const handleDeleteConv = async (convId: string) => {
+    if (!userId) return;
+    await deleteConversation(userId, convId);
+    const updated = await listConversations(userId);
+    setConversations(updated);
+    if (activeConvId === convId) {
+      setActiveConvId(updated.length > 0 ? updated[0].id : null);
+      setMessages([]);
+    }
+  };
+
+  const handleSend = async () => {
+    const text = input.trim();
+    if (!text || loading || !userId) return;
+
+    setInput('');
+    setLoading(true);
+
+    let convId = activeConvId;
+    if (!convId) {
+      const title = text.length > 40 ? text.slice(0, 40) + '...' : text;
+      convId = await createConversation(userId, title);
+      setActiveConvId(convId);
+      const updated = await listConversations(userId);
+      setConversations(updated);
+    }
+
+    await saveMessage(userId, convId, 'user', text);
+
+    const currentUser = auth.currentUser;
+    if (!currentUser) { setLoading(false); return; }
+
+    try {
+      const idToken = await currentUser.getIdToken();
+      const res = await fetch(`${AGENT_URL}/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          message: text,
+          history: messages.map((m) => ({ role: m.role, content: m.content })),
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Request failed' }));
+        throw new Error(err.detail || `Error ${res.status}`);
+      }
+
+      const data = await res.json();
+      await saveMessage(userId, convId, 'assistant', data.response);
+    } catch (e: any) {
+      await saveMessage(userId, convId, 'assistant', `Error: ${e.message || 'Something went wrong'}`);
+    } finally {
+      setLoading(false);
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    }
+  };
+
+  const handleCopy = async (msgId: string, content: string, messageElement: HTMLElement) => {
+    const codeBlock = messageElement.querySelector('pre code');
+    const textToCopy = codeBlock ? (codeBlock.textContent || '') : content;
+    await navigator.clipboard.writeText(textToCopy);
+    setCopiedId(msgId);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  };
+
+  return (
+    <div className={`flex flex-col h-full border-l ${tc.border} ${tc.bg} transition-colors duration-500`}>
+      {/* Header with staggered fade-in */}
+      <div className={`border-b ${tc.border} px-5 py-4 flex items-center justify-between shrink-0 transition-all duration-300 ease-out ${showHeader ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-[10px]'}`}>
+        <div className="flex items-center gap-1.5">
+          <h3 className={`text-[15px] font-medium ${tc.fontClass} ${tc.text}`}>
+            AI Assistant
+          </h3>
+        </div>
+        <div className="flex items-center gap-1">
+          {/* History button */}
+          <button
+            onClick={() => setShowSidebar(true)}
+            className={`w-7 h-7 flex items-center justify-center rounded-md ${tc.text} opacity-50 hover:opacity-100 hover:bg-black/5 transition-all`}
+            title="Chat history"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </button>
+          {/* New chat button */}
+          <button
+            onClick={handleNewChat}
+            className={`w-7 h-7 flex items-center justify-center rounded-md ${tc.text} opacity-50 hover:opacity-100 hover:bg-black/5 transition-all`}
+            title="New chat"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+            </svg>
+          </button>
+          {/* Close button */}
+          <button
+            onClick={onClose}
+            className={`w-7 h-7 flex items-center justify-center rounded-md ${tc.text} opacity-50 hover:opacity-100 hover:bg-black/5 transition-all`}
+            title="Close"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      {/* Sidebar overlay */}
+      {showSidebar && (
+        <div className="absolute inset-0 z-10 flex overflow-hidden">
+          <div className={`w-full ${tc.bg} border-r ${tc.border} flex flex-col overflow-hidden`}>
+            <div className={`px-5 py-4 border-b ${tc.border} flex items-center justify-between`}>
+              <p className={`text-xs ${tc.fontClass} ${tc.muted}`}>
+                Chat history
+              </p>
+              <button
+                onClick={() => setShowSidebar(false)}
+                className={`${tc.text} opacity-50 hover:opacity-100 transition-opacity`}
+                title="Close history"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              {conversations.map((conv) => (
+                <div
+                  key={conv.id}
+                  className={`group flex items-center gap-1 px-5 py-2.5 cursor-pointer ${tc.inactivePillHoverBg} ${conv.id === activeConvId ? 'bg-black/5' : ''}`}
+                  onClick={() => handleSwitchConv(conv.id)}
+                >
+                  <span className={`flex-1 text-sm ${tc.fontClass} ${tc.text} truncate`}>{conv.title}</span>
+                  {switchingConv === conv.id && (
+                    <div className={`w-3 h-3 border-2 ${theme === 'dark' ? 'border-white/30 border-t-white' : 'border-[#1a1a1a]/30 border-t-[#1a1a1a]'} rounded-full animate-spin`} />
+                  )}
+                  {switchingConv !== conv.id && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleDeleteConv(conv.id); }}
+                      className="opacity-0 group-hover:opacity-60 hover:!opacity-100 text-red-400 hover:text-red-500 transition-opacity"
+                      title="Delete conversation"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+              ))}
+              {conversations.length === 0 && (
+                <p className={`text-sm ${tc.fontClass} ${tc.muted} px-5 py-6 text-center`}>No conversations yet</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Messages area with staggered fade-in */}
+      <div ref={scrollRef} className={`flex-1 overflow-y-auto p-5 space-y-4 min-h-0 transition-all duration-[350ms] ease-out ${showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-[10px]'}`}>
+        {/* Welcome message */}
+        {messages.length === 0 && !loading && (
+          <div className="flex flex-col items-center justify-center h-full">
+            <svg className={`w-10 h-10 ${tc.muted} mb-4`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+            </svg>
+            <p className={`text-sm ${tc.fontClass} ${tc.muted} text-center max-w-[240px]`}>
+              Ask me anything about your drops
+            </p>
+          </div>
+        )}
+
+        {/* Messages with fadeInUp animation */}
+        {!showSidebar && messages.map((msg, idx) => (
+          <div
+            key={msg.id}
+            className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-fade-in-up`}
+            style={{ animationDelay: `${idx * 50}ms` }}
+          >
+            <div
+              className={`relative max-w-[85%] px-3.5 py-2.5 text-sm leading-relaxed overflow-x-auto group ${
+                msg.role === 'user'
+                  ? 'bg-[#1a1a1a] text-[#FFFEF5] rounded-lg'
+                  : `bg-[#f5f5f5] ${theme === 'dark' ? 'bg-white/10 text-white' : 'text-[#1a1a1a]'} rounded-lg border ${tc.border}`
+              }`}
+              style={msg.role === 'user' ? { borderBottomRightRadius: '3px' } : { borderBottomLeftRadius: '3px' }}
+            >
+              {msg.role === 'assistant' && (
+                <button
+                  onClick={(e) => handleCopy(msg.id, msg.content, e.currentTarget.parentElement!)}
+                  aria-label="Copy message"
+                  className={`absolute top-1 right-1 p-1 ${tc.roundedClass} transition-opacity ${
+                    theme === 'minimal'
+                      ? 'opacity-40 hover:opacity-100'
+                      : 'opacity-0 group-hover:opacity-70 hover:!opacity-100'
+                  } ${theme === 'dark' ? 'text-white/60 hover:text-white' : 'text-[#1a1a1a]/40 hover:text-[#1a1a1a]'}`}
+                  title={copiedId === msg.id ? 'Copied!' : 'Copy'}
+                >
+                  {copiedId === msg.id ? (
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                  ) : (
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                      <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                    </svg>
+                  )}
+                </button>
+              )}
+              {msg.role === 'assistant' ? (
+                <div className={`break-words [&_p]:mb-1 [&_p:last-child]:mb-0 [&_pre]:overflow-x-auto [&_pre]:max-w-full [&_code]:break-all ${tc.fontClass}`}>
+                  <ReactMarkdown remarkPlugins={[remarkBreaks]}>{msg.content}</ReactMarkdown>
+                </div>
+              ) : (
+                <div className={`whitespace-pre-wrap break-words ${tc.fontClass}`}>{msg.content}</div>
+              )}
+            </div>
+          </div>
+        ))}
+
+        {/* Loading dots */}
+        {loading && (
+          <div className="flex justify-start">
+            <div className={`px-4 py-3 rounded-lg ${theme === 'dark' ? 'bg-white/10' : 'bg-[#f5f5f5] border ' + tc.border}`}>
+              <div className="flex gap-1.5 items-center">
+                <span className={`w-1.5 h-1.5 rounded-full ${theme === 'dark' ? 'bg-white' : 'bg-[#1a1a1a]'} opacity-40 animate-bounce`} style={{ animationDelay: '0ms' }} />
+                <span className={`w-1.5 h-1.5 rounded-full ${theme === 'dark' ? 'bg-white' : 'bg-[#1a1a1a]'} opacity-40 animate-bounce`} style={{ animationDelay: '150ms' }} />
+                <span className={`w-1.5 h-1.5 rounded-full ${theme === 'dark' ? 'bg-white' : 'bg-[#1a1a1a]'} opacity-40 animate-bounce`} style={{ animationDelay: '300ms' }} />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Input area with staggered fade-in */}
+      <div className={`border-t ${tc.border} p-4 shrink-0 transition-all duration-300 ease-out ${showInputArea ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-[10px]'}`}>
+        <div className="flex gap-2 items-end">
+          <textarea
+            ref={textareaRef}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Type a message..."
+            disabled={loading}
+            rows={1}
+            className={`flex-1 px-4 py-3 text-[14px] ${tc.fontClass} ${tc.bg} ${tc.text} border ${tc.border} rounded-lg resize-none focus:outline-none focus:border-[#1a1a1a] disabled:opacity-50 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]`}
+            style={{ maxHeight: '120px' }}
+          />
+          <button
+            onClick={handleSend}
+            disabled={loading || !input.trim()}
+            className="w-10 h-10 shrink-0 flex items-center justify-center bg-[#1a1a1a] text-white rounded-lg hover:bg-[#333] disabled:opacity-30 transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

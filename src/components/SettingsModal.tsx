@@ -13,6 +13,8 @@ interface SettingsModalProps {
   onClose: () => void;
   onDeleted: () => void;
   onNameUpdate?: (name: string) => void;
+  onLayoutChange?: (layout: 'classic' | 'editorial') => void;
+  layoutMode?: 'classic' | 'editorial';
   theme?: 'light' | 'dark' | 'minimal';
 }
 
@@ -25,6 +27,8 @@ export function SettingsModal({
   onClose,
   onDeleted,
   onNameUpdate,
+  onLayoutChange,
+  layoutMode = 'classic',
   theme = 'light',
 }: SettingsModalProps) {
   useBodyScrollLock();
@@ -245,8 +249,39 @@ export function SettingsModal({
         </div>
       )}
 
-      {/* Danger Zone */}
+      {/* Layout Section */}
       <div className={`pt-6 ${isPasswordProvider ? 'border-t ' + tc.borderColor : ''}`}>
+        <h3 className={`text-sm font-semibold mb-3 ${isMinimal ? 'font-sans tracking-wide' : 'font-mono uppercase tracking-wider'} ${tc.textColor}`}>
+          {isMinimal ? 'Layout' : 'LAYOUT'}
+        </h3>
+        <p className={`text-xs mb-3 ${tc.textMuted}`}>
+          {isMinimal ? 'Choose the app layout style' : 'CHOOSE_APP_LAYOUT_STYLE'}
+        </p>
+        <div className="flex gap-2">
+          {(['classic', 'editorial'] as const).map((layout) => (
+            <button
+              key={layout}
+              onClick={() => onLayoutChange?.(layout)}
+              className={`flex-1 py-2 px-3 text-xs font-medium tracking-wider transition-all ${
+                layoutMode === layout
+                  ? isMinimal
+                    ? 'bg-[#1A1A1A] text-white rounded-full'
+                    : 'bg-[#FF5A47] text-white'
+                  : isMinimal
+                    ? 'text-[#1A1A1A]/50 hover:text-[#1A1A1A] rounded-full'
+                    : isDark
+                      ? 'bg-white/10 text-white/60 hover:bg-white/20'
+                      : 'bg-[#1A1A1A]/10 text-[#1A1A1A]/60 hover:bg-[#1A1A1A]/20'
+              }`}
+            >
+              {layout.charAt(0).toUpperCase() + layout.slice(1)}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Danger Zone */}
+      <div className={`pt-6 border-t ${tc.borderColor}`}>
         <h3 className={`text-sm font-semibold mb-3 ${isMinimal ? 'font-sans tracking-wide' : 'font-mono uppercase tracking-wider'} text-red-500`}>
           {isMinimal ? 'Danger Zone' : 'DANGER'}
         </h3>

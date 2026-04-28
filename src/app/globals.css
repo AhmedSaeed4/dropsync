@@ -21,6 +21,7 @@ body {
   color: var(--black);
   font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
+  scrollbar-gutter: stable;
 }
 
 /* Custom scrollbar - technical style */
@@ -146,6 +147,22 @@ body {
 
 .status-active {
   animation: pulse-coral 2s ease-in-out infinite;
+}
+
+/* Fade in up animation for chat messages */
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.25s ease both;
 }
 
 /* Slide up animation for toast */
@@ -328,4 +345,71 @@ body {
     left: 40% !important;
     transform: translateX(-50%) !important;
   }
+}
+
+/* Editorial Layout Styles */
+
+@keyframes editorial-fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-editorial-fade-in-up {
+  animation: editorial-fade-in-up 0.3s ease forwards;
+}
+
+/* Thin scrollbar for editorial drop list */
+.thin-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.thin-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.thin-scrollbar::-webkit-scrollbar-thumb {
+  background: #e0e0e0;
+  border-radius: 2px;
+}
+
+.thin-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #bbb;
+}
+
+/* Layout transition: fade out with blur */
+@keyframes layout-fade-out {
+  from {
+    opacity: 1;
+    filter: blur(0px);
+  }
+  to {
+    opacity: 0;
+    filter: blur(4px);
+  }
+}
+
+/* Layout transition: fade in with blur */
+@keyframes layout-fade-in {
+  from {
+    opacity: 0;
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0px);
+  }
+}
+
+.layout-fade-out {
+  animation: layout-fade-out 200ms ease-out forwards;
+}
+
+.layout-fade-in {
+  animation: layout-fade-in 300ms ease-out forwards;
 }
