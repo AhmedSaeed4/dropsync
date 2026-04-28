@@ -190,58 +190,37 @@ export function EditorialDropList({
     setConfirmDeleteCategory(null);
   };
 
-  // Loading state
-  if (loading) {
-    return (
-      <div className={`${tc.bg} border ${tc.border} ${tc.roundedClass} p-12 flex flex-col items-center justify-center transition-colors`}>
-        <div className={`w-6 h-6 border-2 ${tc.border} border-t-transparent animate-spin ${tc.roundedClass}`} />
-        <p className={`text-sm ${font} ${tc.muted} mt-4`}>Loading drops...</p>
-      </div>
-    );
-  }
-
-  // Empty state - no drops at all
-  if (visibleDrops.length === 0 && pendingDeletions.size === 0) {
-    return (
-      <div className={`${tc.bg} border ${tc.border} ${tc.roundedClass} p-12 text-center transition-colors`}>
-        <div className={`w-16 h-16 mx-auto border ${tc.border} ${tc.roundedClass} flex items-center justify-center mb-4`}>
-          <svg className={`w-7 h-7 ${tc.muted}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1">
-            <path d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
-          </svg>
-        </div>
-        <p className={`text-sm ${font} ${tc.text} font-medium`}>No drops yet</p>
-        <p className={`text-xs ${font} ${tc.muted} mt-1`}>Upload files or paste text to get started</p>
-      </div>
-    );
-  }
+  const shimmerClass = theme === 'dark' ? 'skeleton-shimmer-dark' : theme === 'minimal' ? 'skeleton-shimmer-minimal' : 'skeleton-shimmer-light';
 
   return (
     <div className="space-y-3">
-      {/* Section title */}
-      <div className={`flex items-center gap-2 transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${showChat ? 'px-1' : 'px-1'}`}>
+      {/* Section title — always visible */}
+      <div className={`flex items-center gap-2 ${showChat ? 'px-1' : 'px-1'}`}>
         <span className={`text-xs ${tc.muted}`}>&#9670;</span>
-        <h2 className={`${font} ${tc.text} font-medium tracking-tight transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${showChat ? 'text-xs' : 'text-sm'}`}>Your Drops</h2>
-        <span className={`${font} ${tc.muted} transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${showChat ? 'text-xs' : 'text-xs'}`}>
-          {filteredDrops.length}/{visibleDrops.length}
-        </span>
+        <h2 className={`${font} ${tc.text} font-medium tracking-tight ${showChat ? 'text-xs' : 'text-sm'}`}>Your Drops</h2>
+        {!loading && (
+          <span className={`${font} ${tc.muted} ${showChat ? 'text-xs' : 'text-xs'}`}>
+            {filteredDrops.length}/{visibleDrops.length}
+          </span>
+        )}
       </div>
 
-      <div className={`${tc.bg} border ${tc.border} ${tc.roundedClass} transition-colors overflow-hidden`}>
-        {/* Category filter pills */}
-        <div className={`border-b ${tc.border} transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${showChat ? 'px-3 py-2' : 'px-4 py-3'}`}>
-          <div className={`flex flex-wrap transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${showChat ? 'gap-1' : 'gap-2'}`}>
+      <div className={`${tc.bg} border ${tc.border} ${tc.roundedClass} overflow-hidden`}>
+        {/* Category filter pills — always visible */}
+        <div className={`border-b ${tc.border} ${showChat ? 'px-3 py-2' : 'px-4 py-3'}`}>
+          <div className={`flex flex-wrap ${showChat ? 'gap-1' : 'gap-2'}`}>
             {BUILT_IN_CATEGORIES.map((cat) => (
               <button
                 key={cat.value}
                 onClick={() => setSelectedCategory(cat.value)}
-                className={`flex items-center ${font} ${tc.roundedClass} transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${
+                className={`flex items-center ${font} ${tc.roundedClass} transition-colors ${
                   selectedCategory === cat.value
                     ? `${tc.activePillBg} ${tc.activePillText}`
                     : `${tc.inactivePillBg} ${tc.inactivePillText} ${tc.inactivePillHoverBg}`
                 } ${showChat ? 'gap-1 px-2.5 py-1 text-xs' : 'gap-1.5 px-3 py-1.5 text-xs'}`}
               >
                 <span>{cat.label}</span>
-                {dropCounts[cat.value] !== undefined && (
+                {!loading && dropCounts[cat.value] !== undefined && (
                   <span className={`text-[10px] ${selectedCategory === cat.value ? tc.inactivePillText : tc.muted}`}>
                     {dropCounts[cat.value]}
                   </span>
@@ -250,7 +229,7 @@ export function EditorialDropList({
             ))}
 
             {/* Uncategorized (only if there are uncategorized drops) */}
-            {dropCounts['uncategorized'] > 0 && (
+            {!loading && dropCounts['uncategorized'] > 0 && (
               <button
                 onClick={() => setSelectedCategory('uncategorized')}
                 className={`flex items-center gap-1.5 px-3 py-1.5 text-xs ${font} ${tc.roundedClass} transition-colors ${
@@ -267,7 +246,7 @@ export function EditorialDropList({
             )}
 
             {/* Custom categories */}
-            {categories.map((cat) => {
+            {!loading && categories.map((cat) => {
               const count = dropCounts[cat.name] || 0;
               const showDelete = count === 0 && confirmDeleteCategory !== cat.id;
 
@@ -287,7 +266,6 @@ export function EditorialDropList({
                     </span>
                   </button>
 
-                  {/* Delete button - only when count is 0 */}
                   {count === 0 && confirmDeleteCategory !== cat.id && (
                     <button
                       onClick={(e) => handleCategoryDeleteClick(cat.id, e)}
@@ -300,7 +278,6 @@ export function EditorialDropList({
                     </button>
                   )}
 
-                  {/* Confirm delete category */}
                   {confirmDeleteCategory === cat.id && (
                     <div className="flex items-center ml-1 gap-1">
                       <button
@@ -329,7 +306,7 @@ export function EditorialDropList({
           </div>
         </div>
 
-        {/* Search bar */}
+        {/* Search bar — always visible */}
         <div className={`border-b ${tc.border} px-4 py-3`}>
           <div className="relative">
             <svg className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${tc.muted}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
@@ -340,9 +317,10 @@ export function EditorialDropList({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search drops..."
-              className={`w-full ${tc.cardBg} border ${tc.border} ${tc.text} pl-10 pr-8 py-2 text-sm ${font} placeholder:text-[#1A1A1A]/25 focus:outline-none focus:ring-1 focus:ring-[#1A1A1A]/20 transition-colors ${tc.roundedClass}`}
+              disabled={loading}
+              className={`w-full ${tc.cardBg} border ${tc.border} ${tc.text} pl-10 pr-8 py-2 text-sm ${font} placeholder:text-[#1A1A1A]/25 focus:outline-none focus:ring-1 focus:ring-[#1A1A1A]/20 transition-colors ${tc.roundedClass} ${loading ? 'opacity-50' : ''}`}
             />
-            {searchQuery && (
+            {searchQuery && !loading && (
               <button
                 onClick={() => setSearchQuery('')}
                 className={`absolute right-3 top-1/2 -translate-y-1/2 ${tc.muted} hover:${tc.text} transition-colors`}
@@ -355,48 +333,80 @@ export function EditorialDropList({
           </div>
         </div>
 
-        {/* Selection mode controls */}
-        <div className={`border-b ${tc.border} px-4 py-2 flex items-center justify-between`}>
-          {!selectionMode ? (
-            <button
-              onClick={() => setSelectionMode(true)}
-              className={`text-xs ${font} ${tc.muted} ${tc.inactivePillHoverBg} px-3 py-1.5 ${tc.roundedClass} border ${tc.border} transition-colors flex items-center gap-1.5`}
-            >
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
-                <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-              </svg>
-              Select
-            </button>
-          ) : (
-            <div className="flex items-center gap-2 w-full">
+        {/* Selection mode controls — hidden during loading */}
+        {!loading && (
+          <div className={`border-b ${tc.border} px-4 py-2 flex items-center justify-between`}>
+            {!selectionMode ? (
               <button
-                onClick={selectAll}
-                className={`text-xs ${font} ${tc.muted} ${tc.inactivePillHoverBg} px-3 py-1.5 ${tc.roundedClass} border ${tc.border} transition-colors`}
+                onClick={() => setSelectionMode(true)}
+                className={`text-xs ${font} ${tc.muted} ${tc.inactivePillHoverBg} px-3 py-1.5 ${tc.roundedClass} border ${tc.border} transition-colors flex items-center gap-1.5`}
               >
-                {selectedIds.size === filteredDrops.length ? 'Deselect' : 'Select all'}
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                  <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                </svg>
+                Select
               </button>
-              <button
-                onClick={cancelSelection}
-                className={`text-xs ${font} ${tc.muted} ${tc.inactivePillHoverBg} px-3 py-1.5 ${tc.roundedClass} border ${tc.border} transition-colors`}
-              >
-                Cancel
-              </button>
-              {selectedIds.size > 0 && (
+            ) : (
+              <div className="flex items-center gap-2 w-full">
                 <button
-                  onClick={handleBulkDelete}
-                  disabled={deleting}
-                  className={`text-xs ${font} px-3 py-1.5 ${tc.roundedClass} bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-50 ml-auto flex items-center gap-1`}
+                  onClick={selectAll}
+                  className={`text-xs ${font} ${tc.muted} ${tc.inactivePillHoverBg} px-3 py-1.5 ${tc.roundedClass} border ${tc.border} transition-colors`}
                 >
-                  {deleting ? 'Deleting...' : `Delete ${selectedIds.size}`}
+                  {selectedIds.size === filteredDrops.length ? 'Deselect' : 'Select all'}
                 </button>
-              )}
-            </div>
-          )}
-        </div>
+                <button
+                  onClick={cancelSelection}
+                  className={`text-xs ${font} ${tc.muted} ${tc.inactivePillHoverBg} px-3 py-1.5 ${tc.roundedClass} border ${tc.border} transition-colors`}
+                >
+                  Cancel
+                </button>
+                {selectedIds.size > 0 && (
+                  <button
+                    onClick={handleBulkDelete}
+                    disabled={deleting}
+                    className={`text-xs ${font} px-3 py-1.5 ${tc.roundedClass} bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-50 ml-auto flex items-center gap-1`}
+                  >
+                    {deleting ? 'Deleting...' : `Delete ${selectedIds.size}`}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
-        {/* Drop list - scrollable */}
+        {/* Drop list — skeleton while loading, real content otherwise */}
         <div className="max-h-[400px] overflow-y-auto overflow-x-hidden thin-scrollbar">
-          {filteredDrops.length === 0 ? (
+          {loading ? (
+            <div className="p-3 space-y-2">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className={`border ${tc.border} ${tc.roundedClass} p-3 flex flex-col sm:flex-row sm:items-center gap-3`}>
+                  {/* Icon placeholder */}
+                  <div className={`w-10 h-10 ${tc.roundedClass} ${shimmerClass} shrink-0`} />
+                  {/* Info section */}
+                  <div className="flex-1 min-w-0 space-y-2">
+                    <div className={`h-4 ${tc.roundedClass} ${shimmerClass} w-3/5`} />
+                    <div className={`h-3 ${tc.roundedClass} ${shimmerClass} w-2/5`} />
+                  </div>
+                  {/* Action buttons placeholder */}
+                  <div className="flex items-center gap-1 pt-2 sm:pt-0 border-t sm:border-t-0 w-full sm:w-auto justify-end">
+                    <div className={`w-8 h-7 ${tc.roundedClass} ${shimmerClass}`} />
+                    <div className={`w-8 h-7 ${tc.roundedClass} ${shimmerClass}`} />
+                    <div className={`w-8 h-7 ${tc.roundedClass} ${shimmerClass}`} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : visibleDrops.length === 0 && pendingDeletions.size === 0 ? (
+            <div className="p-12 text-center">
+              <div className={`w-16 h-16 mx-auto border ${tc.border} ${tc.roundedClass} flex items-center justify-center mb-4`}>
+                <svg className={`w-7 h-7 ${tc.muted}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1">
+                  <path d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
+                </svg>
+              </div>
+              <p className={`text-sm ${font} ${tc.text} font-medium`}>No drops yet</p>
+              <p className={`text-xs ${font} ${tc.muted} mt-1`}>Upload files or paste text to get started</p>
+            </div>
+          ) : filteredDrops.length === 0 ? (
             <div className="p-8 text-center">
               <p className={`text-xs ${font} ${tc.muted}`}>
                 {searchQuery

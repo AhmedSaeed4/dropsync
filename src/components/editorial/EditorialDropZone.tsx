@@ -191,15 +191,7 @@ export function EditorialDropZone({
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        onClick={(e) => {
-          // Only open file picker if clicking on empty space (not buttons)
-          const target = e.target as HTMLElement;
-          if (target.tagName === 'BUTTON' || target.closest('button')) {
-            return;
-          }
-          fileInputRef.current?.click();
-        }}
-        className={`${bgClass} ${borderClass} rounded-xl ${shadowClass} text-left transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] cursor-pointer ${showChat ? 'p-8' : 'p-10'}`}
+        className={`${bgClass} ${borderClass} rounded-xl ${shadowClass} text-left transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${showChat ? 'p-8' : 'p-10'}`}
       >
         {/* Hidden file input */}
         <input
@@ -219,25 +211,36 @@ export function EditorialDropZone({
           </div>
         ) : (
           <>
-            {/* Title */}
-            <h2
-              className={`${tc.fontClass} ${textClass} font-medium tracking-tight mb-2 transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${showChat ? 'text-2xl' : 'text-[28px]'}`}
-              style={{ fontFamily: 'Raleway, sans-serif' }}
+            {/* Clickable area above the expiry line */}
+            <div
+              onClick={(e) => {
+                const target = e.target as HTMLElement;
+                if (target.tagName === 'BUTTON' || target.closest('button')) {
+                  return;
+                }
+                setShowTextModal(true);
+              }}
+              className={`cursor-pointer ${showChat ? 'pb-6' : 'pb-8'}`}
             >
-              Drop files here
-            </h2>
+              {/* Title */}
+              <h2
+                className={`${tc.fontClass} ${textClass} font-medium tracking-tight mb-2 transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${showChat ? 'text-2xl' : 'text-[28px]'}`}
+                style={{ fontFamily: 'Raleway, sans-serif' }}
+              >
+                Drop files here
+              </h2>
 
-            {/* Subtitle */}
-            <p className={`text-sm ${tc.fontClass} ${mutedClass} mb-6`}>
-              Or choose an option below &mdash; Max 500MB
-            </p>
+              {/* Subtitle */}
+              <p className={`text-sm ${tc.fontClass} ${mutedClass} mb-6`}>
+                Or choose an option below &mdash; Max 500MB
+              </p>
 
-            {/* Action buttons */}
-            <div className={`flex items-center gap-3 mb-8 transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${showChat ? 'mb-6' : 'mb-8'}`}>
-              {/* Browse Files - primary */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
+              {/* Action buttons */}
+              <div className={`flex items-center gap-3 transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)]`}>
+                {/* Browse Files - primary */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
                   fileInputRef.current?.click();
                 }}
                 className={`${tc.fontClass} rounded-lg ${tc.activePillBg} ${tc.activePillText} hover:opacity-90 transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${showChat ? 'px-4 py-2.5 text-sm' : 'px-6 py-3 text-sm'}`}
@@ -255,6 +258,7 @@ export function EditorialDropZone({
               >
                 Add Text
               </button>
+            </div>
             </div>
 
             {/* Expiry selector */}
