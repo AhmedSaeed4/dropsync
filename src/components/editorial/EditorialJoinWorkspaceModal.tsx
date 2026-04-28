@@ -5,7 +5,7 @@ import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { getEditorialThemeColors } from './editorialTheme';
 
 interface EditorialJoinWorkspaceModalProps {
-  onJoin: (code: string) => Promise<void>;
+  onJoin: (code: string) => Promise<{ success: boolean; error?: string }>;
   onClose: () => void;
   theme?: 'light' | 'dark' | 'minimal';
 }
