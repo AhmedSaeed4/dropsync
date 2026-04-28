@@ -142,7 +142,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
 
   return (
     <div
-      className="fixed inset-0 bg-[#1a1a1a]/60 flex items-center justify-center z-50 p-4 transition-colors duration-300 overscroll-contain overflow-y-auto"
+      className="fixed inset-0 bg-[#1a1a1a]/60 z-50 transition-colors duration-300 overscroll-contain overflow-y-auto flex items-start sm:items-center justify-center p-4 pt-[env(safe-area-inset-top,16px)] pb-[env(safe-area-inset-bottom,16px)] min-h-screen min-h-[100dvh]"
       onClick={(e) => e.target === e.currentTarget && onClose()}
       onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
       onDrop={(e) => {
@@ -162,7 +162,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
         }
       }}
     >
-      <div className={`${tc.bg} border ${tc.border} rounded-xl w-full max-w-lg my-auto max-h-[90vh] flex flex-col overflow-hidden transition-colors duration-300 shadow-xl`}>
+      <div className={`${tc.bg} border ${tc.border} rounded-xl w-full max-w-lg my-4 sm:my-auto max-h-[90vh] flex flex-col overflow-hidden transition-colors duration-300 shadow-xl`}>
         {/* Header */}
         <div className={`border-b ${tc.border} px-5 py-4 flex items-center justify-between`}>
           <h2 className={`${tc.fontClass} ${tc.text} font-medium text-[15px]`}>
