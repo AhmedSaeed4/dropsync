@@ -11,9 +11,10 @@ interface UndoToastProps {
   duration?: number; // in seconds
   theme?: 'light' | 'dark' | 'minimal';
   index?: number; // For stacking multiple toasts
+  editorial?: boolean;
 }
 
-export function UndoToast({ message, dropName, onUndo, onDismiss, duration = 30, theme = 'light', index = 0 }: UndoToastProps) {
+export function UndoToast({ message, dropName, onUndo, onDismiss, duration = 30, theme = 'light', index = 0, editorial = false }: UndoToastProps) {
   const [timeLeft, setTimeLeft] = useState(duration);
   const [progress, setProgress] = useState(100);
   const dismissedRef = useRef(false);
@@ -46,7 +47,19 @@ export function UndoToast({ message, dropName, onUndo, onDismiss, duration = 30,
     setProgress((timeLeft / duration) * 100);
   }, [timeLeft, duration]);
 
-  const themeStyles = isMinimal
+  const themeStyles = editorial
+    ? {
+        bg: theme === 'dark' ? 'bg-[#1a1a1a] border border-[#333]' : theme === 'minimal' ? 'bg-[#1a1a1a] border border-[#b0b4a5] text-white' : 'bg-white border border-[#e0e0e0]',
+        text: theme === 'dark' ? 'text-white' : theme === 'minimal' ? 'text-[#C5C9B8]' : 'text-[#1a1a1a]',
+        textMuted: theme === 'dark' ? 'text-white/60' : theme === 'minimal' ? 'text-[#C5C9B8]/60' : 'text-[#1a1a1a]/50',
+        undo: theme === 'dark' ? 'text-white hover:text-white/80' : theme === 'minimal' ? 'text-[#C5C9B8] hover:text-white' : 'text-[#1a1a1a] hover:text-[#1a1a1a]/70',
+        progress: theme === 'dark' ? 'bg-white' : theme === 'minimal' ? 'bg-[#C5C9B8]' : 'bg-[#1a1a1a]',
+        rounded: 'rounded-lg',
+        font: 'font-[family-name:var(--font-raleway)]',
+        fontSize: 'text-[13px]',
+        undoFont: 'text-[12px] font-medium',
+      }
+    : isMinimal
     ? {
         bg: 'bg-[#1A1A1A]',
         text: 'text-white',
@@ -54,6 +67,9 @@ export function UndoToast({ message, dropName, onUndo, onDismiss, duration = 30,
         undo: 'text-[#C5C9B8] hover:text-white',
         progress: 'bg-[#C5C9B8]',
         rounded: 'rounded-full',
+        font: '',
+        fontSize: 'text-sm font-medium',
+        undoFont: 'text-sm font-medium',
       }
     : isDark
     ? {
@@ -63,6 +79,9 @@ export function UndoToast({ message, dropName, onUndo, onDismiss, duration = 30,
         undo: 'text-[#FF5A47] hover:text-white',
         progress: 'bg-[#FF5A47]',
         rounded: '',
+        font: '',
+        fontSize: 'text-xs font-mono uppercase',
+        undoFont: 'text-xs font-mono uppercase',
       }
     : {
         bg: 'bg-[#1A1A1A]',
@@ -71,6 +90,9 @@ export function UndoToast({ message, dropName, onUndo, onDismiss, duration = 30,
         undo: 'text-[#FF5A47] hover:text-white',
         progress: 'bg-[#FF5A47]',
         rounded: '',
+        font: '',
+        fontSize: 'text-xs font-mono uppercase',
+        undoFont: 'text-xs font-mono uppercase',
       };
 
   // Stack toasts: first one at bottom, subsequent ones above
@@ -97,15 +119,15 @@ export function UndoToast({ message, dropName, onUndo, onDismiss, duration = 30,
       }}
     >
       <div className="flex items-center gap-3 px-4 py-3">
-        <span className={`${isMinimal ? 'text-sm font-medium' : 'text-xs font-mono uppercase'} truncate flex-1`}>
+        <span className={`${themeStyles.fontSize} ${themeStyles.font} ${themeStyles.text} truncate flex-1`}>
           {dropName ? `${message}: ${dropName}` : message}
         </span>
-        <span className={`${themeStyles.textMuted} ${isMinimal ? 'text-xs' : 'text-[10px] font-mono'} flex-shrink-0`}>
+        <span className={`${themeStyles.textMuted} ${isMinimal && !editorial ? 'text-xs' : editorial ? 'text-[11px]' : 'text-[10px] font-mono'} flex-shrink-0`}>
           {timeLeft}s
         </span>
         <button
           onClick={handleUndoClick}
-          className={`${themeStyles.undo} ${isMinimal ? 'text-sm font-medium' : 'text-xs font-mono uppercase'} transition-colors flex-shrink-0`}
+          className={`${themeStyles.undo} ${themeStyles.undoFont} transition-colors flex-shrink-0`}
         >
           Undo
         </button>

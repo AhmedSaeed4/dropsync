@@ -1,0 +1,443 @@
+'use client';
+
+import { useState, useCallback, useMemo } from 'react';
+import { Drop, Category } from '@/types';
+import { EditorialDropItem } from './EditorialDropItem';
+import { UndoToast } from '@/components/UndoToast';
+import { deleteDrop } from '@/lib/drops';
+import { getEditorialThemeColors } from './editorialTheme';
+
+interface EditorialDropListProps {
+  drops: Drop[];
+  loading: boolean;
+  onDelete: () => void;
+  onPreview: (drop: Drop) => void;
+  theme?: 'light' | 'dark' | 'minimal';
+  currentUserId?: string;
+  categories?: Category[];
+  onDeleteCategory?: (categoryId: string, categoryName: string) => void;
+  showChat?: boolean;
+}
+
+interface PendingDeletion {
+  drop: Drop;
+  timeoutId: NodeJS.Timeout;
+}
+
+const BUILT_IN_CATEGORIES = [
+  { value: 'all', label: 'All' },
+  { value: 'files', label: 'Files' },
+  { value: 'password', label: 'Password' },
+  { value: 'link', label: 'Link' },
+];
+
+export function EditorialDropList({
+  drops,
+  loading,
+  onDelete,
+  onPreview,
+  theme = 'light',
+  currentUserId,
+  categories = [],
+  onDeleteCategory,
+  showChat = false,
+}: EditorialDropListProps) {
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [deleting, setDeleting] = useState(false);
+  const [pendingDeletions, setPendingDeletions] = useState<Map<string, PendingDeletion>>(new Map());
+  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [confirmDeleteCategory, setConfirmDeleteCategory] = useState<string | null>(null);
+
+  const tc = getEditorialThemeColors(theme);
+  const font = tc.fontClass;
+
+  const toggleSelect = (id: string) => {
+    const newSelected = new Set(selectedIds);
+    if (newSelected.has(id)) {
+      newSelected.delete(id);
+    } else {
+      newSelected.add(id);
+    }
+    setSelectedIds(newSelected);
+  };
+
+  const selectAll = () => {
+    if (selectedIds.size === filteredDrops.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filteredDrops.map(d => d.id)));
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0) return;
+
+    setDeleting(true);
+    const selectedDrops = filteredDrops.filter(d => selectedIds.has(d.id));
+
+    await Promise.all(selectedDrops.map(drop => deleteDrop(drop)));
+
+    setSelectedIds(new Set());
+    setSelectionMode(false);
+    onDelete();
+    setDeleting(false);
+  };
+
+  const cancelSelection = () => {
+    setSelectedIds(new Set());
+    setSelectionMode(false);
+  };
+
+  // Handle single drop deletion with undo
+  const handleDeleteWithUndo = useCallback((drop: Drop) => {
+    const timeoutId = setTimeout(async () => {
+      await deleteDrop(drop);
+      setPendingDeletions(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(drop.id);
+        return newMap;
+      });
+      onDelete();
+    }, 30000);
+
+    setPendingDeletions(prev => {
+      const newMap = new Map(prev);
+      newMap.set(drop.id, { drop, timeoutId });
+      return newMap;
+    });
+  }, [onDelete]);
+
+  // Undo the deletion for a specific drop
+  const handleUndoDeletion = useCallback((dropId: string) => {
+    setPendingDeletions(prev => {
+      const pending = prev.get(dropId);
+      if (pending) {
+        clearTimeout(pending.timeoutId);
+      }
+      const newMap = new Map(prev);
+      newMap.delete(dropId);
+      return newMap;
+    });
+  }, []);
+
+  // Dismiss the toast (continue with deletion) for a specific drop
+  const handleDismissToast = useCallback((dropId: string) => {
+    setPendingDeletions(prev => {
+      const pending = prev.get(dropId);
+      if (pending) {
+        clearTimeout(pending.timeoutId);
+        deleteDrop(pending.drop).then(() => {
+          onDelete();
+        });
+      }
+      const newMap = new Map(prev);
+      newMap.delete(dropId);
+      return newMap;
+    });
+  }, [onDelete]);
+
+  // Filter out all pending deletions from displayed drops
+  const visibleDrops = drops.filter(d => !pendingDeletions.has(d.id));
+
+  // Calculate drop counts for categories
+  const dropCounts = useMemo(() => {
+    const counts: { [key: string]: number } = {
+      all: visibleDrops.length,
+      files: visibleDrops.filter(d => d.type === 'file').length,
+      password: visibleDrops.filter(d => d.category === 'password').length,
+      link: visibleDrops.filter(d => d.category === 'link').length,
+      uncategorized: visibleDrops.filter(d => d.type === 'text' && !d.category).length,
+    };
+
+    categories.forEach(cat => {
+      counts[cat.name] = visibleDrops.filter(d => d.category === cat.name).length;
+    });
+
+    return counts;
+  }, [visibleDrops, categories]);
+
+  // Filter drops based on category and search
+  const filteredDrops = useMemo(() => {
+    return visibleDrops.filter(drop => {
+      if (searchQuery && !drop.name.toLowerCase().includes(searchQuery.toLowerCase())) {
+        return false;
+      }
+      if (selectedCategory === 'all') return true;
+      if (selectedCategory === 'files') return drop.type === 'file';
+      if (selectedCategory === 'uncategorized') return drop.type === 'text' && !drop.category;
+      return drop.category === selectedCategory;
+    });
+  }, [visibleDrops, selectedCategory, searchQuery]);
+
+  // Category delete handlers
+  const handleCategoryDeleteClick = (categoryId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setConfirmDeleteCategory(categoryId);
+  };
+
+  const handleCategoryConfirmDelete = (categoryId: string, categoryName: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (onDeleteCategory) {
+      onDeleteCategory(categoryId, categoryName);
+    }
+    setConfirmDeleteCategory(null);
+  };
+
+  const handleCategoryCancelDelete = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setConfirmDeleteCategory(null);
+  };
+
+  // Loading state
+  if (loading) {
+    return (
+      <div className={`${tc.bg} border ${tc.border} ${tc.roundedClass} p-12 flex flex-col items-center justify-center transition-colors`}>
+        <div className={`w-6 h-6 border-2 ${tc.border} border-t-transparent animate-spin ${tc.roundedClass}`} />
+        <p className={`text-sm ${font} ${tc.muted} mt-4`}>Loading drops...</p>
+      </div>
+    );
+  }
+
+  // Empty state - no drops at all
+  if (visibleDrops.length === 0 && pendingDeletions.size === 0) {
+    return (
+      <div className={`${tc.bg} border ${tc.border} ${tc.roundedClass} p-12 text-center transition-colors`}>
+        <div className={`w-16 h-16 mx-auto border ${tc.border} ${tc.roundedClass} flex items-center justify-center mb-4`}>
+          <svg className={`w-7 h-7 ${tc.muted}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1">
+            <path d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
+          </svg>
+        </div>
+        <p className={`text-sm ${font} ${tc.text} font-medium`}>No drops yet</p>
+        <p className={`text-xs ${font} ${tc.muted} mt-1`}>Upload files or paste text to get started</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {/* Section title */}
+      <div className={`flex items-center gap-2 transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${showChat ? 'px-1' : 'px-1'}`}>
+        <span className={`text-xs ${tc.muted}`}>&#9670;</span>
+        <h2 className={`${font} ${tc.text} font-medium tracking-tight transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${showChat ? 'text-xs' : 'text-sm'}`}>Your Drops</h2>
+        <span className={`${font} ${tc.muted} transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${showChat ? 'text-xs' : 'text-xs'}`}>
+          {filteredDrops.length}/{visibleDrops.length}
+        </span>
+      </div>
+
+      <div className={`${tc.bg} border ${tc.border} ${tc.roundedClass} transition-colors overflow-hidden`}>
+        {/* Category filter pills */}
+        <div className={`border-b ${tc.border} transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${showChat ? 'px-3 py-2' : 'px-4 py-3'}`}>
+          <div className={`flex flex-wrap transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${showChat ? 'gap-1' : 'gap-2'}`}>
+            {BUILT_IN_CATEGORIES.map((cat) => (
+              <button
+                key={cat.value}
+                onClick={() => setSelectedCategory(cat.value)}
+                className={`flex items-center ${font} ${tc.roundedClass} transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${
+                  selectedCategory === cat.value
+                    ? `${tc.activePillBg} ${tc.activePillText}`
+                    : `${tc.inactivePillBg} ${tc.inactivePillText} ${tc.inactivePillHoverBg}`
+                } ${showChat ? 'gap-1 px-2.5 py-1 text-xs' : 'gap-1.5 px-3 py-1.5 text-xs'}`}
+              >
+                <span>{cat.label}</span>
+                {dropCounts[cat.value] !== undefined && (
+                  <span className={`text-[10px] ${selectedCategory === cat.value ? tc.inactivePillText : tc.muted}`}>
+                    {dropCounts[cat.value]}
+                  </span>
+                )}
+              </button>
+            ))}
+
+            {/* Uncategorized (only if there are uncategorized drops) */}
+            {dropCounts['uncategorized'] > 0 && (
+              <button
+                onClick={() => setSelectedCategory('uncategorized')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs ${font} ${tc.roundedClass} transition-colors ${
+                  selectedCategory === 'uncategorized'
+                    ? `${tc.activePillBg} ${tc.activePillText}`
+                    : `${tc.inactivePillBg} ${tc.inactivePillText} ${tc.inactivePillHoverBg}`
+                }`}
+              >
+                <span>Uncategorized</span>
+                <span className={`text-[10px] ${selectedCategory === 'uncategorized' ? tc.inactivePillText : tc.muted}`}>
+                  {dropCounts['uncategorized']}
+                </span>
+              </button>
+            )}
+
+            {/* Custom categories */}
+            {categories.map((cat) => {
+              const count = dropCounts[cat.name] || 0;
+              const showDelete = count === 0 && confirmDeleteCategory !== cat.id;
+
+              return (
+                <div key={cat.id} className="relative flex items-center">
+                  <button
+                    onClick={() => setSelectedCategory(cat.name)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 text-xs ${font} ${tc.roundedClass} transition-colors ${
+                      selectedCategory === cat.name
+                        ? `${tc.activePillBg} ${tc.activePillText}`
+                        : `${tc.inactivePillBg} ${tc.inactivePillText} ${tc.inactivePillHoverBg}`
+                    } ${showDelete ? 'pr-1' : ''}`}
+                  >
+                    <span>{cat.name}</span>
+                    <span className={`text-[10px] ${selectedCategory === cat.name ? tc.inactivePillText : tc.muted}`}>
+                      {count}
+                    </span>
+                  </button>
+
+                  {/* Delete button - only when count is 0 */}
+                  {count === 0 && confirmDeleteCategory !== cat.id && (
+                    <button
+                      onClick={(e) => handleCategoryDeleteClick(cat.id, e)}
+                      className={`ml-1 w-4 h-4 flex items-center justify-center ${tc.muted} hover:text-red-500 transition-colors`}
+                      title="Delete category"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  )}
+
+                  {/* Confirm delete category */}
+                  {confirmDeleteCategory === cat.id && (
+                    <div className="flex items-center ml-1 gap-1">
+                      <button
+                        onClick={(e) => handleCategoryConfirmDelete(cat.id, cat.name, e)}
+                        className="px-2 py-1 text-xs bg-red-500 text-white hover:bg-red-600 transition-colors rounded"
+                        title="Confirm delete"
+                      >
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={handleCategoryCancelDelete}
+                        className="px-2 py-1 text-xs border border-[#1A1A1A]/20 hover:bg-[#1A1A1A]/10 transition-colors rounded"
+                        title="Cancel"
+                      >
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Search bar */}
+        <div className={`border-b ${tc.border} px-4 py-3`}>
+          <div className="relative">
+            <svg className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${tc.muted}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+            </svg>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search drops..."
+              className={`w-full ${tc.cardBg} border ${tc.border} ${tc.text} pl-10 pr-8 py-2 text-sm ${font} placeholder:text-[#1A1A1A]/25 focus:outline-none focus:ring-1 focus:ring-[#1A1A1A]/20 transition-colors ${tc.roundedClass}`}
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className={`absolute right-3 top-1/2 -translate-y-1/2 ${tc.muted} hover:${tc.text} transition-colors`}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Selection mode controls */}
+        <div className={`border-b ${tc.border} px-4 py-2 flex items-center justify-between`}>
+          {!selectionMode ? (
+            <button
+              onClick={() => setSelectionMode(true)}
+              className={`text-xs ${font} ${tc.muted} ${tc.inactivePillHoverBg} px-3 py-1.5 ${tc.roundedClass} border ${tc.border} transition-colors flex items-center gap-1.5`}
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+              </svg>
+              Select
+            </button>
+          ) : (
+            <div className="flex items-center gap-2 w-full">
+              <button
+                onClick={selectAll}
+                className={`text-xs ${font} ${tc.muted} ${tc.inactivePillHoverBg} px-3 py-1.5 ${tc.roundedClass} border ${tc.border} transition-colors`}
+              >
+                {selectedIds.size === filteredDrops.length ? 'Deselect' : 'Select all'}
+              </button>
+              <button
+                onClick={cancelSelection}
+                className={`text-xs ${font} ${tc.muted} ${tc.inactivePillHoverBg} px-3 py-1.5 ${tc.roundedClass} border ${tc.border} transition-colors`}
+              >
+                Cancel
+              </button>
+              {selectedIds.size > 0 && (
+                <button
+                  onClick={handleBulkDelete}
+                  disabled={deleting}
+                  className={`text-xs ${font} px-3 py-1.5 ${tc.roundedClass} bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-50 ml-auto flex items-center gap-1`}
+                >
+                  {deleting ? 'Deleting...' : `Delete ${selectedIds.size}`}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Drop list - scrollable */}
+        <div className="max-h-[400px] overflow-y-auto overflow-x-hidden thin-scrollbar">
+          {filteredDrops.length === 0 ? (
+            <div className="p-8 text-center">
+              <p className={`text-xs ${font} ${tc.muted}`}>
+                {searchQuery
+                  ? 'No drops match your search'
+                  : 'No drops in this category'}
+              </p>
+            </div>
+          ) : (
+            <div className="p-3 space-y-2">
+              {filteredDrops.map((drop) => (
+                <EditorialDropItem
+                  key={drop.id}
+                  drop={drop}
+                  onDelete={handleDeleteWithUndo}
+                  onPreview={onPreview}
+                  selected={selectedIds.has(drop.id)}
+                  onSelect={toggleSelect}
+                  selectionMode={selectionMode}
+                  theme={theme}
+                  currentUserId={currentUserId}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Undo toasts */}
+      {Array.from(pendingDeletions.values()).map((pending, index) => (
+        <UndoToast
+          key={pending.drop.id}
+          message="Drop deleted"
+          dropName={pending.drop.name}
+          onUndo={() => handleUndoDeletion(pending.drop.id)}
+          onDismiss={() => handleDismissToast(pending.drop.id)}
+          duration={30}
+          theme={theme}
+          index={index}
+          editorial
+        />
+      ))}
+    </div>
+  );
+}
