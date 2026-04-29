@@ -8,6 +8,8 @@ import { useCategories } from '@/hooks/useCategories';
 import { ClassicLayout } from '@/components/layouts/ClassicLayout';
 import { EditorialLayout } from '@/components/editorial/EditorialLayout';
 import { EditorialLogin } from '@/components/editorial/EditorialLogin';
+import { EditorialAuthModal } from '@/components/editorial/EditorialAuthModal';
+import { EditorialVerifyEmailModal } from '@/components/editorial/EditorialVerifyEmailModal';
 import { getEditorialThemeColors } from '@/components/editorial/editorialTheme';
 import { AuthModal } from '@/components/AuthModal';
 import { VerifyEmailModal } from '@/components/VerifyEmailModal';
@@ -28,7 +30,7 @@ export default function Home() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [theme, setTheme] = useState<Theme>('light');
   const [themeLoaded, setThemeLoaded] = useState(false);
-  const [layoutMode, setLayoutMode] = useState<LayoutMode>('classic');
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>('editorial');
   const [encryptionInitializing, setEncryptionInitializing] = useState(false);
   const [layoutTransition, setLayoutTransition] = useState<'none' | 'fade-out' | 'fade-in'>('none');
   const [pendingLayout, setPendingLayout] = useState<LayoutMode | null>(null);
@@ -366,6 +368,54 @@ export default function Home() {
   if (user && !user.emailVerified) {
     const isDark = theme === 'dark';
     const isMinimal = theme === 'minimal';
+    const isEditorial = layoutMode === 'editorial';
+    const tc = isEditorial ? getEditorialThemeColors(theme) : null;
+
+    if (isEditorial && tc) {
+      return (
+        <div className={`min-h-screen flex items-center justify-center ${tc.bg} transition-colors duration-500 p-4`}>
+          <div className={`max-w-md w-full ${tc.bg} border ${tc.border} rounded-xl shadow-xl`}>
+            <div className={`border-b ${tc.border} px-5 py-4`}>
+              <h2 className={`${tc.fontClass} ${tc.text} font-medium text-[15px]`}>Verify your email</h2>
+            </div>
+            <div className="p-6 text-center">
+              <div className="flex justify-center mb-6">
+                <div className={`w-16 h-16 ${tc.inactivePillBg} flex items-center justify-center rounded-xl`}>
+                  <svg className={`w-8 h-8 ${tc.muted}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75" />
+                  </svg>
+                </div>
+              </div>
+              <p className={`text-sm ${tc.fontClass} ${tc.text} mb-2`}>We sent a verification email to:</p>
+              <p className={`text-sm font-semibold ${tc.text} ${tc.fontClass} mb-4`}>{user.email}</p>
+              <p className={`text-xs ${tc.fontClass} ${tc.muted} mb-6`}>
+                Click the link in the email to verify your account. Check your spam folder if you don&apos;t see it.
+              </p>
+              <div className="space-y-3">
+                <button
+                  onClick={async () => { await resendVerification(); alert('Verification email sent!'); }}
+                  className={`w-full ${tc.activePillBg} ${tc.activePillText} py-2.5 text-sm rounded-lg hover:opacity-90 transition-opacity ${tc.fontClass}`}
+                >
+                  Resend Verification Email
+                </button>
+                <button
+                  onClick={async () => { window.location.reload(); }}
+                  className={`w-full border ${tc.border} ${tc.text} py-2.5 text-sm rounded-lg hover:border-[#1a1a1a] transition-colors ${tc.fontClass}`}
+                >
+                  I&apos;ve Verified My Email
+                </button>
+                <button
+                  onClick={signOutUser}
+                  className={`w-full ${tc.muted} py-2 text-sm hover:${tc.text} transition-colors ${tc.fontClass}`}
+                >
+                  Sign Out
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
 
     return (
       <div className={`min-h-screen flex items-center justify-center ${themeColors.bgColor} transition-colors duration-500 p-4`}>
@@ -441,7 +491,7 @@ export default function Home() {
             theme={theme}
           />
           {showAuthModal && (
-            <AuthModal
+            <EditorialAuthModal
               onSignIn={emailSignIn}
               onSignUp={signUp}
               onResetPassword={resetPassword}
@@ -452,10 +502,9 @@ export default function Home() {
             />
           )}
           {showVerifyModal && (
-            <VerifyEmailModal
+            <EditorialVerifyEmailModal
               email={verifyEmail}
-              onResendVerification={resendVerification}
-              onCheckVerification={handleCheckVerification}
+              onResend={resendVerification}
               onClose={() => setShowVerifyModal(false)}
               theme={theme}
             />
