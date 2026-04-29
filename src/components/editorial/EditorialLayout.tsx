@@ -362,7 +362,11 @@ export function EditorialLayout(props: EditorialLayoutProps) {
         <EditorialSettingsModal
           user={user}
           onResetPassword={resetPassword}
+          onReauthenticate={reauthenticateUser}
           onClose={() => setShowSettingsModal(false)}
+          onDeleted={() => { setShowSettingsModal(false); signOutUser(); }}
+          onSignOut={() => { setShowSettingsModal(false); signOutUser(); }}
+          onNameUpdate={updateDisplayName}
           onLayoutChange={setLayoutMode}
           layoutMode={layoutMode}
           theme={theme}
