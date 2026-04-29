@@ -134,7 +134,7 @@ export function EditorialWorkspaceSwitcher({
         <>
           <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
           <div
-            className={`absolute top-full left-0 mt-1 w-52 border ${tc.border} ${tc.bg} rounded-lg shadow-lg z-50 overflow-hidden`}
+            className={`absolute top-full right-0 mt-1 w-48 sm:w-52 border ${tc.border} ${tc.bg} rounded-lg shadow-lg z-50 overflow-hidden`}
           >
             {/* Personal option */}
             <button

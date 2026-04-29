@@ -271,10 +271,10 @@ export function EditorialDropItem({
         )}
 
         {/* Info section */}
-        <div className="flex-1 min-w-0 flex flex-col justify-center">
+        <div className="flex-1 min-w-0 overflow-hidden flex flex-col justify-center">
           <div className="flex items-center gap-2">
             <h3
-              className={`text-sm ${font} font-medium tracking-tight line-clamp-1 ${
+              className={`text-sm ${font} font-medium tracking-tight line-clamp-2 ${
                 selected ? tc.activePillText : tc.text
               }`}
               title={drop.name}

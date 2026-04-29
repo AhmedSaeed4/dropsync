@@ -126,7 +126,7 @@ export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoadin
               )}
             </div>
             <div>
-              <h2 className={`${tc.fontClass} ${tc.text} font-medium text-[15px] truncate max-w-[280px]`} title={drop.name}>
+              <h2 className={`${tc.fontClass} ${tc.text} font-medium text-[15px] line-clamp-2 max-w-[280px]`} title={drop.name}>
                 {drop.name}
               </h2>
               {drop.fileSize && (
@@ -240,6 +240,20 @@ export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoadin
                     Copy
                   </>
                 )}
+              </button>
+            )}
+
+            {/* YouTube */}
+            {youtubeVideoId && (
+              <button
+                onClick={() => window.open(`https://www.youtube.com/watch?v=${youtubeVideoId}`, '_blank')}
+                className={`flex items-center gap-2 px-2 sm:px-4 py-2 rounded-md border ${tc.border} ${tc.text} hover:bg-[#FF0000] hover:text-white hover:border-[#FF0000] transition-all text-sm ${tc.fontClass}`}
+                title="Watch on YouTube"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+                </svg>
+                <span className="hidden sm:inline">Watch on YouTube</span>
               </button>
             )}
 

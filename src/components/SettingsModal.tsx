@@ -522,8 +522,8 @@ export function SettingsModal({
   );
 
   return (
-    <div className={`fixed inset-0 ${tc.overlayBg} flex items-center justify-center z-50 p-4 overscroll-contain`} onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={`relative w-full max-w-md ${tc.bgColor} border ${tc.borderColor} ${tc.roundedClass} max-h-[90vh] overflow-y-auto`}>
+    <div className={`fixed inset-0 ${tc.overlayBg} flex items-center justify-center z-50 p-4 overscroll-contain modal-fade-in`} onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className={`relative w-full max-w-md ${tc.bgColor} border ${tc.borderColor} ${tc.roundedClass} max-h-[90vh] overflow-y-auto modal-card-in`}>
         {/* Header */}
         <div className={`border-b ${tc.borderColor} px-6 py-4 flex items-center justify-between ${tc.headerBg}`}>
           <h2 className={`${isMinimal ? 'text-sm font-medium' : 'text-sm font-bold uppercase tracking-wider'} text-white`}>
