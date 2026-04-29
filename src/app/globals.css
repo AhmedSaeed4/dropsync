@@ -77,6 +77,15 @@ body {
   word-break: break-all;
 }
 
+/* Two line clamp for drop names on mobile */
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
 /* Force text truncation in flex containers */
 .truncate-force {
   overflow: hidden !important;
@@ -440,4 +449,31 @@ body {
 
 .layout-fade-in {
   animation: layout-fade-in 300ms ease-out forwards;
+}
+
+/* Modal entrance animation */
+@keyframes modal-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes modal-card-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.modal-fade-in {
+  animation: modal-fade-in 300ms ease-out forwards;
+}
+
+.modal-card-in {
+  animation: modal-card-in 300ms ease-out forwards;
 }

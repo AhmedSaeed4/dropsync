@@ -162,7 +162,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
         }
       }}
     >
-      <div className={`${tc.bg} border ${tc.border} rounded-xl w-full max-w-lg my-4 sm:my-auto max-h-[90vh] flex flex-col overflow-hidden transition-colors duration-300 shadow-xl`}>
+      <div className={`${tc.bg} border ${tc.border} rounded-xl w-full max-w-lg my-4 sm:my-auto max-h-[80vh] sm:max-h-[90vh] flex flex-col overflow-hidden transition-colors duration-300 shadow-xl`}>
         {/* Header */}
         <div className={`border-b ${tc.border} px-5 py-4 flex items-center justify-between`}>
           <h2 className={`${tc.fontClass} ${tc.text} font-medium text-[15px]`}>
@@ -330,6 +330,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
                 placeholder="Enter your text here..."
                 rows={6}
                 required
+                autoFocus
                 className={`w-full border ${tc.border} ${tc.bg} ${tc.text} px-4 py-3 text-sm rounded-lg focus:outline-none focus:border-[#1a1a1a] resize-none transition-colors ${tc.fontClass}`}
               />
             </div>

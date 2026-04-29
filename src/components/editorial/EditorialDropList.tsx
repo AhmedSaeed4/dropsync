@@ -375,7 +375,7 @@ export function EditorialDropList({
         )}
 
         {/* Drop list — skeleton while loading, real content otherwise */}
-        <div className="max-h-[400px] overflow-y-auto overflow-x-hidden thin-scrollbar">
+        <div className="max-h-[500px] overflow-y-auto overflow-x-hidden thin-scrollbar">
           {loading ? (
             <div className="p-3 space-y-2">
               {Array.from({ length: 4 }).map((_, i) => (

@@ -44,10 +44,10 @@ export function EditorialSettingsModal({
 
   return (
     <div
-      className="fixed inset-0 bg-[#1a1a1a]/60 flex items-center justify-center z-50 p-4"
+      className="fixed inset-0 bg-[#1a1a1a]/60 flex items-center justify-center z-50 p-4 modal-fade-in"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div className={`${tc.bg} border ${tc.border} rounded-xl w-full max-w-md overflow-hidden shadow-xl max-h-[80vh] flex flex-col`}>
+      <div className={`${tc.bg} border ${tc.border} rounded-xl w-full max-w-md overflow-hidden shadow-xl max-h-[80vh] flex flex-col modal-card-in`}>
         {/* Header */}
         <div className={`border-b ${tc.border} px-5 py-4 flex items-center justify-between`}>
           <h2 className={`${tc.fontClass} ${tc.text} font-medium text-[15px]`}>Settings</h2>

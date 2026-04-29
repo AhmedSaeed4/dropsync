@@ -166,6 +166,7 @@ export default function Home() {
   // Layout transition handler with fade out/in + blur
   const handleLayoutChange = (newLayout: LayoutMode) => {
     if (newLayout === layoutMode) return;
+    setShowSettingsModal(false);
     setPendingLayout(newLayout);
     setLayoutTransition('fade-out');
   };

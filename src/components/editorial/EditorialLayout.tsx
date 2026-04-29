@@ -186,6 +186,9 @@ export function EditorialLayout(props: EditorialLayoutProps) {
               onThemeChange={setTheme}
               showChat={showChat}
             />
+            <div className="hidden md:block">
+              <EditorialSavedPaths theme={theme} showChat={showChat} />
+            </div>
           </div>
         </div>
 
@@ -203,9 +206,6 @@ export function EditorialLayout(props: EditorialLayoutProps) {
               onDeleteCategory={handleDeleteCategory}
               showChat={showChat}
             />
-            <div className="mt-6">
-              <EditorialSavedPaths theme={theme} showChat={showChat} />
-            </div>
           </div>
         </div>
 
