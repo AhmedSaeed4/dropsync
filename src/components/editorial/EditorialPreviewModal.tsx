@@ -261,12 +261,13 @@ export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoadin
             {drop.fileData && (
               <button
                 onClick={handleDownload}
-                className={`flex items-center gap-2 px-4 py-2 rounded-md border ${tc.border} ${tc.text} hover:border-[#1a1a1a] transition-all text-sm ${tc.fontClass}`}
+                className={`flex items-center gap-2 px-2 sm:px-4 py-2 rounded-md border ${tc.border} ${tc.text} hover:border-[#1a1a1a] transition-all text-sm ${tc.fontClass}`}
+                title="Download"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                 </svg>
-                Download
+                <span className="hidden sm:inline">Download</span>
               </button>
             )}
 
@@ -274,12 +275,13 @@ export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoadin
             {drop.imageData && (
               <button
                 onClick={handleDownloadImage}
-                className={`flex items-center gap-2 px-4 py-2 rounded-md border ${tc.border} ${tc.text} hover:border-[#1a1a1a] transition-all text-sm ${tc.fontClass}`}
+                className={`flex items-center gap-2 px-2 sm:px-4 py-2 rounded-md border ${tc.border} ${tc.text} hover:border-[#1a1a1a] transition-all text-sm ${tc.fontClass}`}
+                title="Download Image"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                 </svg>
-                Download Image
+                <span className="hidden sm:inline">Download Image</span>
               </button>
             )}
           </div>

@@ -143,7 +143,7 @@ export function EditorialWorkspaceSwitcher({
                 setIsOpen(false);
               }}
               className={`w-full px-3 py-2 text-left flex items-center gap-2 transition-colors ${
-                !currentWorkspace ? `${tc.activePillBg} ${tc.activePillText}` : `hover:bg-[#1a1a1a]/5`
+                !currentWorkspace ? (theme === 'dark' ? 'bg-white/10 text-white' : `${tc.activePillBg} ${tc.activePillText}`) : `hover:bg-[#1a1a1a]/5`
               }`}
             >
               <svg
