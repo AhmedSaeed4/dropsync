@@ -328,7 +328,7 @@ export function EditorialDropItem({
             {canCopyContent && (
               <button
                 onClick={handleCopy}
-                className={`p-2 sm:px-3 sm:py-1.5 border ${tc.border} ${tc.text} rounded ${tc.btnHoverBg} ${tc.btnHoverText} ${tc.hoverBorder} transition-colors`}
+                className={`p-2 sm:px-4 sm:py-1.5 border ${tc.border} ${tc.text} rounded ${tc.btnHoverBg} ${tc.btnHoverText} ${tc.hoverBorder} transition-colors`}
                 title={copied ? 'Copied!' : 'Copy content'}
               >
                 {copied ? (
@@ -346,7 +346,7 @@ export function EditorialDropItem({
               <button
                 onClick={handleDownload}
                 disabled={isDownloading}
-                className={`p-2 sm:px-3 sm:py-1.5 border ${tc.border} ${tc.text} rounded ${tc.btnHoverBg} ${tc.btnHoverText} ${tc.hoverBorder} transition-colors disabled:opacity-50`}
+                className={`p-2 sm:px-4 sm:py-1.5 border ${tc.border} ${tc.text} rounded ${tc.btnHoverBg} ${tc.btnHoverText} ${tc.hoverBorder} transition-colors disabled:opacity-50`}
                 title="Download"
               >
                 {isDownloading ? (
@@ -356,18 +356,6 @@ export function EditorialDropItem({
                     <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M12 12.75v-7.5m0 7.5l-3-3m3 3l3-3" />
                   </svg>
                 )}
-              </button>
-            )}
-            {/* Edit button */}
-            {onEdit && (
-              <button
-                onClick={handleEdit}
-                className={`p-2 sm:p-1.5 border ${tc.border} ${tc.text} rounded ${tc.btnHoverBg} ${tc.btnHoverText} ${tc.hoverBorder} transition-colors`}
-                title="Edit"
-              >
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
-                </svg>
               </button>
             )}
             <button
