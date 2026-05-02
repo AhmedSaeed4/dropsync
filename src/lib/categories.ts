@@ -63,24 +63,29 @@ export async function getCategoryDropCount(
   userId?: string | null
 ): Promise<number> {
   try {
-    let q;
-    if (workspaceId) {
-      q = query(
-        collection(db, DROPS_COLLECTION),
-        where('category', '==', categoryName),
-        where('workspaceId', '==', workspaceId)
-      );
-    } else {
-      q = query(
-        collection(db, DROPS_COLLECTION),
-        where('category', '==', categoryName),
-        where('userId', '==', userId),
-        where('workspaceId', '==', null)
-      );
-    }
+    const baseConstraints = workspaceId
+      ? [where('workspaceId', '==', workspaceId)]
+      : [where('userId', '==', userId), where('workspaceId', '==', null)];
 
-    const snapshot = await getDocs(q);
-    return snapshot.size;
+    // Query categories array (new format)
+    const arrayQ = query(
+      collection(db, DROPS_COLLECTION),
+      ...baseConstraints,
+      where('categories', 'array-contains', categoryName)
+    );
+    const arraySnapshot = await getDocs(arrayQ);
+    const ids = new Set(arraySnapshot.docs.map(d => d.id));
+
+    // Query legacy category field (old format)
+    const legacyQ = query(
+      collection(db, DROPS_COLLECTION),
+      ...baseConstraints,
+      where('category', '==', categoryName)
+    );
+    const legacySnapshot = await getDocs(legacyQ);
+    legacySnapshot.docs.forEach(d => ids.add(d.id));
+
+    return ids.size;
   } catch (error) {
     console.error('Error checking category drop count:', error);
     return 0;

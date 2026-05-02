@@ -293,7 +293,7 @@ export default function Home() {
   };
 
   // Handle edit submit
-  const handleEditSubmit = async (drop: Drop, updates: { name?: string; content?: string; category?: string | null; expirationOption?: ExpirationOption; imageFile?: File | null; imageRemoved?: boolean }): Promise<boolean> => {
+  const handleEditSubmit = async (drop: Drop, updates: { name?: string; content?: string; category?: string | null; categories?: string[]; expirationOption?: ExpirationOption; imageFile?: File | null; imageRemoved?: boolean }): Promise<boolean> => {
     if (!user) return false;
     const success = drop.type === 'file'
       ? await updateDropMetadata(drop.id, updates)

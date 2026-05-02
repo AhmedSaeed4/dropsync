@@ -7,13 +7,13 @@ import { getEditorialThemeColors } from './editorialTheme';
 import { decryptDrop } from '@/lib/drops';
 
 interface EditorialTextModalProps {
-  onSubmit: (name: string, content: string, expiration: ExpirationOption, category?: string, imageFile?: File) => Promise<void>;
+  onSubmit: (name: string, content: string, expiration: ExpirationOption, category?: string, imageFile?: File, categories?: string[]) => Promise<void>;
   onClose: () => void;
   theme?: 'light' | 'dark' | 'minimal';
   customCategories?: string[];
   onCreateCategory?: (name: string) => Promise<string | null>;
   editDrop?: Drop | null;
-  onEdit?: (drop: Drop, updates: { name?: string; content?: string; category?: string | null; expirationOption?: ExpirationOption; imageFile?: File | null; imageRemoved?: boolean }) => Promise<boolean>;
+  onEdit?: (drop: Drop, updates: { name?: string; content?: string; category?: string | null; categories?: string[]; expirationOption?: ExpirationOption; imageFile?: File | null; imageRemoved?: boolean }) => Promise<boolean>;
   currentUserId?: string;
 }
 
@@ -38,7 +38,9 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
   const [content, setContent] = useState(editDrop?.content || '');
   const [loading, setLoading] = useState(false);
   const [expiration, setExpiration] = useState<ExpirationOption>(editDrop?.expirationOption || '2h');
-  const [category, setCategory] = useState<string>(editDrop?.category || '');
+  const [selectedCategories, setSelectedCategories] = useState<string[]>(
+    editDrop?.categories || (editDrop?.category ? [editDrop.category] : [])
+  );
   const [showCustomInput, setShowCustomInput] = useState(false);
   const [customCategoryName, setCustomCategoryName] = useState('');
   const [creatingCategory, setCreatingCategory] = useState(false);
@@ -77,6 +79,14 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
 
   const tc = getEditorialThemeColors(theme);
 
+  const toggleCategory = (cat: string) => {
+    setSelectedCategories(prev => {
+      if (prev.includes(cat)) return prev.filter(c => c !== cat);
+      if (prev.length >= 3) return prev;
+      return [...prev, cat];
+    });
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isFileDrop && !content.trim()) return;
@@ -86,12 +96,12 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
       await onEdit(editDrop, {
         name: name.trim() || editDrop.name,
         ...(!isFileDrop && content !== editDrop.content ? { content } : {}),
-        category: category || null,
+        categories: selectedCategories,
         expirationOption: expiration,
         ...(!isFileDrop ? { imageFile: attachedImage || undefined, imageRemoved } : {}),
       });
     } else {
-      await onSubmit(name.trim() || 'Text snippet', content, expiration, category || undefined, attachedImage || undefined);
+      await onSubmit(name.trim() || 'Text snippet', content, expiration, selectedCategories[0] || undefined, attachedImage || undefined, selectedCategories);
     }
     setLoading(false);
   };
@@ -109,7 +119,9 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
     try {
       const newCategory = await onCreateCategory(customCategoryName.trim());
       if (newCategory) {
-        setCategory(newCategory);
+        if (selectedCategories.length < 3) {
+          setSelectedCategories(prev => [...prev, newCategory]);
+        }
         setShowCustomInput(false);
         setCustomCategoryName('');
       }
@@ -121,7 +133,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
 
   const hasChanges = isEditMode && editDrop ? (
     name.trim() !== (editDrop.name || '') ||
-    category !== (editDrop.category || '') ||
+    JSON.stringify(selectedCategories.sort()) !== JSON.stringify((editDrop.categories || (editDrop.category ? [editDrop.category] : [])).sort()) ||
     expiration !== editDrop.expirationOption ||
     (!isFileDrop && content !== (editDrop.content || '')) ||
     !!attachedImage ||
@@ -248,28 +260,18 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
             {/* Category Selection */}
             <div>
               <label className={`block text-xs ${tc.muted} ${tc.fontClass} mb-2`}>
-                Category
+                Categories <span className="opacity-50">(max 3)</span>
               </label>
               {!showCustomInput ? (
                 <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setCategory('')}
-                    className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${tc.fontClass} ${
-                      category === ''
-                        ? `${tc.activePillBg} ${tc.activePillText} border-[#1a1a1a]`
-                        : `${tc.border} ${tc.text} hover:border-[#1a1a1a]`
-                    }`}
-                  >
-                    None
-                  </button>
                   {BUILT_IN_CATEGORIES.map((cat) => (
                     <button
                       key={cat.value}
                       type="button"
-                      onClick={() => setCategory(cat.value)}
-                      className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${tc.fontClass} ${
-                        category === cat.value
+                      onClick={() => toggleCategory(cat.value)}
+                      disabled={!selectedCategories.includes(cat.value) && selectedCategories.length >= 3}
+                      className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${tc.fontClass} disabled:opacity-30 ${
+                        selectedCategories.includes(cat.value)
                           ? `${tc.activePillBg} ${tc.activePillText} border-[#1a1a1a]`
                           : `${tc.border} ${tc.text} hover:border-[#1a1a1a]`
                       }`}
@@ -281,9 +283,10 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
                     <button
                       key={cat}
                       type="button"
-                      onClick={() => setCategory(cat)}
-                      className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${tc.fontClass} ${
-                        category === cat
+                      onClick={() => toggleCategory(cat)}
+                      disabled={!selectedCategories.includes(cat) && selectedCategories.length >= 3}
+                      className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${tc.fontClass} disabled:opacity-30 ${
+                        selectedCategories.includes(cat)
                           ? `${tc.activePillBg} ${tc.activePillText} border-[#1a1a1a]`
                           : `${tc.border} ${tc.text} hover:border-[#1a1a1a]`
                       }`}

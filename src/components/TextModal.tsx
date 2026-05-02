@@ -6,13 +6,13 @@ import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { decryptDrop } from '@/lib/drops';
 
 interface TextModalProps {
-  onSubmit: (name: string, content: string, expiration: ExpirationOption, category?: string, imageFile?: File) => Promise<void>;
+  onSubmit: (name: string, content: string, expiration: ExpirationOption, category?: string, imageFile?: File, categories?: string[]) => Promise<void>;
   onClose: () => void;
   theme?: 'light' | 'dark' | 'minimal';
   customCategories?: string[];
   onCreateCategory?: (name: string) => Promise<string | null>;
   editDrop?: Drop | null;
-  onEdit?: (drop: Drop, updates: { name?: string; content?: string; category?: string | null; expirationOption?: ExpirationOption; imageFile?: File | null; imageRemoved?: boolean }) => Promise<boolean>;
+  onEdit?: (drop: Drop, updates: { name?: string; content?: string; category?: string | null; categories?: string[]; expirationOption?: ExpirationOption; imageFile?: File | null; imageRemoved?: boolean }) => Promise<boolean>;
   currentUserId?: string;
 }
 
@@ -36,7 +36,9 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
   const [content, setContent] = useState(editDrop?.content || '');
   const [loading, setLoading] = useState(false);
   const [expiration, setExpiration] = useState<ExpirationOption>(editDrop?.expirationOption || '2h');
-  const [category, setCategory] = useState<string>(editDrop?.category || '');
+  const [selectedCategories, setSelectedCategories] = useState<string[]>(
+    editDrop?.categories || (editDrop?.category ? [editDrop.category] : [])
+  );
   const [showCustomInput, setShowCustomInput] = useState(false);
   const [customCategoryName, setCustomCategoryName] = useState('');
   const [creatingCategory, setCreatingCategory] = useState(false);
@@ -74,6 +76,14 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
     }
   }, [isEditMode, editDrop, currentUserId]);
 
+  const toggleCategory = (cat: string) => {
+    setSelectedCategories(prev => {
+      if (prev.includes(cat)) return prev.filter(c => c !== cat);
+      if (prev.length >= 3) return prev;
+      return [...prev, cat];
+    });
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isFileDrop && !content.trim()) return;
@@ -83,13 +93,13 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
       await onEdit(editDrop, {
         name: name.trim() || editDrop.name,
         ...(!isFileDrop && content !== editDrop.content ? { content } : {}),
-        category: category || null,
+        categories: selectedCategories,
         expirationOption: expiration,
         imageFile: attachedImage || undefined,
         imageRemoved: imageRemoved,
       });
     } else {
-      await onSubmit(name.trim() || (isMinimal ? 'Text snippet' : 'TEXT_SNIPPET'), content, expiration, category || undefined, attachedImage || undefined);
+      await onSubmit(name.trim() || (isMinimal ? 'Text snippet' : 'TEXT_SNIPPET'), content, expiration, selectedCategories[0] || undefined, attachedImage || undefined, selectedCategories);
     }
     setLoading(false);
   };
@@ -102,7 +112,9 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
     try {
       const newCategory = await onCreateCategory(customCategoryName.trim());
       if (newCategory) {
-        setCategory(newCategory);
+        if (selectedCategories.length < 3) {
+          setSelectedCategories(prev => [...prev, newCategory]);
+        }
         setShowCustomInput(false);
         setCustomCategoryName('');
       }
@@ -194,7 +206,7 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
 
   const hasChanges = isEditMode && editDrop ? (
     name.trim() !== (editDrop.name || '') ||
-    category !== (editDrop.category || '') ||
+    JSON.stringify(selectedCategories.sort()) !== JSON.stringify((editDrop.categories || (editDrop.category ? [editDrop.category] : [])).sort()) ||
     expiration !== editDrop.expirationOption ||
     (!isFileDrop && content !== (editDrop.content || '')) ||
     !!attachedImage ||
@@ -283,30 +295,19 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
           {/* Category Selection */}
           <div>
             <label className={`block ${tc.fontClass} ${tc.textMuted} mb-2`}>
-              {isMinimal ? 'Category' : 'CATEGORY'}
+              {isMinimal ? 'Categories' : 'CATEGORIES'} <span className="opacity-50">(max 3)</span>
             </label>
             {!showCustomInput ? (
               <div className="flex flex-wrap gap-2">
-                {/* No category option */}
-                <button
-                  type="button"
-                  onClick={() => setCategory('')}
-                  className={`px-3 py-2 text-xs ${isMinimal ? 'rounded-full' : ''} border transition-colors ${
-                    category === ''
-                      ? 'bg-[#1A1A1A] text-white border-[#1A1A1A]'
-                      : `${tc.borderColor} ${tc.textColor} hover:bg-[#1A1A1A]/10`
-                  }`}
-                >
-                  {isMinimal ? 'None' : 'NONE'}
-                </button>
                 {/* Built-in categories */}
                 {BUILT_IN_CATEGORIES.map((cat) => (
                   <button
                     key={cat.value}
                     type="button"
-                    onClick={() => setCategory(cat.value)}
-                    className={`px-3 py-2 text-xs ${isMinimal ? 'rounded-full' : ''} border transition-colors ${
-                      category === cat.value
+                    onClick={() => toggleCategory(cat.value)}
+                    disabled={!selectedCategories.includes(cat.value) && selectedCategories.length >= 3}
+                    className={`px-3 py-2 text-xs ${isMinimal ? 'rounded-full' : ''} border transition-colors disabled:opacity-30 ${
+                      selectedCategories.includes(cat.value)
                         ? 'bg-[#1A1A1A] text-white border-[#1A1A1A]'
                         : `${tc.borderColor} ${tc.textColor} hover:bg-[#1A1A1A]/10`
                     }`}
@@ -319,9 +320,10 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
                   <button
                     key={cat}
                     type="button"
-                    onClick={() => setCategory(cat)}
-                    className={`px-3 py-2 text-xs ${isMinimal ? 'rounded-full' : ''} border transition-colors ${
-                      category === cat
+                    onClick={() => toggleCategory(cat)}
+                    disabled={!selectedCategories.includes(cat) && selectedCategories.length >= 3}
+                    className={`px-3 py-2 text-xs ${isMinimal ? 'rounded-full' : ''} border transition-colors disabled:opacity-30 ${
+                      selectedCategories.includes(cat)
                         ? 'bg-[#1A1A1A] text-white border-[#1A1A1A]'
                         : `${tc.borderColor} ${tc.textColor} hover:bg-[#1A1A1A]/10`
                     }`}

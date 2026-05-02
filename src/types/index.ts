@@ -45,8 +45,9 @@ export interface Drop {
   imageMimeType?: string;
   imageIv?: string; // IV for image encryption
   imageData?: string; // Runtime only: decrypted base64 image data
-  // Category field
-  category?: string; // 'password', 'link', or custom category name
+  // Category fields
+  category?: string; // Legacy: single category string
+  categories?: string[]; // New: array of category names (max 3)
   // Creator name for workspace drops
   creatorName?: string;
 }

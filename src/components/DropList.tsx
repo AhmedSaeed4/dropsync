@@ -126,19 +126,25 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, theme = 
   // Filter out all pending deletions from displayed drops
   const visibleDrops = drops.filter(d => !pendingDeletions.has(d.id));
 
+  const hasCategory = (drop: Drop, cat: string) =>
+    (drop.categories && drop.categories.includes(cat)) || drop.category === cat;
+
+  const getCategories = (drop: Drop) =>
+    drop.categories && drop.categories.length > 0 ? drop.categories : (drop.category ? [drop.category] : []);
+
   // Calculate drop counts for categories
   const dropCounts = useMemo(() => {
     const counts: { [key: string]: number } = {
       all: visibleDrops.length,
       files: visibleDrops.filter(d => d.type === 'file').length,
-      password: visibleDrops.filter(d => d.category === 'password').length,
-      link: visibleDrops.filter(d => d.category === 'link').length,
-      uncategorized: visibleDrops.filter(d => d.type === 'text' && !d.category).length,
+      password: visibleDrops.filter(d => hasCategory(d, 'password')).length,
+      link: visibleDrops.filter(d => hasCategory(d, 'link')).length,
+      uncategorized: visibleDrops.filter(d => d.type === 'text' && getCategories(d).length === 0).length,
     };
 
     // Add custom category counts
     categories.forEach(cat => {
-      counts[cat.name] = visibleDrops.filter(d => d.category === cat.name).length;
+      counts[cat.name] = visibleDrops.filter(d => hasCategory(d, cat.name)).length;
     });
 
     return counts;
@@ -155,8 +161,8 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, theme = 
       // Category filter
       if (selectedCategory === 'all') return true;
       if (selectedCategory === 'files') return drop.type === 'file';
-      if (selectedCategory === 'uncategorized') return drop.type === 'text' && !drop.category;
-      return drop.category === selectedCategory;
+      if (selectedCategory === 'uncategorized') return drop.type === 'text' && getCategories(drop).length === 0;
+      return hasCategory(drop, selectedCategory);
     });
   }, [visibleDrops, selectedCategory, searchQuery]);
 
