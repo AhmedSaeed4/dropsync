@@ -13,6 +13,7 @@ interface DropListProps {
   loading: boolean;
   onDelete: () => void;
   onPreview: (drop: Drop) => void;
+  onEdit?: (drop: Drop) => void;
   theme?: 'light' | 'dark' | 'minimal';
   currentUserId?: string;
   categories?: Category[];
@@ -24,7 +25,7 @@ interface PendingDeletion {
   timeoutId: NodeJS.Timeout;
 }
 
-export function DropList({ drops, loading, onDelete, onPreview, theme = 'light', currentUserId, categories = [], onDeleteCategory }: DropListProps) {
+export function DropList({ drops, loading, onDelete, onPreview, onEdit, theme = 'light', currentUserId, categories = [], onDeleteCategory }: DropListProps) {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
@@ -327,6 +328,7 @@ export function DropList({ drops, loading, onDelete, onPreview, theme = 'light',
                   drop={drop}
                   onDelete={handleDeleteWithUndo}
                   onPreview={onPreview}
+                  onEdit={onEdit}
                   selected={selectedIds.has(drop.id)}
                   onSelect={toggleSelect}
                   selectionMode={selectionMode}

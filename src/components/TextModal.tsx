@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
-import { ExpirationOption } from '@/types';
+import { useState, useRef, useCallback, useEffect } from 'react';
+import { Drop, ExpirationOption } from '@/types';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
+import { decryptDrop } from '@/lib/drops';
 
 interface TextModalProps {
   onSubmit: (name: string, content: string, expiration: ExpirationOption, category?: string, imageFile?: File) => Promise<void>;
@@ -10,6 +11,9 @@ interface TextModalProps {
   theme?: 'light' | 'dark' | 'minimal';
   customCategories?: string[];
   onCreateCategory?: (name: string) => Promise<string | null>;
+  editDrop?: Drop | null;
+  onEdit?: (drop: Drop, updates: { name?: string; content?: string; category?: string | null; expirationOption?: ExpirationOption; imageFile?: File | null; imageRemoved?: boolean }) => Promise<boolean>;
+  currentUserId?: string;
 }
 
 const EXPIRATION_OPTIONS: { value: ExpirationOption; label: string }[] = [
@@ -25,13 +29,14 @@ const BUILT_IN_CATEGORIES = [
   { value: 'link', label: 'Link' },
 ];
 
-export function TextModal({ onSubmit, onClose, theme = 'light', customCategories = [], onCreateCategory }: TextModalProps) {
+export function TextModal({ onSubmit, onClose, theme = 'light', customCategories = [], onCreateCategory, editDrop, onEdit, currentUserId }: TextModalProps) {
   useBodyScrollLock();
-  const [name, setName] = useState('');
-  const [content, setContent] = useState('');
+  const isEditMode = !!editDrop;
+  const [name, setName] = useState(editDrop?.name || '');
+  const [content, setContent] = useState(editDrop?.content || '');
   const [loading, setLoading] = useState(false);
-  const [expiration, setExpiration] = useState<ExpirationOption>('2h');
-  const [category, setCategory] = useState<string>('');
+  const [expiration, setExpiration] = useState<ExpirationOption>(editDrop?.expirationOption || '2h');
+  const [category, setCategory] = useState<string>(editDrop?.category || '');
   const [showCustomInput, setShowCustomInput] = useState(false);
   const [customCategoryName, setCustomCategoryName] = useState('');
   const [creatingCategory, setCreatingCategory] = useState(false);
@@ -39,18 +44,53 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [attachedImage, setAttachedImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [existingImageUrl, setExistingImageUrl] = useState<string | null>(null);
+  const [imageRemoved, setImageRemoved] = useState(false);
+  const [decryptingImage, setDecryptingImage] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const isDark = theme === 'dark';
   const isMinimal = theme === 'minimal';
+  const isFileDrop = isEditMode && editDrop?.type === 'file';
+
+  // Load existing image for edit mode
+  useEffect(() => {
+    if (isEditMode && editDrop && currentUserId) {
+      if (editDrop.imageR2Key) {
+        if (editDrop.imageData) {
+          setExistingImageUrl(editDrop.imageData);
+        } else if (editDrop.encrypted) {
+          setDecryptingImage(true);
+          decryptDrop(editDrop, currentUserId).then(decrypted => {
+            if (decrypted.imageData) {
+              setExistingImageUrl(decrypted.imageData);
+            }
+          }).finally(() => {
+            setDecryptingImage(false);
+          });
+        }
+      }
+    }
+  }, [isEditMode, editDrop, currentUserId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!content.trim()) return;
+    if (!isFileDrop && !content.trim()) return;
 
     setLoading(true);
-    await onSubmit(name.trim() || (isMinimal ? 'Text snippet' : 'TEXT_SNIPPET'), content, expiration, category || undefined, attachedImage || undefined);
+    if (isEditMode && editDrop && onEdit) {
+      await onEdit(editDrop, {
+        name: name.trim() || editDrop.name,
+        ...(!isFileDrop && content !== editDrop.content ? { content } : {}),
+        category: category || null,
+        expirationOption: expiration,
+        imageFile: attachedImage || undefined,
+        imageRemoved: imageRemoved,
+      });
+    } else {
+      await onSubmit(name.trim() || (isMinimal ? 'Text snippet' : 'TEXT_SNIPPET'), content, expiration, category || undefined, attachedImage || undefined);
+    }
     setLoading(false);
   };
 
@@ -121,6 +161,8 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
     if (!file) return;
     if (!file.type.startsWith('image/')) return;
     setAttachedImage(file);
+    setImageRemoved(false);
+    setExistingImageUrl(null);
     const reader = new FileReader();
     reader.onload = (ev) => setImagePreview(ev.target?.result as string);
     reader.readAsDataURL(file);
@@ -130,6 +172,8 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
   const handleImageFile = (file: File) => {
     if (!file.type.startsWith('image/')) return;
     setAttachedImage(file);
+    setImageRemoved(false);
+    setExistingImageUrl(null);
     const reader = new FileReader();
     reader.onload = (ev) => setImagePreview(ev.target?.result as string);
     reader.readAsDataURL(file);
@@ -138,7 +182,24 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
   const removeImage = () => {
     setAttachedImage(null);
     setImagePreview(null);
+    if (existingImageUrl) {
+      setImageRemoved(false);
+    }
   };
+
+  const removeExistingImage = () => {
+    setExistingImageUrl(null);
+    setImageRemoved(true);
+  };
+
+  const hasChanges = isEditMode && editDrop ? (
+    name.trim() !== (editDrop.name || '') ||
+    category !== (editDrop.category || '') ||
+    expiration !== editDrop.expirationOption ||
+    (!isFileDrop && content !== (editDrop.content || '')) ||
+    !!attachedImage ||
+    imageRemoved
+  ) : true;
 
   // Theme colors
   const getThemeColors = () => {
@@ -198,7 +259,12 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
         {/* Header */}
         <div className={`border-b ${tc.borderColor} px-6 py-4 flex items-center justify-between shrink-0 ${tc.headerBg} ${tc.roundedClass} ${isMinimal ? 'rounded-bl-none rounded-br-none' : ''}`}>
           <h2 className={`${isMinimal ? 'text-sm font-medium' : 'text-sm font-bold uppercase tracking-wider'} text-white`}>
-            {isMinimal ? 'Add text snippet' : 'ADD/TEXT_SNIPPET'}
+            {isFileDrop
+              ? (isMinimal ? 'Edit file' : 'EDIT/FILE')
+              : isEditMode
+                ? (isMinimal ? 'Edit drop' : 'EDIT/DROP')
+                : (isMinimal ? 'Add text snippet' : 'ADD/TEXT_SNIPPET')
+            }
           </h2>
           <button
             onClick={onClose}
@@ -323,6 +389,7 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
             />
           </div>
 
+          {!isFileDrop && (<>
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className={`block ${tc.fontClass} ${tc.textMuted}`}>
@@ -391,6 +458,40 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
                     <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                   </svg>
                 </button>
+                <div className={`absolute bottom-2 left-2 px-2 py-1 bg-[#1A1A1A]/80 text-white text-[10px] ${isMinimal ? 'rounded' : ''}`}>
+                  New image
+                </div>
+              </div>
+            ) : existingImageUrl && !imageRemoved ? (
+              <div className={`relative border ${tc.borderColor} ${tc.roundedClass} overflow-hidden`}>
+                {decryptingImage ? (
+                  <div className={`w-full h-32 flex items-center justify-center ${tc.inputBg}`}>
+                    <div className={`w-5 h-5 border border-current/30 border-t-current animate-spin rounded-full ${tc.textMuted}`} />
+                  </div>
+                ) : (
+                  <img src={existingImageUrl} alt="Current image" className="w-full max-h-40 object-cover" />
+                )}
+                <button
+                  type="button"
+                  onClick={removeExistingImage}
+                  className="absolute top-2 right-2 w-6 h-6 bg-[#1A1A1A]/80 text-white rounded-full flex items-center justify-center hover:bg-[#1A1A1A] transition-colors"
+                  title="Remove image"
+                >
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => imageInputRef.current?.click()}
+                  className={`absolute bottom-2 right-2 px-2 py-1 bg-[#1A1A1A]/80 text-white text-[10px] hover:bg-[#1A1A1A] transition-colors flex items-center gap-1 ${isMinimal ? 'rounded-full' : ''}`}
+                  title="Replace image"
+                >
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+                  </svg>
+                  {isMinimal ? 'Replace' : 'REPLACE'}
+                </button>
               </div>
             ) : (
               <button
@@ -405,6 +506,7 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
               </button>
             )}
           </div>
+          </>)}
 
           {/* Expiration selector */}
           <div>
@@ -439,7 +541,7 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
             </button>
             <button
               type="submit"
-              disabled={loading || !content.trim()}
+              disabled={loading || (isEditMode && !hasChanges) || (!isFileDrop && !content.trim())}
               className={`flex-1 bg-[#1A1A1A] text-white py-3 text-xs tracking-wider hover:bg-[#2A2A2A] disabled:bg-[#C4C4C4] disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2 ${isMinimal ? 'rounded-full' : ''}`}
             >
               {loading ? (
@@ -448,7 +550,9 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
                   {isMinimal ? 'Saving...' : 'UPLOADING...'}
                 </>
               ) : (
-                isMinimal ? 'Save' : 'CONFIRM'
+                isEditMode
+                  ? (isMinimal ? 'Save changes' : 'SAVE_CHANGES')
+                  : (isMinimal ? 'Save' : 'CONFIRM')
               )}
             </button>
           </div>

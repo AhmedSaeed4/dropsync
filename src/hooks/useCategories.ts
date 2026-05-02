@@ -20,7 +20,7 @@ export function useCategories(workspaceId: string | null, userId?: string | null
     const unsubscribe = createCategoriesListener(workspaceId, (cats) => {
       setCategories(cats);
       setLoading(false);
-    });
+    }, userId);
 
     return unsubscribe;
   }, [workspaceId, userId]);
@@ -31,7 +31,7 @@ export function useCategories(workspaceId: string | null, userId?: string | null
 
   const removeCategory = async (categoryId: string, categoryName: string): Promise<{ success: boolean; error?: string }> => {
     // Check if category has drops
-    const count = await getCategoryDropCount(categoryName, workspaceId);
+    const count = await getCategoryDropCount(categoryName, workspaceId, userId);
     if (count > 0) {
       return { success: false, error: 'Category has drops. Cannot delete.' };
     }

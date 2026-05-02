@@ -12,6 +12,7 @@ interface EditorialDropListProps {
   loading: boolean;
   onDelete: () => void;
   onPreview: (drop: Drop) => void;
+  onEdit?: (drop: Drop) => void;
   theme?: 'light' | 'dark' | 'minimal';
   currentUserId?: string;
   categories?: Category[];
@@ -36,6 +37,7 @@ export function EditorialDropList({
   loading,
   onDelete,
   onPreview,
+  onEdit,
   theme = 'light',
   currentUserId,
   categories = [],
@@ -422,6 +424,7 @@ export function EditorialDropList({
                   drop={drop}
                   onDelete={handleDeleteWithUndo}
                   onPreview={onPreview}
+                  onEdit={onEdit}
                   selected={selectedIds.has(drop.id)}
                   onSelect={toggleSelect}
                   selectionMode={selectionMode}

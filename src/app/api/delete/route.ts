@@ -58,14 +58,29 @@ export async function POST(request: NextRequest) {
 
     // =============================================
     // SECURITY CHECK 2: Verify ownership
-    // Query Firestore to ensure user owns a drop with this r2Key
+    // Query Firestore to ensure user owns a drop with this r2Key or imageR2Key
     // =============================================
     const dropsRef = adminDb.collection('drops');
-    const snapshot = await dropsRef.where('r2Key', '==', key).limit(1).get();
+
+    // Check both r2Key (main file) and imageR2Key (attached image)
+    const [mainSnapshot, imageSnapshot] = await Promise.all([
+      dropsRef.where('r2Key', '==', key).limit(1).get(),
+      dropsRef.where('imageR2Key', '==', key).limit(1).get(),
+    ]);
+
+    const snapshot = mainSnapshot.empty ? imageSnapshot : mainSnapshot;
 
     if (snapshot.empty) {
-      // No matching drop found
-      return NextResponse.json({ error: 'Drop not found' }, { status: 404 });
+      // No matching drop found — allow delete anyway (orphaned R2 object)
+      try {
+        await r2.send(new DeleteObjectCommand({
+          Bucket: process.env.R2_BUCKET_NAME!,
+          Key: key,
+        }));
+        return NextResponse.json({ success: true, orphaned: true });
+      } catch {
+        return NextResponse.json({ error: 'Drop not found' }, { status: 404 });
+      }
     }
 
     const dropData = snapshot.docs[0].data();

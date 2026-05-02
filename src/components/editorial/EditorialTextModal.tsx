@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
-import { ExpirationOption } from '@/types';
+import { useState, useRef, useCallback, useEffect } from 'react';
+import { Drop, ExpirationOption } from '@/types';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { getEditorialThemeColors } from './editorialTheme';
+import { decryptDrop } from '@/lib/drops';
 
 interface EditorialTextModalProps {
   onSubmit: (name: string, content: string, expiration: ExpirationOption, category?: string, imageFile?: File) => Promise<void>;
@@ -11,6 +12,9 @@ interface EditorialTextModalProps {
   theme?: 'light' | 'dark' | 'minimal';
   customCategories?: string[];
   onCreateCategory?: (name: string) => Promise<string | null>;
+  editDrop?: Drop | null;
+  onEdit?: (drop: Drop, updates: { name?: string; content?: string; category?: string | null; expirationOption?: ExpirationOption; imageFile?: File | null; imageRemoved?: boolean }) => Promise<boolean>;
+  currentUserId?: string;
 }
 
 const EXPIRATION_OPTIONS: { value: ExpirationOption; label: string }[] = [
@@ -26,13 +30,15 @@ const BUILT_IN_CATEGORIES = [
   { value: 'link', label: 'Link' },
 ];
 
-export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customCategories = [], onCreateCategory }: EditorialTextModalProps) {
+export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customCategories = [], onCreateCategory, editDrop, onEdit, currentUserId }: EditorialTextModalProps) {
   useBodyScrollLock();
-  const [name, setName] = useState('');
-  const [content, setContent] = useState('');
+  const isEditMode = !!editDrop;
+  const isFileDrop = isEditMode && editDrop?.type === 'file';
+  const [name, setName] = useState(editDrop?.name || '');
+  const [content, setContent] = useState(editDrop?.content || '');
   const [loading, setLoading] = useState(false);
-  const [expiration, setExpiration] = useState<ExpirationOption>('2h');
-  const [category, setCategory] = useState<string>('');
+  const [expiration, setExpiration] = useState<ExpirationOption>(editDrop?.expirationOption || '2h');
+  const [category, setCategory] = useState<string>(editDrop?.category || '');
   const [showCustomInput, setShowCustomInput] = useState(false);
   const [customCategoryName, setCustomCategoryName] = useState('');
   const [creatingCategory, setCreatingCategory] = useState(false);
@@ -40,19 +46,59 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [attachedImage, setAttachedImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [existingImageUrl, setExistingImageUrl] = useState<string | null>(null);
+  const [imageRemoved, setImageRemoved] = useState(false);
+  const [decryptingImage, setDecryptingImage] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const imageInputRef = useRef<HTMLInputElement>(null);
+
+  // Load existing image for edit mode
+  useEffect(() => {
+    if (isEditMode && editDrop && currentUserId) {
+      if (editDrop.imageR2Key) {
+        if (editDrop.imageData) {
+          // Already decrypted (from handleEditDrop or previous decrypt)
+          setExistingImageUrl(editDrop.imageData);
+        } else if (editDrop.encrypted) {
+          // Still encrypted — decrypt to get image
+          setDecryptingImage(true);
+          decryptDrop(editDrop, currentUserId).then(decrypted => {
+            if (decrypted.imageData) {
+              setExistingImageUrl(decrypted.imageData);
+            }
+          }).finally(() => {
+            setDecryptingImage(false);
+          });
+        }
+      }
+    }
+  }, [isEditMode, editDrop, currentUserId]);
 
   const tc = getEditorialThemeColors(theme);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!content.trim()) return;
+    if (!isFileDrop && !content.trim()) return;
 
     setLoading(true);
-    await onSubmit(name.trim() || 'Text snippet', content, expiration, category || undefined, attachedImage || undefined);
+    if (isEditMode && editDrop && onEdit) {
+      await onEdit(editDrop, {
+        name: name.trim() || editDrop.name,
+        ...(!isFileDrop && content !== editDrop.content ? { content } : {}),
+        category: category || null,
+        expirationOption: expiration,
+        ...(!isFileDrop ? { imageFile: attachedImage || undefined, imageRemoved } : {}),
+      });
+    } else {
+      await onSubmit(name.trim() || 'Text snippet', content, expiration, category || undefined, attachedImage || undefined);
+    }
     setLoading(false);
+  };
+
+  const removeExistingImage = () => {
+    setExistingImageUrl(null);
+    setImageRemoved(true);
   };
 
   const handleCreateCustomCategory = async () => {
@@ -72,6 +118,15 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
     }
     setCreatingCategory(false);
   };
+
+  const hasChanges = isEditMode && editDrop ? (
+    name.trim() !== (editDrop.name || '') ||
+    category !== (editDrop.category || '') ||
+    expiration !== editDrop.expirationOption ||
+    (!isFileDrop && content !== (editDrop.content || '')) ||
+    !!attachedImage ||
+    imageRemoved
+  ) : true;
 
   const toggleRecording = useCallback(async () => {
     if (isRecording && mediaRecorderRef.current) {
@@ -121,6 +176,8 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
     if (!file) return;
     if (!file.type.startsWith('image/')) return;
     setAttachedImage(file);
+    setImageRemoved(false);
+    setExistingImageUrl(null);
     const reader = new FileReader();
     reader.onload = (ev) => setImagePreview(ev.target?.result as string);
     reader.readAsDataURL(file);
@@ -130,6 +187,8 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
   const handleImageFile = (file: File) => {
     if (!file.type.startsWith('image/')) return;
     setAttachedImage(file);
+    setImageRemoved(false);
+    setExistingImageUrl(null);
     const reader = new FileReader();
     reader.onload = (ev) => setImagePreview(ev.target?.result as string);
     reader.readAsDataURL(file);
@@ -138,6 +197,10 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
   const removeImage = () => {
     setAttachedImage(null);
     setImagePreview(null);
+    // If there was an existing image and user selects then removes a new one, restore existing state
+    if (existingImageUrl) {
+      setImageRemoved(false);
+    }
   };
 
   return (
@@ -166,7 +229,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
         {/* Header */}
         <div className={`border-b ${tc.border} px-5 py-4 flex items-center justify-between`}>
           <h2 className={`${tc.fontClass} ${tc.text} font-medium text-[15px]`}>
-            Add text snippet
+            {isFileDrop ? 'Edit file' : isEditMode ? 'Edit drop' : 'Add text snippet'}
           </h2>
           <button
             onClick={onClose}
@@ -287,6 +350,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
               />
             </div>
 
+            {!isFileDrop && (<>
             <div>
               <div className="flex items-center justify-between mb-2">
                 <label className={`block text-xs ${tc.muted} ${tc.fontClass}`}>
@@ -344,6 +408,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
                 onChange={handleImageSelect}
                 className="hidden"
               />
+              {/* New image preview (just selected) */}
               {imagePreview ? (
                 <div className={`relative border ${tc.border} rounded-lg overflow-hidden`}>
                   <img src={imagePreview} alt="Attached" className="w-full max-h-32 object-cover" />
@@ -355,6 +420,41 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
                     <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                     </svg>
+                  </button>
+                  <div className={`absolute bottom-2 left-2 px-2 py-1 bg-[#1a1a1a]/80 text-white text-[10px] ${tc.fontClass} rounded`}>
+                    New image
+                  </div>
+                </div>
+              ) : existingImageUrl && !imageRemoved ? (
+                /* Existing image from the drop */
+                <div className={`relative border ${tc.border} rounded-lg overflow-hidden`}>
+                  {decryptingImage ? (
+                    <div className={`w-full h-32 flex items-center justify-center ${tc.bg}`}>
+                      <div className="w-5 h-5 border border-current/30 border-t-current animate-spin rounded-full ${tc.muted}" />
+                    </div>
+                  ) : (
+                    <img src={existingImageUrl} alt="Current image" className="w-full max-h-32 object-cover" />
+                  )}
+                  <button
+                    type="button"
+                    onClick={removeExistingImage}
+                    className="absolute top-2 right-2 w-6 h-6 bg-[#1a1a1a]/80 text-white rounded-full flex items-center justify-center hover:bg-[#1a1a1a] transition-colors"
+                    title="Remove image"
+                  >
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => imageInputRef.current?.click()}
+                    className="absolute bottom-2 right-2 px-2 py-1 bg-[#1a1a1a]/80 text-white text-[10px] rounded hover:bg-[#1a1a1a] transition-colors flex items-center gap-1"
+                    title="Replace image"
+                  >
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+                    </svg>
+                    Replace
                   </button>
                 </div>
               ) : (
@@ -370,6 +470,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
                 </button>
               )}
             </div>
+            </>)}
 
             {/* Expiration selector */}
             <div>
@@ -404,7 +505,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
               </button>
               <button
                 type="submit"
-                disabled={loading || !content.trim()}
+                disabled={loading || (isEditMode && !hasChanges) || (!isFileDrop && !content.trim())}
                 className={`flex-1 ${tc.activePillBg} ${tc.activePillText} py-2.5 text-sm rounded-lg hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity flex items-center justify-center gap-2 ${tc.fontClass}`}
               >
                 {loading ? (
@@ -413,7 +514,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
                     Saving...
                   </>
                 ) : (
-                  'Save'
+                  isEditMode ? 'Save changes' : 'Save'
                 )}
               </button>
             </div>

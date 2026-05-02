@@ -50,18 +50,25 @@ service cloud.firestore {
           request.auth.uid in get(/databases/$(database)/documents/workspaces/$(resource.data.workspaceId)).data.members)
       );
 
-      // Update - must be the creator
-      allow update: if request.auth != null && request.auth.uid == resource.data.userId;
+      // Update - creator can always update; workspace members can update workspace drops
+      allow update: if request.auth != null && (
+        request.auth.uid == resource.data.userId ||
+        (resource.data.workspaceId != null &&
+          request.auth.uid in get(/databases/$(database)/documents/workspaces/$(resource.data.workspaceId)).data.members)
+      );
 
       // Delete - authenticated users can delete (owner check done in code)
       allow delete: if request.auth != null;
     }
 
-    // Categories collection - authenticated users can manage categories
+    // Categories collection - users can only access their own personal categories or workspace categories
     match /categories/{categoryId} {
-      allow read: if request.auth != null;
+      allow read: if request.auth != null && (
+        request.auth.uid == resource.data.createdBy ||
+        resource.data.workspaceId != null
+      );
       allow create: if request.auth != null && request.auth.uid == request.resource.data.createdBy;
-      allow delete: if request.auth != null;
+      allow delete: if request.auth != null && request.auth.uid == resource.data.createdBy;
     }
 
     // Chat conversations - users can only access their own
