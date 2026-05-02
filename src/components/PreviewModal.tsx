@@ -254,22 +254,22 @@ export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false
         </div>
 
         {/* Footer */}
-        <div className={`border-t ${tc.borderColor} px-6 py-4 flex justify-end gap-3 ${tc.bgColor} transition-colors duration-300`}>
+        <div className={`border-t ${tc.borderColor} px-4 py-3 sm:px-6 sm:py-4 flex flex-wrap justify-end gap-2 sm:gap-3 ${tc.bgColor} transition-colors duration-300`}>
           {youtubeVideoId && (
             <button
               onClick={() => window.open(`https://www.youtube.com/watch?v=${youtubeVideoId}`, '_blank')}
-              className={`border ${tc.borderColor} ${tc.textColor} px-5 py-2 text-xs tracking-wider hover:bg-[#FF0000] hover:text-white hover:border-[#FF0000] transition-colors flex items-center gap-2 ${isMinimal ? 'rounded-full' : ''}`}
+              className={`border ${tc.borderColor} ${tc.textColor} px-3 py-1.5 sm:px-5 sm:py-2 text-xs tracking-wider hover:bg-[#FF0000] hover:text-white hover:border-[#FF0000] transition-colors flex items-center gap-2 ${isMinimal ? 'rounded-full' : ''}`}
             >
               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
               </svg>
-              {isMinimal ? 'Watch on YouTube' : 'WATCH_ON_YOUTUBE'}
+              {isMinimal ? 'YouTube' : 'YT'}
             </button>
           )}
           <button
             onClick={handleShare}
             disabled={isSharing}
-            className={`border ${tc.borderColor} ${tc.textColor} px-5 py-2 text-xs tracking-wider hover:bg-[#1A1A1A] hover:text-white transition-colors flex items-center gap-2 disabled:opacity-50 ${isMinimal ? 'rounded-full' : ''}`}
+            className={`border ${tc.borderColor} ${tc.textColor} px-3 py-1.5 sm:px-5 sm:py-2 text-xs tracking-wider hover:bg-[#1A1A1A] hover:text-white transition-colors flex items-center gap-2 disabled:opacity-50 ${isMinimal ? 'rounded-full' : ''}`}
           >
             {shareCopied ? (
               <>
@@ -289,14 +289,14 @@ export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false
           </button>
           <button
             onClick={onClose}
-            className={`border ${tc.borderColor} ${tc.textColor} px-5 py-2 text-xs tracking-wider hover:bg-[#1A1A1A] hover:text-white transition-colors ${isMinimal ? 'rounded-full' : ''}`}
+            className={`border ${tc.borderColor} ${tc.textColor} px-3 py-1.5 sm:px-5 sm:py-2 text-xs tracking-wider hover:bg-[#1A1A1A] hover:text-white transition-colors ${isMinimal ? 'rounded-full' : ''}`}
           >
             {isMinimal ? 'Close' : 'CLOSE'}
           </button>
           {isText && textContent && (
             <button
               onClick={handleCopy}
-              className={`border ${tc.borderColor} ${tc.textColor} px-5 py-2 text-xs tracking-wider hover:bg-[#1A1A1A] hover:text-white transition-colors flex items-center gap-2 ${isMinimal ? 'rounded-full' : ''}`}
+              className={`border ${tc.borderColor} ${tc.textColor} px-3 py-1.5 sm:px-5 sm:py-2 text-xs tracking-wider hover:bg-[#1A1A1A] hover:text-white transition-colors flex items-center gap-2 ${isMinimal ? 'rounded-full' : ''}`}
             >
               {copied ? (
                 <>
@@ -325,19 +325,19 @@ export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false
                 link.click();
                 document.body.removeChild(link);
               }}
-              className="bg-[#1A1A1A] text-white px-5 py-2 text-xs tracking-wider hover:bg-[#2A2A2A] transition-colors flex items-center gap-2"
+              className="bg-[#1A1A1A] text-white px-3 py-1.5 sm:px-5 sm:py-2 text-xs tracking-wider hover:bg-[#2A2A2A] transition-colors flex items-center gap-2"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
                 <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
               </svg>
-              {isMinimal ? 'Download image' : 'DOWNLOAD_IMAGE'}
+              {isMinimal ? 'Save' : 'SAVE'}
             </button>
           )}
           {/* Edit button */}
           {onEdit && (
             <button
               onClick={() => onEdit(drop)}
-              className={`border ${tc.borderColor} ${tc.textColor} px-5 py-2 text-xs tracking-wider hover:bg-[#1A1A1A] hover:text-white transition-colors flex items-center gap-2 ${isMinimal ? 'rounded-full' : ''}`}
+              className={`border ${tc.borderColor} ${tc.textColor} px-3 py-1.5 sm:px-5 sm:py-2 text-xs tracking-wider hover:bg-[#1A1A1A] hover:text-white transition-colors flex items-center gap-2 ${isMinimal ? 'rounded-full' : ''}`}
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
@@ -348,7 +348,7 @@ export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false
           {drop.type === 'file' && drop.fileData && (
             <button
               onClick={handleDownload}
-              className="bg-[#1A1A1A] text-white px-5 py-2 text-xs tracking-wider hover:bg-[#2A2A2A] transition-colors flex items-center gap-2"
+              className="bg-[#1A1A1A] text-white px-3 py-1.5 sm:px-5 sm:py-2 text-xs tracking-wider hover:bg-[#2A2A2A] transition-colors flex items-center gap-2"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
                 <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
