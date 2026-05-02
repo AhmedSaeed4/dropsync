@@ -102,6 +102,7 @@ export function createDropListener(
           imageMimeType: data.imageMimeType || undefined,
           imageIv: data.imageIv || undefined,
           category: data.category || undefined,
+          categories: data.categories || (data.category ? [data.category] : []),
           creatorName: data.creatorName || undefined,
         });
       }
@@ -132,7 +133,8 @@ export async function createTextDrop(
   workspaceMembers?: string[],
   category?: string,
   creatorName?: string,
-  imageFile?: File
+  imageFile?: File,
+  categories?: string[]
 ): Promise<Drop | null> {
   try {
     const now = new Date();
@@ -221,7 +223,8 @@ export async function createTextDrop(
       expiresAt: expiresAt ? Timestamp.fromDate(expiresAt) : null,
       expirationOption,
       workspaceId,
-      category: category || null,
+      category: null,
+      categories: categories && categories.length > 0 ? categories : (category ? [category] : []),
     };
 
     // Add creator info for workspace drops
@@ -439,6 +442,7 @@ export async function updateDropMetadata(
   updates: {
     name?: string;
     category?: string | null;
+    categories?: string[];
     expirationOption?: ExpirationOption;
   }
 ): Promise<boolean> {
@@ -449,7 +453,10 @@ export async function updateDropMetadata(
     if (updates.name !== undefined) {
       updateData.name = updates.name;
     }
-    if (updates.category !== undefined) {
+    if (updates.categories !== undefined) {
+      updateData.categories = updates.categories;
+      updateData.category = null;
+    } else if (updates.category !== undefined) {
       updateData.category = updates.category || null;
     }
     if (updates.expirationOption !== undefined) {
@@ -472,6 +479,7 @@ export async function updateTextDrop(
     name?: string;
     content?: string;
     category?: string | null;
+    categories?: string[];
     expirationOption?: ExpirationOption;
     imageFile?: File | null;
     imageRemoved?: boolean;
@@ -487,7 +495,10 @@ export async function updateTextDrop(
     if (updates.name !== undefined) {
       updateData.name = updates.name;
     }
-    if (updates.category !== undefined) {
+    if (updates.categories !== undefined) {
+      updateData.categories = updates.categories;
+      updateData.category = null;
+    } else if (updates.category !== undefined) {
       updateData.category = updates.category || null;
     }
     if (updates.expirationOption !== undefined) {
