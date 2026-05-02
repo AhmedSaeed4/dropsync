@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { Drop } from '@/types';
 import { DropItem } from './DropItem';
 import { UndoToast } from './UndoToast';
@@ -32,6 +32,8 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, theme = 
   const [pendingDeletions, setPendingDeletions] = useState<Map<string, PendingDeletion>>(new Map());
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
+
+  useEffect(() => { setSelectedCategory('all'); }, [categories]);
   const isDark = theme === 'dark';
   const isMinimal = theme === 'minimal';
 

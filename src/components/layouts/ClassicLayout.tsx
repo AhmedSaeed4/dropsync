@@ -169,6 +169,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
                 workspaceMembers={workspaceMembers}
                 customCategories={categories.map(c => c.name)}
                 onCreateCategory={handleCreateCategory}
+                editModalOpen={!!editDrop}
               />
             </section>
             <section>

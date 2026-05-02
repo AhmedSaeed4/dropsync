@@ -248,6 +248,8 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
         const items = e.clipboardData.items;
         for (let i = 0; i < items.length; i++) {
           if (items[i].type.startsWith('image/')) {
+            e.stopPropagation();
+            e.preventDefault();
             const file = items[i].getAsFile();
             if (file) handleImageFile(file);
             break;

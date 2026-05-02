@@ -14,6 +14,7 @@ interface EditorialDropZoneProps {
   customCategories?: string[];
   onCreateCategory?: (name: string) => Promise<string | null>;
   showChat?: boolean;
+  editModalOpen?: boolean;
 }
 
 const EXPIRATION_OPTIONS: { value: ExpirationOption; label: string }[] = [
@@ -31,6 +32,7 @@ export function EditorialDropZone({
   customCategories = [],
   onCreateCategory,
   showChat = false,
+  editModalOpen = false,
 }: EditorialDropZoneProps) {
   const { user } = useAuth();
   const [isDragging, setIsDragging] = useState(false);
@@ -132,7 +134,7 @@ export function EditorialDropZone({
   // --- Clipboard paste ---
   useEffect(() => {
     const handlePaste = async (e: ClipboardEvent) => {
-      if (!user || uploading || showTextModal) return;
+      if (!user || uploading || showTextModal || editModalOpen) return;
       const target = e.target as HTMLElement;
       if (
         target.tagName === 'INPUT' ||
