@@ -168,7 +168,7 @@ export function EditorialDropZone({
 
     document.addEventListener('paste', handlePaste);
     return () => document.removeEventListener('paste', handlePaste);
-  }, [user, uploading, showTextModal, uploadFiles]);
+  }, [user, uploading, showTextModal, uploadFiles, editModalOpen]);
 
   // --- Border/shadow states ---
   const borderClass = isDragging

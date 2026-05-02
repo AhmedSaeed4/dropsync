@@ -149,7 +149,7 @@ export function DropZone({
 
     document.addEventListener('paste', handlePaste);
     return () => document.removeEventListener('paste', handlePaste);
-  }, [user, uploading, expiration, workspaceId, workspaceMembers, showTextModal]);
+  }, [user, uploading, expiration, workspaceId, workspaceMembers, showTextModal, editModalOpen]);
 
   // Theme colors
   const getThemeColors = () => {
