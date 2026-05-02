@@ -59,14 +59,25 @@ export async function deleteCategory(categoryId: string): Promise<boolean> {
 // Check if a category has any drops
 export async function getCategoryDropCount(
   categoryName: string,
-  workspaceId: string | null
+  workspaceId: string | null,
+  userId?: string | null
 ): Promise<number> {
   try {
-    const q = query(
-      collection(db, DROPS_COLLECTION),
-      where('category', '==', categoryName),
-      where('workspaceId', '==', workspaceId)
-    );
+    let q;
+    if (workspaceId) {
+      q = query(
+        collection(db, DROPS_COLLECTION),
+        where('category', '==', categoryName),
+        where('workspaceId', '==', workspaceId)
+      );
+    } else {
+      q = query(
+        collection(db, DROPS_COLLECTION),
+        where('category', '==', categoryName),
+        where('userId', '==', userId),
+        where('workspaceId', '==', null)
+      );
+    }
 
     const snapshot = await getDocs(q);
     return snapshot.size;
@@ -79,12 +90,22 @@ export async function getCategoryDropCount(
 // Listen to categories for a workspace (or personal if workspaceId is null)
 export function createCategoriesListener(
   workspaceId: string | null,
-  callback: (categories: Category[]) => void
+  callback: (categories: Category[]) => void,
+  userId?: string | null
 ): () => void {
-  const q = query(
-    collection(db, CATEGORIES_COLLECTION),
-    where('workspaceId', '==', workspaceId)
-  );
+  let q;
+  if (workspaceId) {
+    q = query(
+      collection(db, CATEGORIES_COLLECTION),
+      where('workspaceId', '==', workspaceId)
+    );
+  } else {
+    q = query(
+      collection(db, CATEGORIES_COLLECTION),
+      where('createdBy', '==', userId),
+      where('workspaceId', '==', null)
+    );
+  }
 
   return onSnapshot(q, (snapshot) => {
     const categories: Category[] = [];

@@ -1,6 +1,6 @@
 'use client';
 
-import { Drop, Workspace } from '@/types';
+import { Drop, Workspace, ExpirationOption } from '@/types';
 import { EditorialPreviewModal } from './EditorialPreviewModal';
 import { EditorialCreateWorkspaceModal } from './EditorialCreateWorkspaceModal';
 import { EditorialJoinWorkspaceModal } from './EditorialJoinWorkspaceModal';
@@ -15,6 +15,7 @@ import { EditorialStatusPanel } from './EditorialStatusPanel';
 import { EditorialThemeSelector } from './EditorialThemeSelector';
 import { EditorialSavedPaths } from './EditorialSavedPaths';
 import { getEditorialThemeColors } from './editorialTheme';
+import { EditorialTextModal } from './EditorialTextModal';
 
 type Theme = 'light' | 'dark' | 'minimal';
 type LayoutMode = 'classic' | 'editorial';
@@ -89,6 +90,10 @@ interface EditorialLayoutProps {
   signOutUser: () => void;
   updateDisplayName: (n: string) => void;
   reauthenticateUser: (p?: string) => Promise<{ success: boolean; error?: string }>;
+  editDrop: Drop | null;
+  setEditDrop: (d: Drop | null) => void;
+  handleEditDrop: (drop: Drop) => void;
+  handleEditSubmit: (drop: Drop, updates: { name?: string; content?: string; category?: string | null; expirationOption?: ExpirationOption; imageFile?: File | null; imageRemoved?: boolean }) => Promise<boolean>;
 }
 
 export function EditorialLayout(props: EditorialLayoutProps) {
@@ -118,6 +123,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
     handlePreview, handleShowVerifyModal, handleCheckVerification,
     signIn, emailSignIn, signUp, resetPassword, resendVerification,
     signOutUser, updateDisplayName, reauthenticateUser,
+    editDrop, setEditDrop, handleEditDrop, handleEditSubmit,
   } = props;
 
   const tc = getEditorialThemeColors(theme);
@@ -200,6 +206,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
               loading={dropsLoading}
               onDelete={refreshDrops}
               onPreview={handlePreview}
+              onEdit={handleEditDrop}
               theme={theme}
               currentUserId={user?.uid}
               categories={categories}
@@ -230,6 +237,21 @@ export function EditorialLayout(props: EditorialLayoutProps) {
           }}
           theme={theme}
           isLoading={previewLoading}
+          onEdit={handleEditDrop}
+        />
+      )}
+
+      {/* Edit Text Modal */}
+      {editDrop && (
+        <EditorialTextModal
+          onSubmit={async () => {}}
+          onClose={() => setEditDrop(null)}
+          theme={theme}
+          customCategories={categories.map(c => c.name)}
+          onCreateCategory={undefined}
+          editDrop={editDrop}
+          onEdit={handleEditSubmit}
+          currentUserId={user?.uid}
         />
       )}
 

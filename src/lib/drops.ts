@@ -9,7 +9,8 @@ import {
   onSnapshot,
   serverTimestamp,
   Timestamp,
-  getDocs
+  getDocs,
+  updateDoc
 } from 'firebase/firestore';
 import { db, auth } from './firebase';
 import { Drop, ExpirationOption } from '@/types';
@@ -433,6 +434,246 @@ export async function createFileDrop(
   }
 }
 
+export async function updateDropMetadata(
+  dropId: string,
+  updates: {
+    name?: string;
+    category?: string | null;
+    expirationOption?: ExpirationOption;
+  }
+): Promise<boolean> {
+  try {
+    const docRef = doc(db, DROPS_COLLECTION, dropId);
+    const updateData: Record<string, unknown> = {};
+
+    if (updates.name !== undefined) {
+      updateData.name = updates.name;
+    }
+    if (updates.category !== undefined) {
+      updateData.category = updates.category || null;
+    }
+    if (updates.expirationOption !== undefined) {
+      updateData.expirationOption = updates.expirationOption;
+      const expiresAt = getExpirationDate(updates.expirationOption);
+      updateData.expiresAt = expiresAt ? Timestamp.fromDate(expiresAt) : null;
+    }
+
+    await updateDoc(docRef, updateData);
+    return true;
+  } catch (error) {
+    console.error('Error updating drop metadata:', error);
+    return false;
+  }
+}
+
+export async function updateTextDrop(
+  drop: Drop,
+  updates: {
+    name?: string;
+    content?: string;
+    category?: string | null;
+    expirationOption?: ExpirationOption;
+    imageFile?: File | null;
+    imageRemoved?: boolean;
+  },
+  currentUserId: string
+): Promise<boolean> {
+  try {
+    const docRef = doc(db, DROPS_COLLECTION, drop.id);
+    const updateData: Record<string, unknown> = {};
+    const r2KeysToDelete: { key: string; workspaceId: string | null }[] = [];
+
+    // Simple metadata updates
+    if (updates.name !== undefined) {
+      updateData.name = updates.name;
+    }
+    if (updates.category !== undefined) {
+      updateData.category = updates.category || null;
+    }
+    if (updates.expirationOption !== undefined) {
+      updateData.expirationOption = updates.expirationOption;
+      const expiresAt = getExpirationDate(updates.expirationOption);
+      updateData.expiresAt = expiresAt ? Timestamp.fromDate(expiresAt) : null;
+    }
+
+    const contentChanged = updates.content !== undefined;
+    const imageChanged = !!updates.imageFile;
+    const imageRemoved = !!updates.imageRemoved && !updates.imageFile;
+
+    // PATH 1: Content changed → new DEK → re-encrypt content + handle image with same DEK
+    if (contentChanged) {
+      if (drop.workspaceId) {
+        const workspaceKey = await getWorkspaceKey(drop.workspaceId, currentUserId);
+        if (!workspaceKey) {
+          console.error('Could not get workspace key for re-encryption');
+          return false;
+        }
+
+        const encContent = await encryptData(updates.content!, workspaceKey);
+        updateData.content = encContent.encrypted;
+        updateData.iv = encContent.iv;
+        updateData.encrypted = true;
+
+        if (imageChanged && updates.imageFile) {
+          if (drop.imageR2Key) {
+            r2KeysToDelete.push({ key: drop.imageR2Key, workspaceId: drop.workspaceId });
+          }
+          const imageBase64 = await fileToBase64(updates.imageFile);
+          const encImg = await encryptData(imageBase64, workspaceKey);
+          const uploadResult = await uploadToR2(encImg.encrypted);
+          updateData.imageUrl = uploadResult.url;
+          updateData.imageR2Key = uploadResult.key;
+          updateData.imageSize = updates.imageFile.size;
+          updateData.imageMimeType = updates.imageFile.type || 'image/png';
+          updateData.imageIv = encImg.iv;
+        } else if (imageRemoved) {
+          if (drop.imageR2Key) {
+            r2KeysToDelete.push({ key: drop.imageR2Key, workspaceId: drop.workspaceId });
+          }
+          updateData.imageUrl = null;
+          updateData.imageR2Key = null;
+          updateData.imageSize = null;
+          updateData.imageMimeType = null;
+          updateData.imageIv = null;
+        }
+        // Workspace key is stable — unchanged images stay decryptable, no re-encryption needed
+      } else {
+        // Personal drop → new DEK generated
+        const keys = await getUserKeys(currentUserId);
+        if (!keys) {
+          console.error('User has no encryption keys for re-encryption');
+          return false;
+        }
+
+        const dek = await generateAESKey();
+
+        const encContent = await encryptData(updates.content!, dek);
+        updateData.content = encContent.encrypted;
+        updateData.iv = encContent.iv;
+        updateData.encrypted = true;
+
+        const publicKey = await getUserPublicKey(currentUserId);
+        if (publicKey) {
+          const { encryptedDEK: encDEK, iv: dekIv } = await encryptDEKForUser(
+            dek, publicKey, keys.privateKey
+          );
+          updateData.encryptedDEK = JSON.stringify({ encryptedDEK: encDEK, iv: dekIv });
+        }
+
+        if (imageChanged && updates.imageFile) {
+          if (drop.imageR2Key) {
+            r2KeysToDelete.push({ key: drop.imageR2Key, workspaceId: null });
+          }
+          const imageBase64 = await fileToBase64(updates.imageFile);
+          const encImg = await encryptData(imageBase64, dek);
+          const uploadResult = await uploadToR2(encImg.encrypted);
+          updateData.imageUrl = uploadResult.url;
+          updateData.imageR2Key = uploadResult.key;
+          updateData.imageSize = updates.imageFile.size;
+          updateData.imageMimeType = updates.imageFile.type || 'image/png';
+          updateData.imageIv = encImg.iv;
+        } else if (imageRemoved) {
+          if (drop.imageR2Key) {
+            r2KeysToDelete.push({ key: drop.imageR2Key, workspaceId: null });
+          }
+          updateData.imageUrl = null;
+          updateData.imageR2Key = null;
+          updateData.imageSize = null;
+          updateData.imageMimeType = null;
+          updateData.imageIv = null;
+        } else if (drop.imageR2Key && drop.imageUrl) {
+          // DEK changed but image unchanged → must re-encrypt image with new DEK
+          try {
+            const imgResponse = await fetch(drop.imageUrl);
+            if (imgResponse.ok) {
+              const encryptedImageData = await imgResponse.text();
+              const oldParsed = JSON.parse(drop.encryptedDEK!);
+              const creatorPublicKey = await getUserPublicKey(drop.userId);
+              if (creatorPublicKey) {
+                const oldDek = await decryptDEKForUser(
+                  oldParsed.encryptedDEK, oldParsed.iv, creatorPublicKey, keys.privateKey
+                );
+                const decryptedImage = await decryptData(encryptedImageData, oldDek, drop.imageIv!);
+                const encImg = await encryptData(decryptedImage, dek);
+                r2KeysToDelete.push({ key: drop.imageR2Key, workspaceId: null });
+                const uploadResult = await uploadToR2(encImg.encrypted);
+                updateData.imageUrl = uploadResult.url;
+                updateData.imageR2Key = uploadResult.key;
+                updateData.imageIv = encImg.iv;
+              }
+            }
+          } catch (imgError) {
+            console.error('Failed to re-encrypt image with new DEK:', imgError);
+          }
+        }
+      }
+    } else if (imageChanged || imageRemoved) {
+      // PATH 2: Image changed/removed but content unchanged → use existing DEK
+      if (imageRemoved) {
+        if (drop.imageR2Key) {
+          r2KeysToDelete.push({ key: drop.imageR2Key, workspaceId: drop.workspaceId });
+        }
+        updateData.imageUrl = null;
+        updateData.imageR2Key = null;
+        updateData.imageSize = null;
+        updateData.imageMimeType = null;
+        updateData.imageIv = null;
+      } else if (updates.imageFile) {
+        let encryptionKey: CryptoKey;
+        if (drop.workspaceId) {
+          const workspaceKey = await getWorkspaceKey(drop.workspaceId, currentUserId);
+          if (!workspaceKey) {
+            console.error('Could not get workspace key');
+            return false;
+          }
+          encryptionKey = workspaceKey;
+        } else {
+          const keys = await getUserKeys(currentUserId);
+          if (!keys) {
+            console.error('User has no encryption keys');
+            return false;
+          }
+          const parsed = JSON.parse(drop.encryptedDEK!);
+          const creatorPublicKey = await getUserPublicKey(drop.userId);
+          if (!creatorPublicKey) {
+            console.error('Could not get creator public key');
+            return false;
+          }
+          encryptionKey = await decryptDEKForUser(
+            parsed.encryptedDEK, parsed.iv, creatorPublicKey, keys.privateKey
+          );
+        }
+
+        if (drop.imageR2Key) {
+          r2KeysToDelete.push({ key: drop.imageR2Key, workspaceId: drop.workspaceId });
+        }
+        const imageBase64 = await fileToBase64(updates.imageFile);
+        const encImg = await encryptData(imageBase64, encryptionKey);
+        const uploadResult = await uploadToR2(encImg.encrypted);
+        updateData.imageUrl = uploadResult.url;
+        updateData.imageR2Key = uploadResult.key;
+        updateData.imageSize = updates.imageFile.size;
+        updateData.imageMimeType = updates.imageFile.type || 'image/png';
+        updateData.imageIv = encImg.iv;
+      }
+    }
+    // PATH 3: Only metadata changed (name, category, expiration) → no re-encryption
+
+    // Write to Firestore FIRST — if this fails, old R2 objects are untouched
+    await updateDoc(docRef, updateData);
+
+    // Only clean up old R2 objects after Firestore succeeds
+    for (const { key, workspaceId } of r2KeysToDelete) {
+      try { await deleteFromR2(key, workspaceId); } catch {}
+    }
+
+    return true;
+  } catch (error) {
+    console.error('Error updating text drop:', error);
+    return false;
+  }
+}
+
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -649,6 +890,13 @@ export async function decryptDrop(drop: Drop, currentUserId: string): Promise<Dr
       return drop;
     }
 
+    // AES-GCM ciphertext must be at least 16 bytes (tag size) + IV overhead
+    // If the data is too short, it's not valid encrypted content
+    if (dataToDecrypt.length < 24) {
+      console.warn('Encrypted data too short to decrypt, returning as-is');
+      return drop;
+    }
+
     const decryptedData = await decryptData(dataToDecrypt, dek, drop.iv);
 
     // Decrypt attached image if present (text drop with image)
@@ -668,16 +916,17 @@ export async function decryptDrop(drop: Drop, currentUserId: string): Promise<Dr
       }
     }
 
-    // Return drop with decrypted content
+    // Return drop with decrypted content, mark as decrypted to prevent re-decryption
     return {
       ...drop,
       content: drop.type === 'text' ? decryptedData : drop.content,
       fileData: drop.type === 'file' ? decryptedData : drop.fileData,
       imageData,
+      encrypted: false,
     };
   } catch (error) {
     console.error('Failed to decrypt drop:', error);
-    return drop;
+    return { ...drop, encrypted: false };
   }
 }
 

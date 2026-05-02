@@ -13,9 +13,9 @@ import { EditorialVerifyEmailModal } from '@/components/editorial/EditorialVerif
 import { getEditorialThemeColors } from '@/components/editorial/editorialTheme';
 import { AuthModal } from '@/components/AuthModal';
 import { VerifyEmailModal } from '@/components/VerifyEmailModal';
-import { Drop, Workspace } from '@/types';
+import { Drop, Workspace, ExpirationOption } from '@/types';
 import { initializeUserKeys, hasUserKeys, getUserKeys } from '@/lib/keys';
-import { decryptDrop } from '@/lib/drops';
+import { decryptDrop, updateTextDrop, updateDropMetadata } from '@/lib/drops';
 import { reauthenticateUser } from '@/lib/auth';
 
 type Theme = 'light' | 'dark' | 'minimal';
@@ -62,6 +62,7 @@ export default function Home() {
   // Modal states
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showJoinModal, setShowJoinModal] = useState(false);
+  const [editDrop, setEditDrop] = useState<Drop | null>(null);
   const [createdWorkspace, setCreatedWorkspace] = useState<{ name: string; inviteCode: string } | null>(null);
   const [workspaceToDelete, setWorkspaceToDelete] = useState<Workspace | null>(null);
   const [workspaceToLeave, setWorkspaceToLeave] = useState<Workspace | null>(null);
@@ -273,6 +274,35 @@ export default function Home() {
 
   // Get workspace members for encryption
   const workspaceMembers = currentWorkspace?.members || [];
+
+  // Handle edit drop — decrypt text drops, file drops just need metadata
+  const handleEditDrop = async (drop: Drop) => {
+    setPreviewDrop(null); // close preview if open
+    if (drop.type === 'file') {
+      setEditDrop(drop);
+    } else if (drop.encrypted && user) {
+      try {
+        const decrypted = await decryptDrop(drop, user.uid);
+        setEditDrop(decrypted);
+      } catch {
+        setEditDrop({ ...drop, content: '' });
+      }
+    } else {
+      setEditDrop(drop);
+    }
+  };
+
+  // Handle edit submit
+  const handleEditSubmit = async (drop: Drop, updates: { name?: string; content?: string; category?: string | null; expirationOption?: ExpirationOption; imageFile?: File | null; imageRemoved?: boolean }): Promise<boolean> => {
+    if (!user) return false;
+    const success = drop.type === 'file'
+      ? await updateDropMetadata(drop.id, updates)
+      : await updateTextDrop(drop, updates, user.uid);
+    if (success) {
+      setEditDrop(null);
+    }
+    return success;
+  };
 
   // Handle category creation
   const handleCreateCategory = async (name: string): Promise<string | null> => {
@@ -804,6 +834,7 @@ export default function Home() {
     handlePreview, handleShowVerifyModal, handleCheckVerification,
     signIn, emailSignIn, signUp, resetPassword, resendVerification,
     signOutUser, updateDisplayName, reauthenticateUser,
+    editDrop, setEditDrop, handleEditDrop, handleEditSubmit,
   };
 
   const transitionClass = layoutTransition === 'fade-out'

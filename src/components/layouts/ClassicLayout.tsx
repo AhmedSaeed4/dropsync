@@ -1,6 +1,6 @@
 'use client';
 
-import { Drop, Workspace } from '@/types';
+import { Drop, Workspace, ExpirationOption } from '@/types';
 import { Header } from '@/components/Header';
 import { DropZone } from '@/components/DropZone';
 import { DropList } from '@/components/DropList';
@@ -13,6 +13,7 @@ import { VerifyEmailModal } from '@/components/VerifyEmailModal';
 import { SettingsModal } from '@/components/SettingsModal';
 import { ChatPanel } from '@/components/ChatPanel';
 import { SavedPaths } from '@/components/SavedPaths';
+import { TextModal } from '@/components/TextModal';
 
 type Theme = 'light' | 'dark' | 'minimal';
 type LayoutMode = 'classic' | 'editorial';
@@ -89,6 +90,10 @@ interface ClassicLayoutProps {
   signOutUser: () => void;
   updateDisplayName: (n: string) => void;
   reauthenticateUser: (p?: string) => Promise<{ success: boolean; error?: string }>;
+  editDrop: Drop | null;
+  setEditDrop: (d: Drop | null) => void;
+  handleEditDrop: (drop: Drop) => void;
+  handleEditSubmit: (drop: Drop, updates: { name?: string; content?: string; category?: string | null; expirationOption?: ExpirationOption; imageFile?: File | null; imageRemoved?: boolean }) => Promise<boolean>;
 }
 
 export function ClassicLayout(props: ClassicLayoutProps) {
@@ -118,6 +123,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
     handlePreview, handleShowVerifyModal, handleCheckVerification,
     signIn, emailSignIn, signUp, resetPassword, resendVerification,
     signOutUser, updateDisplayName, reauthenticateUser,
+    editDrop, setEditDrop, handleEditDrop, handleEditSubmit,
   } = props;
 
   const handleCloseCreateModal = () => {
@@ -171,6 +177,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
                 loading={dropsLoading}
                 onDelete={refreshDrops}
                 onPreview={handlePreview}
+                onEdit={handleEditDrop}
                 theme={theme}
                 currentUserId={user?.uid}
                 categories={categories}
@@ -268,6 +275,21 @@ export function ClassicLayout(props: ClassicLayoutProps) {
           }}
           theme={theme}
           isLoading={previewLoading}
+          onEdit={handleEditDrop}
+        />
+      )}
+
+      {/* Edit Text Modal */}
+      {editDrop && (
+        <TextModal
+          onSubmit={async () => {}}
+          onClose={() => setEditDrop(null)}
+          theme={theme}
+          customCategories={categories.map(c => c.name)}
+          onCreateCategory={undefined}
+          editDrop={editDrop}
+          onEdit={handleEditSubmit}
+          currentUserId={user?.uid}
         />
       )}
 
