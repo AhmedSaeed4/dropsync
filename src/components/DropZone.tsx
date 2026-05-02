@@ -12,6 +12,7 @@ interface DropZoneProps {
   workspaceMembers?: string[];
   customCategories?: string[];
   onCreateCategory?: (name: string) => Promise<string | null>;
+  editModalOpen?: boolean;
 }
 
 const EXPIRATION_OPTIONS: { value: ExpirationOption; label: string }[] = [
@@ -27,7 +28,8 @@ export function DropZone({
   workspaceId = null,
   workspaceMembers = [],
   customCategories = [],
-  onCreateCategory
+  onCreateCategory,
+  editModalOpen = false,
 }: DropZoneProps) {
   const { user } = useAuth();
   const [isDragging, setIsDragging] = useState(false);
@@ -109,7 +111,7 @@ export function DropZone({
   // Handle clipboard paste (Ctrl+V) for images
   useEffect(() => {
     const handlePaste = async (e: ClipboardEvent) => {
-      if (!user || uploading || showTextModal) return;
+      if (!user || uploading || showTextModal || editModalOpen) return;
 
       // Skip if user is typing in a text field (chat input, etc.)
       const target = e.target as HTMLElement;

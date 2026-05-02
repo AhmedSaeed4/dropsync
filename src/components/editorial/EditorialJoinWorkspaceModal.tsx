@@ -25,11 +25,11 @@ export function EditorialJoinWorkspaceModal({ onJoin, onClose, theme = 'light' }
     setLoading(true);
     setError(null);
 
-    try {
-      await onJoin(code.trim());
+    const result = await onJoin(code.trim());
+    if (result.success) {
       onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to join workspace');
+    } else if (result.error) {
+      setError(result.error);
     }
 
     setLoading(false);

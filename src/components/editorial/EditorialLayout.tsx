@@ -180,6 +180,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
               customCategories={categories.map(c => c.name)}
               onCreateCategory={handleCreateCategory}
               showChat={showChat}
+              editModalOpen={!!editDrop}
             />
             <EditorialStatusPanel
               dropsCount={drops.length}

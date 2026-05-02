@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { Drop, Category } from '@/types';
 import { EditorialDropItem } from './EditorialDropItem';
 import { UndoToast } from '@/components/UndoToast';
@@ -50,6 +50,8 @@ export function EditorialDropList({
   const [pendingDeletions, setPendingDeletions] = useState<Map<string, PendingDeletion>>(new Map());
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
+
+  useEffect(() => { setSelectedCategory('all'); }, [categories]);
   const [confirmDeleteCategory, setConfirmDeleteCategory] = useState<string | null>(null);
 
   const tc = getEditorialThemeColors(theme);
