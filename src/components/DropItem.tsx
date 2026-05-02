@@ -369,31 +369,11 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
                 )}
               </button>
             )}
-            {hasAttachedImage && (
-              <button
-                onClick={async (e) => {
-                  e.stopPropagation();
-                  if (!displayImageData) return;
-                  const link = document.createElement('a');
-                  link.href = displayImageData;
-                  link.download = `image-${drop.name}.png`;
-                  document.body.appendChild(link);
-                  link.click();
-                  document.body.removeChild(link);
-                }}
-                className={`w-12 h-full flex items-center justify-center border-r ${tc.borderColor} ${tc.textMuted} hover:bg-[#1A1A1A] hover:text-white transition-colors`}
-                title={isMinimal ? 'Download image' : 'DOWNLOAD_IMAGE'}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
-                  <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                </svg>
-              </button>
-            )}
-            {/* Share button */}
+            {/* Share button - hidden on mobile */}
             <button
               onClick={handleShare}
               disabled={isSharing}
-              className={`w-12 h-full flex items-center justify-center border-r ${tc.borderColor} ${tc.textMuted} hover:bg-[#1A1A1A] hover:text-white transition-colors disabled:opacity-50`}
+              className={`hidden sm:flex w-12 h-full items-center justify-center border-r ${tc.borderColor} ${tc.textMuted} hover:bg-[#1A1A1A] hover:text-white transition-colors disabled:opacity-50`}
               title={isMinimal ? 'Share' : 'SHARE'}
             >
               {shareCopied ? (

@@ -156,8 +156,8 @@ export default function Home() {
   // Load layout from localStorage on mount
   useEffect(() => {
     const stored = localStorage.getItem(LAYOUT_STORAGE_KEY);
-    if (stored === 'editorial') {
-      setLayoutMode('editorial');
+    if (stored === 'classic' || stored === 'editorial') {
+      setLayoutMode(stored);
     }
   }, []);
 
