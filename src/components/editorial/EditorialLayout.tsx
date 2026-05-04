@@ -1,5 +1,6 @@
 'use client';
 
+import { useRef } from 'react';
 import { Drop, Workspace, ExpirationOption } from '@/types';
 import { EditorialPreviewModal } from './EditorialPreviewModal';
 import { EditorialCreateWorkspaceModal } from './EditorialCreateWorkspaceModal';
@@ -126,11 +127,27 @@ export function EditorialLayout(props: EditorialLayoutProps) {
     editDrop, setEditDrop, handleEditDrop, handleEditSubmit,
   } = props;
 
+  // Ref to always access the latest drops value (avoids stale closure issues)
+  const dropsRef = useRef(drops);
+  dropsRef.current = drops;
+
   const tc = getEditorialThemeColors(theme);
 
   const handleCloseCreateModal = () => {
     setShowCreateModal(false);
     setCreatedWorkspace(null);
+  };
+
+  // Handle preview drop from chat — switch workspace if needed, then open
+  const handlePreviewDrop = async (dropId: string, workspaceId: string | null) => {
+    if (workspaceId !== currentWorkspaceId) {
+      switchWorkspace(workspaceId);
+      await new Promise(r => setTimeout(r, 1000));
+    }
+    const found = dropsRef.current.find(d => d.id === dropId);
+    if (found) {
+      handlePreview(found);
+    }
   };
 
   return (
@@ -223,6 +240,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
             <EditorialChatPanel
               theme={theme}
               onClose={() => setShowChat(false)}
+              onPreviewDrop={handlePreviewDrop}
             />
           )}
         </div>
