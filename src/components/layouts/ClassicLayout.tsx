@@ -1,5 +1,6 @@
 'use client';
 
+import { useRef } from 'react';
 import { Drop, Workspace, ExpirationOption } from '@/types';
 import { Header } from '@/components/Header';
 import { DropZone } from '@/components/DropZone';
@@ -126,9 +127,26 @@ export function ClassicLayout(props: ClassicLayoutProps) {
     editDrop, setEditDrop, handleEditDrop, handleEditSubmit,
   } = props;
 
+  // Ref to always access the latest drops value (avoids stale closure issues)
+  const dropsRef = useRef(drops);
+  dropsRef.current = drops;
+
   const handleCloseCreateModal = () => {
     setShowCreateModal(false);
     setCreatedWorkspace(null);
+  };
+
+  // Handle preview drop from chat — switch workspace if needed, then open
+  const handlePreviewDrop = async (dropId: string, workspaceId: string | null) => {
+    if (workspaceId !== currentWorkspaceId) {
+      switchWorkspace(workspaceId);
+      // Wait for drops to update via Firestore listener
+      await new Promise(r => setTimeout(r, 1000));
+    }
+    const found = dropsRef.current.find(d => d.id === dropId);
+    if (found) {
+      handlePreview(found);
+    }
   };
 
   return (
@@ -189,7 +207,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
 
           <div className={`sticky ${theme === 'minimal' ? 'top-24' : 'top-28'} self-start w-full flex flex-col min-h-0 transition-all duration-300 ease-out ${showChat ? 'lg:w-[480px]' : 'lg:w-80'}`}>
             {showChat ? (
-              <ChatPanel theme={theme} onClose={() => setShowChat(false)} />
+              <ChatPanel theme={theme} onClose={() => setShowChat(false)} onPreviewDrop={handlePreviewDrop} />
             ) : (
               <div className="space-y-6">
             {/* Theme Toggle Panel */}

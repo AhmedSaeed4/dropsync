@@ -18,13 +18,14 @@ import { getEditorialThemeColors } from './editorialTheme';
 interface EditorialChatPanelProps {
   theme: 'light' | 'dark' | 'minimal';
   onClose: () => void;
+  onPreviewDrop?: (dropId: string, workspaceId: string | null) => void;
 }
 
 const AGENT_URL = process.env.NEXT_PUBLIC_AGENT_URL || 'http://localhost:8000';
 
 const WELCOME = 'Hi! I can help you manage your drops. Ask me to list drops, search content, check storage stats, or manage workspaces.';
 
-export function EditorialChatPanel({ theme, onClose }: EditorialChatPanelProps) {
+export function EditorialChatPanel({ theme, onClose, onPreviewDrop }: EditorialChatPanelProps) {
   const tc = getEditorialThemeColors(theme);
 
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -184,7 +185,14 @@ export function EditorialChatPanel({ theme, onClose }: EditorialChatPanelProps) 
       }
 
       const data = await res.json();
-      await saveMessage(userId, convId, 'assistant', data.response);
+      let response = data.response;
+
+      // Check for preview drop from backend
+      if (data.previewDropId && onPreviewDrop) {
+        onPreviewDrop(data.previewDropId, data.previewWorkspaceId);
+      }
+
+      await saveMessage(userId, convId, 'assistant', response);
     } catch (e: any) {
       await saveMessage(userId, convId, 'assistant', `Error: ${e.message || 'Something went wrong'}`);
     } finally {
@@ -364,16 +372,22 @@ export function EditorialChatPanel({ theme, onClose }: EditorialChatPanelProps) 
           </div>
         ))}
 
-        {/* Loading dots */}
+        {/* Loading indicator */}
         {loading && (
-          <div className="flex justify-start">
-            <div className={`px-4 py-3 rounded-lg ${theme === 'dark' ? 'bg-white/10' : 'bg-[#f5f5f5] border ' + tc.border}`}>
-              <div className="flex gap-1.5 items-center">
-                <span className={`w-1.5 h-1.5 rounded-full ${theme === 'dark' ? 'bg-white' : 'bg-[#1a1a1a]'} opacity-40 animate-bounce`} style={{ animationDelay: '0ms' }} />
-                <span className={`w-1.5 h-1.5 rounded-full ${theme === 'dark' ? 'bg-white' : 'bg-[#1a1a1a]'} opacity-40 animate-bounce`} style={{ animationDelay: '150ms' }} />
-                <span className={`w-1.5 h-1.5 rounded-full ${theme === 'dark' ? 'bg-white' : 'bg-[#1a1a1a]'} opacity-40 animate-bounce`} style={{ animationDelay: '300ms' }} />
-              </div>
-            </div>
+          <div className="flex justify-start px-4 py-3">
+            <div className="w-3.5 h-3.5 rounded-full bg-[#1a1a1a]" style={{
+              animation: 'l1-chat 2s infinite cubic-bezier(0.3,1,0,1)',
+              ['--bg-mid' as string]: theme === 'dark' ? '#ffffff' : '#555555',
+              ['--bg-end' as string]: theme === 'dark' ? '#cccccc' : '#333333',
+            }} />
+            <style>{`
+              @keyframes l1-chat {
+                0%   { border-radius: 50%; clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); }
+                33%  { border-radius: 0; clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); background: var(--bg-mid); }
+                66%  { border-radius: 0; clip-path: polygon(50% 0%, 100% 100%, 0 100%, 0 100%); background: var(--bg-end); }
+                100% { border-radius: 50%; clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); }
+              }
+            `}</style>
           </div>
         )}
       </div>
