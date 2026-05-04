@@ -451,7 +451,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop }: ChatPanelProps) {
               @keyframes l1-chat {
                 0%   { border-radius: 50%; clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); }
                 33%  { border-radius: 0; clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); background: var(--bg-mid); }
-                66%  { border-radius: 0; clip-path: polygon(50% 0%, 100% 100%, 0 100%, 0 100%); background: var(--bg-end); }
+                66%  { border-radius: 0; clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%); background: var(--bg-end); }
                 100% { border-radius: 50%; clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); }
               }
             `}</style>
