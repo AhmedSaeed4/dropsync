@@ -818,6 +818,341 @@ export function getTimeRemaining(expiresAt: Date | null): string {
   return `${minutes}m`;
 }
 
+// =============================================
+// Move a drop between workspaces (or to/from personal)
+// Decrypts with source key, re-encrypts with target key,
+// then does a single atomic updateDoc call.
+// =============================================
+export async function moveDrop(
+  drop: Drop,
+  targetWorkspaceId: string | null,
+  currentUserId: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    // Step 1: Decrypt the drop to get plaintext
+    const decrypted = await decryptDrop(drop, currentUserId);
+    if (drop.encrypted && !decrypted.content && drop.type === 'text') {
+      return { success: false, error: 'Failed to decrypt drop content' };
+    }
+    if (drop.encrypted && !decrypted.fileData && drop.type === 'file') {
+      return { success: false, error: 'Failed to decrypt file content' };
+    }
+
+    // Step 2: Re-encrypt with the target key
+    let newContent: string | undefined;
+    let newFileData: string | undefined;
+    let newR2Key: string | undefined;
+    let newFileUrl: string | undefined;
+    let newIv: string | undefined;
+    let newEncryptedDEK: string | undefined;
+    let newEncrypted = false;
+
+    const isTargetWorkspace = targetWorkspaceId !== null;
+
+    if (drop.type === 'text') {
+      const plaintext = decrypted.content ?? '';
+      if (isTargetWorkspace) {
+        // Encrypt with workspace key
+        const workspaceKey = await getWorkspaceKey(targetWorkspaceId, currentUserId);
+        if (!workspaceKey) {
+          return { success: false, error: 'Could not get target workspace key' };
+        }
+        const enc = await encryptData(plaintext, workspaceKey);
+        newContent = enc.encrypted;
+        newIv = enc.iv;
+        newEncrypted = true;
+      } else {
+        // Encrypt with personal key (new DEK)
+        const keys = await getUserKeys(currentUserId);
+        if (!keys) {
+          return { success: false, error: 'User has no encryption keys' };
+        }
+        const dek = await generateAESKey();
+        const enc = await encryptData(plaintext, dek);
+        newContent = enc.encrypted;
+        newIv = enc.iv;
+        newEncrypted = true;
+
+        const publicKey = await getUserPublicKey(currentUserId);
+        if (publicKey) {
+          const { encryptedDEK: encDEK, iv: dekIv } = await encryptDEKForUser(
+            dek, publicKey, keys.privateKey
+          );
+          newEncryptedDEK = JSON.stringify({ encryptedDEK: encDEK, iv: dekIv });
+        }
+      }
+    } else if (drop.type === 'file') {
+      // For file drops, decrypt the file data (already done in decryptDrop)
+      const plaintext = decrypted.fileData ?? '';
+
+      // Check if original was encrypted (file drops >10MB skip encryption)
+      const wasEncrypted = drop.encrypted && !!drop.r2Key;
+
+      if (!wasEncrypted) {
+        // Large file — skip re-encryption, just update metadata
+        // File stays in R2 as-is
+        newR2Key = drop.r2Key;
+        newFileUrl = drop.fileUrl;
+      } else if (isTargetWorkspace) {
+        const workspaceKey = await getWorkspaceKey(targetWorkspaceId, currentUserId);
+        if (!workspaceKey) {
+          return { success: false, error: 'Could not get target workspace key' };
+        }
+        const enc = await encryptData(plaintext, workspaceKey);
+        newFileData = enc.encrypted;
+        newIv = enc.iv;
+        newEncrypted = true;
+
+        // Upload re-encrypted file to R2
+        const uploadResult = await uploadToR2(newFileData);
+        newFileUrl = uploadResult.url;
+        newR2Key = uploadResult.key;
+      } else {
+        const keys = await getUserKeys(currentUserId);
+        if (!keys) {
+          return { success: false, error: 'User has no encryption keys' };
+        }
+        const dek = await generateAESKey();
+        const enc = await encryptData(plaintext, dek);
+        newFileData = enc.encrypted;
+        newIv = enc.iv;
+        newEncrypted = true;
+
+        const publicKey = await getUserPublicKey(currentUserId);
+        if (publicKey) {
+          const { encryptedDEK: encDEK, iv: dekIv } = await encryptDEKForUser(
+            dek, publicKey, keys.privateKey
+          );
+          newEncryptedDEK = JSON.stringify({ encryptedDEK: encDEK, iv: dekIv });
+        }
+
+        // Upload re-encrypted file to R2
+        const uploadResult = await uploadToR2(newFileData);
+        newFileUrl = uploadResult.url;
+        newR2Key = uploadResult.key;
+      }
+    }
+
+    // Step 3: Handle attached image (text drops with image)
+    let newImageUrl: string | undefined;
+    let newImageR2Key: string | undefined;
+    let newImageIv: string | undefined;
+    let newImageSize: number | undefined;
+    let newImageMimeType: string | undefined;
+    const oldImageR2Key: string | null = drop.imageR2Key || null;
+
+    if (drop.type === 'text' && drop.imageUrl && drop.imageIv) {
+      // Fetch encrypted image from R2
+      const imgResponse = await fetch(drop.imageUrl);
+      if (imgResponse.ok) {
+        const encryptedImageData = await imgResponse.text();
+
+        // Decrypt image with OLD key (from decryptDrop we already have the dek)
+        let oldDek: CryptoKey | null = null;
+        if (drop.workspaceId) {
+          oldDek = await getWorkspaceKey(drop.workspaceId, currentUserId);
+        } else {
+          const keys = await getUserKeys(currentUserId);
+          if (keys && drop.encryptedDEK) {
+            const parsed = JSON.parse(drop.encryptedDEK);
+            const creatorPublicKey = await getUserPublicKey(drop.userId);
+            if (creatorPublicKey) {
+              oldDek = await decryptDEKForUser(
+                parsed.encryptedDEK, parsed.iv, creatorPublicKey, keys.privateKey
+              );
+            }
+          }
+        }
+
+        if (oldDek) {
+          const decryptedImage = await decryptData(encryptedImageData, oldDek, drop.imageIv);
+
+          // Re-encrypt with target key
+          let encryptionKey: CryptoKey | null = null;
+          if (isTargetWorkspace) {
+            encryptionKey = await getWorkspaceKey(targetWorkspaceId, currentUserId);
+          } else {
+            // Use same DEK as text content
+            const keys = await getUserKeys(currentUserId);
+            if (keys && newEncryptedDEK) {
+              const parsed = JSON.parse(newEncryptedDEK);
+              const creatorPublicKey = await getUserPublicKey(currentUserId);
+              if (creatorPublicKey) {
+                encryptionKey = await decryptDEKForUser(
+                  parsed.encryptedDEK, parsed.iv, creatorPublicKey, keys.privateKey
+                );
+              }
+            }
+          }
+
+          if (encryptionKey) {
+            const encImg = await encryptData(decryptedImage, encryptionKey);
+            const uploadResult = await uploadToR2(encImg.encrypted);
+            newImageUrl = uploadResult.url;
+            newImageR2Key = uploadResult.key;
+            newImageIv = encImg.iv;
+            newImageSize = drop.imageSize;
+            newImageMimeType = drop.imageMimeType;
+          }
+        }
+      }
+    }
+
+    // Step 4: Build update data
+    const docRef = doc(db, DROPS_COLLECTION, drop.id);
+    const updateData: Record<string, unknown> = {
+      workspaceId: targetWorkspaceId,
+    };
+
+    // When moving to personal, the mover takes ownership
+    if (targetWorkspaceId === null) {
+      updateData.userId = currentUserId;
+    }
+
+    if (newContent !== undefined) {
+      updateData.content = newContent;
+    }
+    if (newIv !== undefined) {
+      updateData.iv = newIv;
+    }
+    if (newEncrypted) {
+      updateData.encrypted = true;
+      if (newEncryptedDEK) {
+        updateData.encryptedDEK = newEncryptedDEK;
+      } else if (isTargetWorkspace) {
+        // Only null out encryptedDEK for workspace targets (they don't use DEK)
+        updateData.encryptedDEK = null;
+      } else {
+        // Personal target but no encryptedDEK — fatal error, don't write broken drop
+        return { success: false, error: 'Failed to encrypt drop for personal space. Please try again.' };
+      }
+    } else {
+      // Ensure encrypted flag matches reality — if we didn't re-encrypt,
+      // the drop is not encrypted in the new context
+      updateData.encrypted = false;
+    }
+
+    // File drop updates
+    if (newR2Key !== undefined) {
+      updateData.r2Key = newR2Key;
+      updateData.fileUrl = newFileUrl;
+      // Don't change encrypted flag for large unencrypted files
+    }
+    if (newFileData !== undefined) {
+      updateData.r2Key = newR2Key;
+      updateData.fileUrl = newFileUrl;
+    }
+
+    // Image updates
+    if (newImageUrl !== undefined) {
+      updateData.imageUrl = newImageUrl;
+      updateData.imageR2Key = newImageR2Key;
+      updateData.imageIv = newImageIv;
+      updateData.imageSize = newImageSize;
+      updateData.imageMimeType = newImageMimeType;
+    } else if (oldImageR2Key) {
+      // Image was not re-encrypted (e.g., decryption failed) — clear it
+      updateData.imageUrl = null;
+      updateData.imageR2Key = null;
+      updateData.imageIv = null;
+      updateData.imageSize = null;
+      updateData.imageMimeType = null;
+    }
+
+    // creatorName: set when moving to workspace, delete when moving to personal
+    if (isTargetWorkspace) {
+      const userDisplayName = (await getUserDisplayName(currentUserId));
+      updateData.creatorName = userDisplayName || undefined;
+    } else {
+      updateData.creatorName = null;
+    }
+
+    // Category matching: preserve categories by checking/creating them in the target space
+    const BUILT_IN_CATEGORIES = new Set(['password', 'link']);
+
+    const sourceCategories = drop.categories || (drop.category ? [drop.category] : []);
+    if (sourceCategories.length > 0) {
+      const resolvedCategories: string[] = [];
+
+      // Separate built-in from custom categories
+      const customCategories: string[] = [];
+      for (const catName of sourceCategories) {
+        if (BUILT_IN_CATEGORIES.has(catName.toLowerCase().trim())) {
+          // Built-in category — just preserve it, no Firestore document needed
+          resolvedCategories.push(catName.trim());
+        } else {
+          customCategories.push(catName);
+        }
+      }
+
+      // Only query/create custom categories in the target space
+      if (customCategories.length > 0) {
+        let catQuery;
+        if (isTargetWorkspace) {
+          catQuery = query(collection(db, 'categories'), where('workspaceId', '==', targetWorkspaceId));
+        } else {
+          catQuery = query(collection(db, 'categories'), where('createdBy', '==', currentUserId), where('workspaceId', '==', null));
+        }
+        const catSnapshot = await getDocs(catQuery);
+        const existingCategories = new Map<string, string>();
+        catSnapshot.forEach(d => {
+          const data = d.data();
+          existingCategories.set(data.name.toLowerCase().trim(), data.name);
+        });
+
+        for (const catName of customCategories) {
+          const nameLower = catName.toLowerCase().trim();
+          if (existingCategories.has(nameLower)) {
+            resolvedCategories.push(existingCategories.get(nameLower)!);
+          } else {
+            const trimmedName = catName.trim();
+            await addDoc(collection(db, 'categories'), {
+              name: trimmedName,
+              workspaceId: targetWorkspaceId,
+              createdBy: currentUserId,
+              createdAt: serverTimestamp(),
+            });
+            existingCategories.set(nameLower, trimmedName);
+            resolvedCategories.push(trimmedName);
+          }
+        }
+      }
+
+      updateData.categories = resolvedCategories;
+    } else {
+      updateData.categories = [];
+    }
+    updateData.category = null;
+
+    // Step 5: Single atomic update
+    await updateDoc(docRef, updateData);
+
+    // Step 6: Clean up old R2 objects after Firestore succeeds
+    if (oldImageR2Key) {
+      try { await deleteFromR2(oldImageR2Key, drop.workspaceId); } catch {}
+    }
+    // Delete old file R2 key if we uploaded a new one
+    if (drop.type === 'file' && drop.r2Key && newR2Key && drop.r2Key !== newR2Key) {
+      try { await deleteFromR2(drop.r2Key, drop.workspaceId); } catch {}
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error moving drop:', error);
+    return { success: false, error: 'Failed to move drop. Please try again.' };
+  }
+}
+
+async function getUserDisplayName(userId: string): Promise<string | null> {
+  // Try to get display name from auth user first
+  const currentUser = auth.currentUser;
+  if (currentUser && currentUser.uid === userId) {
+    return currentUser.displayName || currentUser.email?.split('@')[0] || null;
+  }
+  // Fallback: try to get from Firestore user document
+  return null;
+}
+
 // Decrypt a drop's content
 export async function decryptDrop(drop: Drop, currentUserId: string): Promise<Drop> {
   // If not encrypted, still need to fetch R2 files

@@ -12,6 +12,7 @@ interface PreviewModalProps {
   theme?: 'light' | 'dark' | 'minimal';
   isLoading?: boolean;
   onEdit?: (drop: Drop) => void;
+  onMove?: (drop: Drop) => void;
 }
 
 function isTextFile(drop: Drop): boolean {
@@ -22,7 +23,7 @@ function isTextFile(drop: Drop): boolean {
          textExtensions.some(ext => drop.name.toLowerCase().endsWith(ext));
 }
 
-export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false, onEdit }: PreviewModalProps) {
+export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false, onEdit, onMove }: PreviewModalProps) {
   useBodyScrollLock();
   const [copied, setCopied] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
@@ -331,6 +332,18 @@ export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false
                 <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
               </svg>
               {isMinimal ? 'Save' : 'SAVE'}
+            </button>
+          )}
+          {/* Move button */}
+          {onMove && (
+            <button
+              onClick={() => onMove(drop)}
+              className={`border ${tc.borderColor} ${tc.textColor} px-3 py-1.5 sm:px-5 sm:py-2 text-xs tracking-wider hover:bg-[#1A1A1A] hover:text-white transition-colors flex items-center gap-2 ${isMinimal ? 'rounded-full' : ''}`}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 7.5L7.5 3m0 0L12 7.5M7.5 3v13.5M12 16.5l4.5-4.5m0 0L21 16.5M16.5 12V3" />
+              </svg>
+              {isMinimal ? 'Move' : 'MOVE'}
             </button>
           )}
           {/* Edit button */}

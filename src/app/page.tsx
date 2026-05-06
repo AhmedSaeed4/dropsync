@@ -15,7 +15,7 @@ import { AuthModal } from '@/components/AuthModal';
 import { VerifyEmailModal } from '@/components/VerifyEmailModal';
 import { Drop, Workspace, ExpirationOption } from '@/types';
 import { initializeUserKeys, hasUserKeys, getUserKeys } from '@/lib/keys';
-import { decryptDrop, updateTextDrop, updateDropMetadata } from '@/lib/drops';
+import { decryptDrop, updateTextDrop, updateDropMetadata, moveDrop } from '@/lib/drops';
 import { reauthenticateUser } from '@/lib/auth';
 
 type Theme = 'light' | 'dark' | 'minimal';
