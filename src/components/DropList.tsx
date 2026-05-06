@@ -1,12 +1,12 @@
 'use client';
 
 import { useState, useCallback, useMemo, useEffect } from 'react';
-import { Drop } from '@/types';
+import { Drop, Workspace, Category } from '@/types';
 import { DropItem } from './DropItem';
 import { UndoToast } from './UndoToast';
 import { CategoryFilter } from './CategoryFilter';
-import { deleteDrop } from '@/lib/drops';
-import { Category } from '@/types';
+import { deleteDrop, moveDrop } from '@/lib/drops';
+import { MoveDropModal } from '@/components/MoveDropModal';
 
 interface DropListProps {
   drops: Drop[];
@@ -14,6 +14,7 @@ interface DropListProps {
   onDelete: () => void;
   onPreview: (drop: Drop) => void;
   onEdit?: (drop: Drop) => void;
+  workspaces?: Workspace[];
   theme?: 'light' | 'dark' | 'minimal';
   currentUserId?: string;
   categories?: Category[];
@@ -25,13 +26,15 @@ interface PendingDeletion {
   timeoutId: NodeJS.Timeout;
 }
 
-export function DropList({ drops, loading, onDelete, onPreview, onEdit, theme = 'light', currentUserId, categories = [], onDeleteCategory }: DropListProps) {
+export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspaces = [], theme = 'light', currentUserId, categories = [], onDeleteCategory }: DropListProps) {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
   const [pendingDeletions, setPendingDeletions] = useState<Map<string, PendingDeletion>>(new Map());
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [bulkMoveDrops, setBulkMoveDrops] = useState<Drop[] | null>(null);
+  const [moveLoading, setMoveLoading] = useState(false);
 
   useEffect(() => { setSelectedCategory('all'); }, [categories]);
   const isDark = theme === 'dark';
@@ -305,14 +308,26 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, theme = 
                 {isMinimal ? 'Cancel' : 'CANCEL'}
               </button>
               {selectedIds.size > 0 && (
-                <button
-                  onClick={handleBulkDelete}
-                  disabled={deleting}
-                  className={`${tc.fontClass} ${isMinimal ? 'text-[#FF5A47] hover:text-[#1A1A1A]' : 'text-[#FF5A47] hover:text-white'} transition-colors disabled:opacity-50 flex items-center gap-2`}
-                >
-                  {!isMinimal && <span className="w-2 h-2 bg-[#FF5A47]" />}
-                  {deleting ? (isMinimal ? 'Deleting...' : 'DELETING...') : (isMinimal ? `Delete ${selectedIds.size}` : `DELETE_${selectedIds.size}`)}
-                </button>
+                <>
+                  <button
+                    onClick={() => {
+                      const selectedDrops = drops.filter(d => selectedIds.has(d.id));
+                      setBulkMoveDrops(selectedDrops);
+                    }}
+                    className={`${tc.fontClass} ${isMinimal ? 'text-white hover:text-white' : 'text-white hover:text-white'} transition-colors flex items-center gap-2`}
+                  >
+                    {!isMinimal && <span className="w-2 h-2 bg-white" />}
+                    {isMinimal ? `Move ${selectedIds.size}` : `MOVE_${selectedIds.size}`}
+                  </button>
+                  <button
+                    onClick={handleBulkDelete}
+                    disabled={deleting}
+                    className={`${tc.fontClass} ${isMinimal ? 'text-[#FF5A47] hover:text-[#1A1A1A]' : 'text-[#FF5A47] hover:text-white'} transition-colors disabled:opacity-50 flex items-center gap-2`}
+                  >
+                    {!isMinimal && <span className="w-2 h-2 bg-[#FF5A47]" />}
+                    {deleting ? (isMinimal ? 'Deleting...' : 'DELETING...') : (isMinimal ? `Delete ${selectedIds.size}` : `DELETE_${selectedIds.size}`)}
+                  </button>
+                </>
               )}
             </div>
           )}
@@ -362,6 +377,32 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, theme = 
           index={index}
         />
       ))}
+
+      {/* Bulk Move Modal */}
+      {bulkMoveDrops && bulkMoveDrops.length > 0 && (
+        <MoveDropModal
+          drops={bulkMoveDrops}
+          workspaces={workspaces}
+          currentWorkspaceId={bulkMoveDrops[0].workspaceId}
+          onMove={async (selectedDrops, targetWorkspaceId) => {
+            if (!currentUserId) return;
+            setMoveLoading(true);
+            const results = await Promise.all(selectedDrops.map(d => moveDrop(d, targetWorkspaceId, currentUserId!)));
+            setMoveLoading(false);
+            const failures = results.filter(r => !r.success);
+            if (failures.length === 0) {
+              setBulkMoveDrops(null);
+              setSelectedIds(new Set());
+              setSelectionMode(false);
+              onDelete();
+            } else {
+              alert(`${failures.length}/${selectedDrops.length} drops failed to move: ${failures[0].error}`);
+            }
+          }}
+          onClose={() => setBulkMoveDrops(null)}
+          theme={theme}
+        />
+      )}
     </div>
   );
 }

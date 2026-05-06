@@ -134,18 +134,20 @@ export function EditorialLayout(props: EditorialLayoutProps) {
   dropsRef.current = drops;
 
   // Move drop state
-  const [moveDropItem, setMoveDropItem] = useState<Drop | null>(null);
+  const [moveDrops, setMoveDrops] = useState<Drop[] | null>(null);
   const [moveLoading, setMoveLoading] = useState(false);
 
-  const handleMoveDrop = async (targetWorkspaceId: string | null) => {
-    if (!moveDropItem || !user) return;
+  const handleMoveDrop = async (drops: Drop[], targetWorkspaceId: string | null) => {
+    if (!user || !drops.length) return;
     setMoveLoading(true);
-    const result = await moveDrop(moveDropItem, targetWorkspaceId, user.uid);
+    const results = await Promise.all(drops.map(d => moveDrop(d, targetWorkspaceId, user.uid)));
     setMoveLoading(false);
-    if (result.success) {
-      setMoveDropItem(null);
+    const failures = results.filter(r => !r.success);
+    if (failures.length === 0) {
+      setMoveDrops(null);
+      refreshDrops();
     } else {
-      alert(result.error || 'Failed to move drop');
+      alert(`${failures.length}/${drops.length} drops failed to move: ${failures[0].error}`);
     }
   };
 
@@ -243,6 +245,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
               onDelete={refreshDrops}
               onPreview={handlePreview}
               onEdit={handleEditDrop}
+              workspaces={workspaces}
               theme={theme}
               currentUserId={user?.uid}
               categories={categories}
@@ -277,21 +280,20 @@ export function EditorialLayout(props: EditorialLayoutProps) {
           onEdit={handleEditDrop}
           onMove={(drop) => {
             setPreviewDrop(null);
-            // Find original encrypted drop from the list, not the decrypted preview version
             const originalDrop = drops.find(d => d.id === drop.id) || drop;
-            setMoveDropItem(originalDrop);
+            setMoveDrops([originalDrop]);
           }}
         />
       )}
 
       {/* Move Drop Modal */}
-      {moveDropItem && (
+      {moveDrops && (
         <EditorialMoveDropModal
-          drop={moveDropItem}
+          drops={moveDrops}
           workspaces={workspaces}
           currentWorkspaceId={currentWorkspaceId}
           onMove={handleMoveDrop}
-          onClose={() => setMoveDropItem(null)}
+          onClose={() => setMoveDrops(null)}
           theme={theme}
         />
       )}

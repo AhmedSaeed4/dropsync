@@ -5,34 +5,36 @@ import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { Drop, Workspace } from '@/types';
 
 interface MoveDropModalProps {
-  drop: Drop;
+  drops: Drop | Drop[];
   workspaces: Workspace[];
   currentWorkspaceId: string | null;
-  onMove: (targetWorkspaceId: string | null) => Promise<void>;
+  onMove: (drops: Drop[], targetWorkspaceId: string | null) => Promise<void>;
   onClose: () => void;
   theme?: 'light' | 'dark' | 'minimal';
 }
 
-export function MoveDropModal({ drop, workspaces, currentWorkspaceId, onMove, onClose, theme = 'light' }: MoveDropModalProps) {
+export function MoveDropModal({ drops: dropsProp, workspaces, currentWorkspaceId, onMove, onClose, theme = 'light' }: MoveDropModalProps) {
   useBodyScrollLock();
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(drop.workspaceId);
+  const dropList = Array.isArray(dropsProp) ? dropsProp : [dropsProp];
+  const isBulk = dropList.length > 1;
+  const firstDrop = dropList[0];
+
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(firstDrop.workspaceId);
   const [loading, setLoading] = useState(false);
   const isDark = theme === 'dark';
   const isMinimal = theme === 'minimal';
 
-  const currentName = drop.workspaceId
-    ? workspaces.find(w => w.id === drop.workspaceId)?.name || 'Unknown'
-    : 'Personal';
-  const targetName = selectedWorkspaceId
-    ? workspaces.find(w => w.id === selectedWorkspaceId)?.name || 'Unknown'
+  const currentName = firstDrop.workspaceId
+    ? workspaces.find(w => w.id === firstDrop.workspaceId)?.name || 'Unknown'
     : 'Personal';
 
-  const isSameLocation = selectedWorkspaceId === drop.workspaceId;
+  const allSameWorkspace = dropList.every(d => d.workspaceId === firstDrop.workspaceId);
+  const isSameLocation = selectedWorkspaceId === firstDrop.workspaceId;
 
   const handleMove = async () => {
     if (isSameLocation) return;
     setLoading(true);
-    await onMove(selectedWorkspaceId);
+    await onMove(dropList, selectedWorkspaceId);
     setLoading(false);
   };
 
@@ -83,11 +85,15 @@ export function MoveDropModal({ drop, workspaces, currentWorkspaceId, onMove, on
         <div className={`border-b ${tc.borderColor} px-6 py-4 flex items-center justify-between ${tc.headerBg} ${tc.roundedClass} ${isMinimal ? 'rounded-bl-none rounded-br-none' : ''}`}>
           <div>
             <h2 className={`${isMinimal ? 'text-sm font-medium' : 'text-sm font-bold uppercase tracking-wider'} text-white`}>
-              {isMinimal ? 'Move drop' : 'MOVE_DROP'}
+              {isBulk
+                ? `Move ${dropList.length} drops`
+                : isMinimal ? 'Move drop' : 'MOVE_DROP'}
             </h2>
-            <p className="text-[10px] text-white/50 mt-0.5 truncate max-w-[250px]">
-              {drop.name}
-            </p>
+            {!isBulk && (
+              <p className="text-[10px] text-white/50 mt-0.5 truncate max-w-[250px]">
+                {firstDrop.name}
+              </p>
+            )}
           </div>
           <button
             onClick={onClose}
@@ -107,7 +113,7 @@ export function MoveDropModal({ drop, workspaces, currentWorkspaceId, onMove, on
               {isMinimal ? 'From' : 'FROM'}
             </label>
             <div className={`px-3 py-2 ${tc.selectedBg} border ${tc.borderColor} ${isMinimal ? 'rounded-lg' : ''}`}>
-              <span className={`text-sm ${tc.textColor}`}>{currentName}</span>
+              <span className={`text-sm ${tc.textColor}`}>{currentName}{isBulk ? ` (${dropList.length} drops)` : ''}</span>
             </div>
           </div>
 
@@ -123,11 +129,11 @@ export function MoveDropModal({ drop, workspaces, currentWorkspaceId, onMove, on
                 className={`w-full text-left px-3 py-2.5 border ${tc.borderColor} transition-colors flex items-center justify-between ${
                   selectedWorkspaceId === null
                     ? `${tc.selectedBg} ${isMinimal ? 'border-[#1A1A1A]' : 'border-[#FF5A47]'}`
-                    : isSameLocation && drop.workspaceId === null
+                    : allSameWorkspace && firstDrop.workspaceId === null
                     ? `${tc.textMuted2} cursor-not-allowed opacity-40`
                     : 'hover:bg-[#1A1A1A]/5'
                 } ${isMinimal ? 'rounded-lg' : ''}`}
-                disabled={isSameLocation && drop.workspaceId === null}
+                disabled={allSameWorkspace && firstDrop.workspaceId === null}
               >
                 <span className={`text-sm ${tc.textColor}`}>
                   {isMinimal ? 'Personal' : 'PERSONAL'}
@@ -147,11 +153,11 @@ export function MoveDropModal({ drop, workspaces, currentWorkspaceId, onMove, on
                   className={`w-full text-left px-3 py-2.5 border ${tc.borderColor} transition-colors flex items-center justify-between ${
                     selectedWorkspaceId === ws.id
                       ? `${tc.selectedBg} ${isMinimal ? 'border-[#1A1A1A]' : 'border-[#FF5A47]'}`
-                      : isSameLocation && drop.workspaceId === ws.id
+                      : allSameWorkspace && firstDrop.workspaceId === ws.id
                       ? `${tc.textMuted2} cursor-not-allowed opacity-40`
                       : 'hover:bg-[#1A1A1A]/5'
                   } ${isMinimal ? 'rounded-lg' : ''}`}
-                  disabled={isSameLocation && drop.workspaceId === ws.id}
+                  disabled={allSameWorkspace && firstDrop.workspaceId === ws.id}
                 >
                   <span className={`text-sm ${tc.textColor}`}>{ws.name}</span>
                   {selectedWorkspaceId === ws.id && (
@@ -167,14 +173,14 @@ export function MoveDropModal({ drop, workspaces, currentWorkspaceId, onMove, on
           {/* Warnings */}
           {!isSameLocation && (
             <div className={`border ${tc.warningBorder} ${tc.warningBg} px-3 py-2.5 ${isMinimal ? 'rounded-lg' : ''} space-y-1.5`}>
-              {drop.workspaceId === null && selectedWorkspaceId !== null && (
+              {firstDrop.workspaceId === null && selectedWorkspaceId !== null && (
                 <p className={`text-xs ${tc.textColor}`}>
-                  {isMinimal ? 'All workspace members will gain access to this drop.' : 'ALL_WORKSPACE_MEMBERS_WILL_GAIN_ACCESS'}
+                  {isMinimal ? 'All workspace members will gain access to these drops.' : 'ALL_WORKSPACE_MEMBERS_WILL_GAIN_ACCESS'}
                 </p>
               )}
-              {drop.workspaceId !== null && selectedWorkspaceId === null && (
+              {firstDrop.workspaceId !== null && selectedWorkspaceId === null && (
                 <p className={`text-xs ${tc.textColor}`}>
-                  {isMinimal ? 'Other workspace members will lose access to this drop.' : 'OTHER_WORKSPACE_MEMBERS_WILL_LOSE_ACCESS'}
+                  {isMinimal ? 'Other workspace members will lose access to these drops.' : 'OTHER_WORKSPACE_MEMBERS_WILL_LOSE_ACCESS'}
                 </p>
               )}
             </div>
