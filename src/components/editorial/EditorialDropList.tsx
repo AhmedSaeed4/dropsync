@@ -1,10 +1,11 @@
 'use client';
 
 import { useState, useCallback, useMemo, useEffect } from 'react';
-import { Drop, Category } from '@/types';
+import { Drop, Workspace, Category } from '@/types';
 import { EditorialDropItem } from './EditorialDropItem';
 import { UndoToast } from '@/components/UndoToast';
-import { deleteDrop } from '@/lib/drops';
+import { deleteDrop, moveDrop } from '@/lib/drops';
+import { EditorialMoveDropModal } from './EditorialMoveDropModal';
 import { getEditorialThemeColors } from './editorialTheme';
 
 interface EditorialDropListProps {
@@ -13,6 +14,7 @@ interface EditorialDropListProps {
   onDelete: () => void;
   onPreview: (drop: Drop) => void;
   onEdit?: (drop: Drop) => void;
+  workspaces?: Workspace[];
   theme?: 'light' | 'dark' | 'minimal';
   currentUserId?: string;
   categories?: Category[];
@@ -38,6 +40,7 @@ export function EditorialDropList({
   onDelete,
   onPreview,
   onEdit,
+  workspaces = [],
   theme = 'light',
   currentUserId,
   categories = [],
@@ -50,6 +53,8 @@ export function EditorialDropList({
   const [pendingDeletions, setPendingDeletions] = useState<Map<string, PendingDeletion>>(new Map());
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [bulkMoveDrops, setBulkMoveDrops] = useState<Drop[] | null>(null);
+  const [moveLoading, setMoveLoading] = useState(false);
 
   useEffect(() => { setSelectedCategory('all'); }, [categories]);
   const [confirmDeleteCategory, setConfirmDeleteCategory] = useState<string | null>(null);
@@ -371,13 +376,24 @@ export function EditorialDropList({
                   Cancel
                 </button>
                 {selectedIds.size > 0 && (
-                  <button
-                    onClick={handleBulkDelete}
-                    disabled={deleting}
-                    className={`text-xs ${font} px-3 py-1.5 ${tc.roundedClass} bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-50 ml-auto flex items-center gap-1`}
-                  >
-                    {deleting ? 'Deleting...' : `Delete ${selectedIds.size}`}
-                  </button>
+                  <>
+                    <button
+                      onClick={() => {
+                        const selectedDrops = drops.filter(d => selectedIds.has(d.id));
+                        setBulkMoveDrops(selectedDrops);
+                      }}
+                      className={`text-xs ${font} px-3 py-1.5 ${tc.roundedClass} ${tc.activePillBg} ${tc.activePillText} hover:opacity-90 transition-opacity ml-auto flex items-center gap-1`}
+                    >
+                      Move {selectedIds.size}
+                    </button>
+                    <button
+                      onClick={handleBulkDelete}
+                      disabled={deleting}
+                      className={`text-xs ${font} px-3 py-1.5 ${tc.roundedClass} bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-50 flex items-center gap-1`}
+                    >
+                      {deleting ? 'Deleting...' : `Delete ${selectedIds.size}`}
+                    </button>
+                  </>
                 )}
               </div>
             )}
@@ -459,6 +475,32 @@ export function EditorialDropList({
           editorial
         />
       ))}
+
+      {/* Bulk Move Modal */}
+      {bulkMoveDrops && bulkMoveDrops.length > 0 && (
+        <EditorialMoveDropModal
+          drops={bulkMoveDrops}
+          workspaces={workspaces}
+          currentWorkspaceId={bulkMoveDrops[0].workspaceId}
+          onMove={async (selectedDrops, targetWorkspaceId) => {
+            if (!currentUserId) return;
+            setMoveLoading(true);
+            const results = await Promise.all(selectedDrops.map(d => moveDrop(d, targetWorkspaceId, currentUserId!)));
+            setMoveLoading(false);
+            const failures = results.filter(r => !r.success);
+            if (failures.length === 0) {
+              setBulkMoveDrops(null);
+              setSelectedIds(new Set());
+              setSelectionMode(false);
+              onDelete();
+            } else {
+              alert(`${failures.length}/${selectedDrops.length} drops failed to move: ${failures[0].error}`);
+            }
+          }}
+          onClose={() => setBulkMoveDrops(null)}
+          theme={theme}
+        />
+      )}
     </div>
   );
 }

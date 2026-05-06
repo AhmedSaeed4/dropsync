@@ -6,34 +6,36 @@ import { Drop, Workspace } from '@/types';
 import { getEditorialThemeColors } from './editorialTheme';
 
 interface EditorialMoveDropModalProps {
-  drop: Drop;
+  drops: Drop | Drop[];
   workspaces: Workspace[];
   currentWorkspaceId: string | null;
-  onMove: (targetWorkspaceId: string | null) => Promise<void>;
+  onMove: (drops: Drop[], targetWorkspaceId: string | null) => Promise<void>;
   onClose: () => void;
   theme?: 'light' | 'dark' | 'minimal';
 }
 
-export function EditorialMoveDropModal({ drop, workspaces, currentWorkspaceId, onMove, onClose, theme = 'light' }: EditorialMoveDropModalProps) {
+export function EditorialMoveDropModal({ drops: dropsProp, workspaces, currentWorkspaceId, onMove, onClose, theme = 'light' }: EditorialMoveDropModalProps) {
   useBodyScrollLock();
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(drop.workspaceId);
+  const dropList = Array.isArray(dropsProp) ? dropsProp : [dropsProp];
+  const isBulk = dropList.length > 1;
+  const firstDrop = dropList[0];
+
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(firstDrop.workspaceId);
   const [loading, setLoading] = useState(false);
 
   const tc = getEditorialThemeColors(theme);
 
-  const currentName = drop.workspaceId
-    ? workspaces.find(w => w.id === drop.workspaceId)?.name || 'Unknown'
-    : 'Personal';
-  const targetName = selectedWorkspaceId
-    ? workspaces.find(w => w.id === selectedWorkspaceId)?.name || 'Unknown'
+  const currentName = firstDrop.workspaceId
+    ? workspaces.find(w => w.id === firstDrop.workspaceId)?.name || 'Unknown'
     : 'Personal';
 
-  const isSameLocation = selectedWorkspaceId === drop.workspaceId;
+  const allSameWorkspace = dropList.every(d => d.workspaceId === firstDrop.workspaceId);
+  const isSameLocation = selectedWorkspaceId === firstDrop.workspaceId;
 
   const handleMove = async () => {
     if (isSameLocation) return;
     setLoading(true);
-    await onMove(selectedWorkspaceId);
+    await onMove(dropList, selectedWorkspaceId);
     setLoading(false);
   };
 
@@ -46,10 +48,14 @@ export function EditorialMoveDropModal({ drop, workspaces, currentWorkspaceId, o
         {/* Header */}
         <div className={`border-b ${tc.border} px-5 py-4 flex items-center justify-between`}>
           <div>
-            <h2 className={`${tc.fontClass} ${tc.text} font-medium text-[15px]`}>Move drop</h2>
-            <p className={`text-[11px] ${tc.muted} mt-0.5 truncate max-w-[250px] ${tc.fontClass}`}>
-              {drop.name}
-            </p>
+            <h2 className={`${tc.fontClass} ${tc.text} font-medium text-[15px]`}>
+              {isBulk ? `Move ${dropList.length} drops` : 'Move drop'}
+            </h2>
+            {!isBulk && (
+              <p className={`text-[11px] ${tc.muted} mt-0.5 truncate max-w-[250px] ${tc.fontClass}`}>
+                {firstDrop.name}
+              </p>
+            )}
           </div>
           <button onClick={onClose} className={`${tc.muted} hover:${tc.text} transition-colors p-1`}>
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
@@ -64,7 +70,7 @@ export function EditorialMoveDropModal({ drop, workspaces, currentWorkspaceId, o
           <div>
             <label className={`text-xs ${tc.muted} ${tc.fontClass} mb-1.5 block`}>From</label>
             <div className={`border ${tc.border} ${tc.bg} rounded-lg px-3 py-2.5`}>
-              <span className={`text-sm ${tc.text} ${tc.fontClass}`}>{currentName}</span>
+              <span className={`text-sm ${tc.text} ${tc.fontClass}`}>{currentName}{isBulk ? ` (${dropList.length} drops)` : ''}</span>
             </div>
           </div>
 
@@ -78,11 +84,11 @@ export function EditorialMoveDropModal({ drop, workspaces, currentWorkspaceId, o
                 className={`w-full text-left px-3 py-2.5 border ${tc.border} rounded-lg transition-colors flex items-center justify-between ${
                   selectedWorkspaceId === null
                     ? `${tc.activePillBg}`
-                    : isSameLocation && drop.workspaceId === null
+                    : allSameWorkspace && firstDrop.workspaceId === null
                     ? `${tc.muted} opacity-40 cursor-not-allowed`
-                    : `hover:${tc.hoverBorder}`
+                    : `${tc.hoverBorder}`
                 }`}
-                disabled={isSameLocation && drop.workspaceId === null}
+                disabled={allSameWorkspace && firstDrop.workspaceId === null}
               >
                 <span className={`text-sm ${selectedWorkspaceId === null ? tc.activePillText : tc.text} ${tc.fontClass}`}>Personal</span>
                 {selectedWorkspaceId === null && (
@@ -100,11 +106,11 @@ export function EditorialMoveDropModal({ drop, workspaces, currentWorkspaceId, o
                   className={`w-full text-left px-3 py-2.5 border ${tc.border} rounded-lg transition-colors flex items-center justify-between ${
                     selectedWorkspaceId === ws.id
                       ? `${tc.activePillBg}`
-                      : isSameLocation && drop.workspaceId === ws.id
+                      : allSameWorkspace && firstDrop.workspaceId === ws.id
                       ? `${tc.muted} opacity-40 cursor-not-allowed`
-                      : `hover:${tc.hoverBorder}`
+                      : `${tc.hoverBorder}`
                   }`}
-                  disabled={isSameLocation && drop.workspaceId === ws.id}
+                  disabled={allSameWorkspace && firstDrop.workspaceId === ws.id}
                 >
                   <span className={`text-sm ${selectedWorkspaceId === ws.id ? tc.activePillText : tc.text} ${tc.fontClass}`}>{ws.name}</span>
                   {selectedWorkspaceId === ws.id && (
@@ -120,11 +126,11 @@ export function EditorialMoveDropModal({ drop, workspaces, currentWorkspaceId, o
           {/* Warnings */}
           {!isSameLocation && (
             <div className={`border ${tc.border} ${tc.bg} rounded-lg px-3 py-2.5 ${tc.fontClass} space-y-1`}>
-              {drop.workspaceId === null && selectedWorkspaceId !== null && (
-                <p className={`text-xs ${tc.muted}`}>All workspace members will gain access to this drop.</p>
+              {firstDrop.workspaceId === null && selectedWorkspaceId !== null && (
+                <p className={`text-xs ${tc.muted}`}>All workspace members will gain access to these drops.</p>
               )}
-              {drop.workspaceId !== null && selectedWorkspaceId === null && (
-                <p className={`text-xs ${tc.muted}`}>Other workspace members will lose access to this drop.</p>
+              {firstDrop.workspaceId !== null && selectedWorkspaceId === null && (
+                <p className={`text-xs ${tc.muted}`}>Other workspace members will lose access to these drops.</p>
               )}
             </div>
           )}
@@ -135,7 +141,7 @@ export function EditorialMoveDropModal({ drop, workspaces, currentWorkspaceId, o
           <button
             onClick={onClose}
             disabled={loading}
-            className={`border ${tc.border} ${tc.text} px-4 py-2 text-sm rounded-lg hover:${tc.hoverBorder} transition-colors disabled:opacity-50 ${tc.fontClass}`}
+            className={`border ${tc.border} ${tc.text} px-4 py-2 text-sm rounded-lg ${tc.hoverBorder} transition-colors disabled:opacity-50 ${tc.fontClass}`}
           >
             Cancel
           </button>
