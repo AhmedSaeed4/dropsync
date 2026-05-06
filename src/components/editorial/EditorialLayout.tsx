@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { Drop, Workspace, ExpirationOption } from '@/types';
 import { EditorialPreviewModal } from './EditorialPreviewModal';
 import { EditorialCreateWorkspaceModal } from './EditorialCreateWorkspaceModal';
@@ -17,6 +17,8 @@ import { EditorialThemeSelector } from './EditorialThemeSelector';
 import { EditorialSavedPaths } from './EditorialSavedPaths';
 import { getEditorialThemeColors } from './editorialTheme';
 import { EditorialTextModal } from './EditorialTextModal';
+import { EditorialMoveDropModal } from './EditorialMoveDropModal';
+import { moveDrop } from '@/lib/drops';
 
 type Theme = 'light' | 'dark' | 'minimal';
 type LayoutMode = 'classic' | 'editorial';
@@ -130,6 +132,22 @@ export function EditorialLayout(props: EditorialLayoutProps) {
   // Ref to always access the latest drops value (avoids stale closure issues)
   const dropsRef = useRef(drops);
   dropsRef.current = drops;
+
+  // Move drop state
+  const [moveDropItem, setMoveDropItem] = useState<Drop | null>(null);
+  const [moveLoading, setMoveLoading] = useState(false);
+
+  const handleMoveDrop = async (targetWorkspaceId: string | null) => {
+    if (!moveDropItem || !user) return;
+    setMoveLoading(true);
+    const result = await moveDrop(moveDropItem, targetWorkspaceId, user.uid);
+    setMoveLoading(false);
+    if (result.success) {
+      setMoveDropItem(null);
+    } else {
+      alert(result.error || 'Failed to move drop');
+    }
+  };
 
   const tc = getEditorialThemeColors(theme);
 
@@ -257,6 +275,24 @@ export function EditorialLayout(props: EditorialLayoutProps) {
           theme={theme}
           isLoading={previewLoading}
           onEdit={handleEditDrop}
+          onMove={(drop) => {
+            setPreviewDrop(null);
+            // Find original encrypted drop from the list, not the decrypted preview version
+            const originalDrop = drops.find(d => d.id === drop.id) || drop;
+            setMoveDropItem(originalDrop);
+          }}
+        />
+      )}
+
+      {/* Move Drop Modal */}
+      {moveDropItem && (
+        <EditorialMoveDropModal
+          drop={moveDropItem}
+          workspaces={workspaces}
+          currentWorkspaceId={currentWorkspaceId}
+          onMove={handleMoveDrop}
+          onClose={() => setMoveDropItem(null)}
+          theme={theme}
         />
       )}
 
