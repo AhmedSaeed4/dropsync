@@ -10,6 +10,7 @@ interface ShareData {
   mimeType: string | null;
   fileSize: number | null;
   imageUrl: string | null;
+  fileUrl: string | null;
   youtubeVideoId: string | null;
   expiresAt: string | null;
 }
@@ -21,6 +22,7 @@ export default function SharePage() {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [videoSrc, setVideoSrc] = useState<string | null>(null);
 
   useEffect(() => {
     async function fetchShare() {
@@ -45,6 +47,36 @@ export default function SharePage() {
     fetchShare();
   }, [shareId]);
 
+  // For video files: fetch from R2 and wrap with correct MIME type
+  // (R2 serves as application/octet-stream which <video> rejects)
+  useEffect(() => {
+    if (!share?.fileUrl || !share.mimeType?.startsWith('video/')) return;
+    let cancelled = false;
+    let blobUrl: string | null = null;
+
+    fetch(share.fileUrl)
+      .then(res => res.text())
+      .then(text => {
+        if (cancelled) return;
+        if (text.startsWith('data:')) {
+          return fetch(text).then(r => r.blob());
+        }
+        return new Blob([text], { type: share.mimeType || 'video/mp4' });
+      })
+      .then(blob => {
+        if (!cancelled && blob) {
+          blobUrl = URL.createObjectURL(blob);
+          setVideoSrc(blobUrl);
+        }
+      })
+      .catch(() => { if (!cancelled) setVideoSrc(null); });
+
+    return () => {
+      cancelled = true;
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+    };
+  }, [share?.fileUrl, share?.mimeType]);
+
   const handleCopy = async () => {
     if (share?.content) {
       await navigator.clipboard.writeText(share.content);
@@ -54,21 +86,21 @@ export default function SharePage() {
   };
 
   const handleDownload = async () => {
-    if (share?.imageUrl) {
-      try {
-        const res = await fetch(share.imageUrl);
-        const blob = await res.blob();
-        const blobUrl = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = blobUrl;
-        link.download = share.name || 'image.png';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(blobUrl);
-      } catch {
-        window.open(share.imageUrl, '_blank');
-      }
+    const url = share?.imageUrl || share?.fileUrl;
+    if (!url) return;
+    try {
+      const res = await fetch(url);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = share?.name || 'download';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      window.open(url, '_blank');
     }
   };
 
@@ -104,6 +136,9 @@ export default function SharePage() {
   }
 
   if (!share) return null;
+
+  const isVideo = share.mimeType?.startsWith('video/');
+  const hasFileUrl = !!share.fileUrl;
 
   return (
     <div className="min-h-screen bg-[#FAF7F2] flex flex-col">
@@ -170,6 +205,36 @@ export default function SharePage() {
             </div>
           )}
 
+          {/* Video player */}
+          {isVideo && (videoSrc || share.fileUrl) && (
+            <div className="flex items-center justify-center mb-4">
+              <video
+                src={videoSrc || share.fileUrl!}
+                controls
+                className="max-w-full max-h-[60vh] border border-[#1A1A1A]"
+              >
+                Your browser does not support video playback.
+              </video>
+            </div>
+          )}
+
+          {/* Generic file drop (non-video, non-image) */}
+          {hasFileUrl && !isVideo && !share.imageUrl && (
+            <div className="flex flex-col items-center justify-center border border-[#1A1A1A]/20 bg-[#F5F2ED] p-8 mb-4">
+              <svg className="w-12 h-12 text-[#1A1A1A]/30 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                <path d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+              </svg>
+              <p className="text-xs font-mono uppercase tracking-wider text-[#1A1A1A]/50">
+                {share.mimeType || 'File'}
+              </p>
+              {share.fileSize && (
+                <p className="text-[10px] font-mono text-[#1A1A1A]/30 mt-1">
+                  {(share.fileSize / (1024 * 1024)).toFixed(1)} MB
+                </p>
+              )}
+            </div>
+          )}
+
           {/* Actions */}
           <div className="flex gap-3 mt-6">
             {share.type === 'text' && share.content && (
@@ -194,7 +259,7 @@ export default function SharePage() {
                 )}
               </button>
             )}
-            {share.imageUrl && (
+            {(share.imageUrl || hasFileUrl) && (
               <button
                 onClick={handleDownload}
                 className="bg-[#1A1A1A] text-white px-5 py-2 text-xs tracking-wider hover:bg-[#2A2A2A] transition-colors flex items-center gap-2"

@@ -122,6 +122,10 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
         name: drop.name,
         content: drop.type === 'text' ? displayContent : undefined,
         imageData: displayImageData || (isImage ? displayFileData : undefined),
+        fileData: !isImage && drop.type === 'file' ? displayFileData : undefined,
+        fileUrl: !isImage && drop.type === 'file' && !displayFileData ? drop.fileUrl : undefined,
+        mimeType: drop.mimeType || undefined,
+        fileSize: drop.fileSize || undefined,
         youtubeVideoId: youtubeVideoId || undefined,
         expiresAt: drop.expiresAt,
       });

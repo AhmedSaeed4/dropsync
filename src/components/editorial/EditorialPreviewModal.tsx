@@ -150,6 +150,10 @@ export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoadin
         name: drop.name,
         content: drop.type === 'text' ? (drop.content || textContent) : undefined,
         imageData: drop.imageData || (isImage ? drop.fileData : undefined),
+        fileData: !isImage && drop.type === 'file' ? drop.fileData : undefined,
+        fileUrl: !isImage && drop.type === 'file' && !drop.fileData ? drop.fileUrl : undefined,
+        mimeType: drop.mimeType || undefined,
+        fileSize: drop.fileSize || undefined,
         youtubeVideoId: youtubeVideoId || undefined,
         expiresAt: drop.expiresAt,
       });

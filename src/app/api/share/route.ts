@@ -30,15 +30,16 @@ const r2 = new S3Client({
   },
 });
 
-async function deleteShareR2Image(shareData: Record<string, unknown>) {
-  if (shareData.imageR2Key) {
+async function deleteShareR2Assets(shareData: Record<string, unknown>) {
+  const keys = [shareData.imageR2Key, shareData.fileR2Key].filter(Boolean) as string[];
+  for (const key of keys) {
     try {
       await r2.send(new DeleteObjectCommand({
         Bucket: process.env.R2_BUCKET_NAME!,
-        Key: shareData.imageR2Key as string,
+        Key: key,
       }));
     } catch (error) {
-      console.error('Failed to delete share image from R2:', error);
+      console.error('Failed to delete share asset from R2:', error);
     }
   }
 }
@@ -62,7 +63,7 @@ export async function GET(request: NextRequest) {
     if (data.expiresAt) {
       const expiresAt = data.expiresAt.toDate();
       if (expiresAt <= new Date()) {
-        await deleteShareR2Image(data);
+        await deleteShareR2Assets(data);
         await adminDb.collection('shares').doc(snapshot.docs[0].id).delete();
         return NextResponse.json({ error: 'Share expired' }, { status: 410 });
       }
@@ -75,6 +76,7 @@ export async function GET(request: NextRequest) {
       mimeType: data.mimeType || null,
       fileSize: data.fileSize || null,
       imageUrl: data.imageUrl || null,
+      fileUrl: data.fileUrl || null,
       youtubeVideoId: data.youtubeVideoId || null,
       expiresAt: data.expiresAt ? data.expiresAt.toDate().toISOString() : null,
     });
@@ -101,10 +103,34 @@ export async function PUT(request: NextRequest) {
 
     const body = await request.text();
     const parsed = JSON.parse(body);
-    const { imageData } = parsed;
+    const { imageData, fileData, mimeType } = parsed;
 
+    // Handle file upload (video, PDF, etc.)
+    if (fileData) {
+      const matches = fileData.match(/^data:([^;]+);base64,(.+)$/);
+      const contentType = matches?.[1] || mimeType || 'application/octet-stream';
+      const base64Data = matches?.[2] || fileData;
+      const buffer = Buffer.from(base64Data, 'base64');
+
+      const key = `shares/${Date.now()}-${crypto.randomUUID()}`;
+      const publicUrl = process.env.R2_PUBLIC_URL;
+      const fileUrl = publicUrl
+        ? `${publicUrl}/${key}`
+        : `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${process.env.R2_BUCKET_NAME}/${key}`;
+
+      await r2.send(new PutObjectCommand({
+        Bucket: process.env.R2_BUCKET_NAME!,
+        Key: key,
+        Body: buffer,
+        ContentType: contentType,
+      }));
+
+      return NextResponse.json({ fileUrl, fileR2Key: key });
+    }
+
+    // Handle image upload
     if (!imageData) {
-      return NextResponse.json({ error: 'Missing image data' }, { status: 400 });
+      return NextResponse.json({ error: 'Missing image or file data' }, { status: 400 });
     }
 
     const matches = imageData.match(/^data:(image\/[\w+]+);base64,(.+)$/);
@@ -149,7 +175,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { shareId, dropId, type, name, content, mimeType, fileSize, imageUrl, imageR2Key, youtubeVideoId, expiresAt } = body;
+    const { shareId, dropId, type, name, content, mimeType, fileSize, imageUrl, imageR2Key, fileUrl, fileR2Key, youtubeVideoId, expiresAt } = body;
 
     if (!shareId || !dropId || !type || !name) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -170,6 +196,8 @@ export async function POST(request: NextRequest) {
     if (fileSize) docData.fileSize = fileSize;
     if (imageUrl) docData.imageUrl = imageUrl;
     if (imageR2Key) docData.imageR2Key = imageR2Key;
+    if (fileUrl) docData.fileUrl = fileUrl;
+    if (fileR2Key) docData.fileR2Key = fileR2Key;
     if (youtubeVideoId) docData.youtubeVideoId = youtubeVideoId;
 
     await adminDb.collection('shares').add(docData);
@@ -204,7 +232,7 @@ export async function DELETE(request: NextRequest) {
     const snapshot = await adminDb.collection('shares').where('dropId', '==', dropId).get();
     const deletes = snapshot.docs.map(async (d) => {
       const data = d.data();
-      await deleteShareR2Image(data);
+      await deleteShareR2Assets(data);
       await adminDb.collection('shares').doc(d.id).delete();
     });
     await Promise.allSettled(deletes);
