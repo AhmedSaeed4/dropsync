@@ -17,6 +17,8 @@ export async function createShare(options: {
   mimeType?: string;
   fileSize?: number;
   imageData?: string;
+  fileData?: string;
+  fileUrl?: string;
   youtubeVideoId?: string;
   expiresAt: Date | null;
 }): Promise<{ shareId: string; url: string } | null> {
@@ -53,6 +55,35 @@ export async function createShare(options: {
       }
     }
 
+    // If there's file data (video, PDF, etc.), upload it to R2 via API
+    let fileUrl: string | undefined;
+    let fileR2Key: string | undefined;
+    if (options.fileData) {
+      try {
+        const uploadRes = await fetch('/api/share', {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({ fileData: options.fileData, mimeType: options.mimeType }),
+        });
+        if (uploadRes.ok) {
+          const uploadData = await uploadRes.json();
+          fileUrl = uploadData.fileUrl;
+          fileR2Key = uploadData.fileR2Key;
+        } else {
+          const err = await uploadRes.json();
+          console.error('Share file upload failed:', err);
+        }
+      } catch (error) {
+        console.error('Share file upload failed:', error);
+      }
+    } else if (options.fileUrl) {
+      // Large unencrypted files: use the original R2 URL directly
+      fileUrl = options.fileUrl;
+    }
+
     const res = await fetch('/api/share', {
       method: 'POST',
       headers: {
@@ -69,6 +100,8 @@ export async function createShare(options: {
         fileSize: options.fileSize,
         imageUrl,
         imageR2Key,
+        fileUrl,
+        fileR2Key,
         youtubeVideoId: options.youtubeVideoId,
         expiresAt: options.expiresAt?.toISOString() || null,
       }),
