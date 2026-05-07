@@ -4,6 +4,7 @@ import { Drop } from '@/types';
 import { formatFileSize, getTimeRemaining, decryptDrop, getYouTubeVideoId } from '@/lib/drops';
 import { createShare } from '@/lib/shares';
 import { useState, useEffect } from 'react';
+import { useVideoThumbnail } from '@/hooks/useVideoThumbnail';
 import { getEditorialThemeColors } from './editorialTheme';
 
 interface EditorialDropItemProps {
@@ -64,6 +65,7 @@ export function EditorialDropItem({
   const font = tc.fontClass;
 
   const isImage = drop.mimeType?.startsWith('image/');
+  const isVideo = drop.mimeType?.startsWith('video/');
   const hasAttachedImage = drop.type === 'text' && !!drop.imageR2Key;
 
   // Decrypt content if encrypted
@@ -107,6 +109,12 @@ export function EditorialDropItem({
   const displayFileData = drop.encrypted ? decryptedFileData : (drop.fileData || '');
   const displayImageData = decryptedImageData;
 
+  // Video thumbnail
+  const { thumbnailUrl: videoThumbnail, isGenerating: isGeneratingThumbnail } = useVideoThumbnail(
+    isVideo ? displayFileData : null,
+    drop.mimeType
+  );
+
   // YouTube thumbnail detection
   const youtubeVideoId = drop.type === 'text' ? getYouTubeVideoId(displayContent) : null;
 
@@ -114,7 +122,8 @@ export function EditorialDropItem({
   const hasThumbnail =
     isImage && !!displayFileData ||
     drop.type === 'text' && hasAttachedImage && !!displayImageData ||
-    !!youtubeVideoId;
+    !!youtubeVideoId ||
+    isVideo && !!videoThumbnail;
 
   const handleShare = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -224,6 +233,7 @@ export function EditorialDropItem({
     if (isImage && displayFileData) return displayFileData;
     if (drop.type === 'text' && hasAttachedImage && displayImageData) return displayImageData;
     if (youtubeVideoId) return `https://img.youtube.com/vi/${youtubeVideoId}/mqdefault.jpg`;
+    if (isVideo && videoThumbnail) return videoThumbnail;
     return null;
   };
 
@@ -255,12 +265,28 @@ export function EditorialDropItem({
           </button>
         ) : thumbnailSrc ? (
           /* Thumbnail variant: 80x80 rounded image on the left */
-          <div className="w-full sm:w-20 h-40 sm:h-20 flex-shrink-0 overflow-hidden rounded-lg">
+          <div className="w-full sm:w-20 h-40 sm:h-20 flex-shrink-0 overflow-hidden rounded-lg relative">
             <img
               src={thumbnailSrc}
               alt={drop.name}
               className="w-full h-full object-cover"
             />
+            {isVideo && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="w-8 h-8 bg-black/60 rounded-full flex items-center justify-center">
+                  <svg className="w-4 h-4 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M8 5v14l11-7z" />
+                  </svg>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : isVideo ? (
+          /* Video without thumbnail: video icon */
+          <div className={`w-10 h-10 flex-shrink-0 flex items-center justify-center ${tc.roundedClass} border ${tc.border} ${tc.inactivePillBg}`}>
+            <svg className={`w-4 h-4 ${tc.muted}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" />
+            </svg>
           </div>
         ) : (
           /* No thumbnail: small icon */

@@ -4,6 +4,7 @@ import { Drop } from '@/types';
 import { formatFileSize, getTimeRemaining, decryptDrop, getYouTubeVideoId } from '@/lib/drops';
 import { createShare } from '@/lib/shares';
 import { useState, useEffect } from 'react';
+import { useVideoThumbnail } from '@/hooks/useVideoThumbnail';
 
 interface DropItemProps {
   drop: Drop;
@@ -52,6 +53,7 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
   const isMinimal = theme === 'minimal';
 
   const isImage = drop.mimeType?.startsWith('image/');
+  const isVideo = drop.mimeType?.startsWith('video/');
   const hasAttachedImage = drop.type === 'text' && !!drop.imageR2Key;
 
   // Decrypt content if encrypted
@@ -100,6 +102,12 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
 
   // What to display for attached image (text drop with image)
   const displayImageData = decryptedImageData;
+
+  // Video thumbnail
+  const { thumbnailUrl: videoThumbnail, isGenerating: isGeneratingThumbnail } = useVideoThumbnail(
+    isVideo ? displayFileData : null,
+    drop.mimeType
+  );
 
   // YouTube thumbnail detection
   const youtubeVideoId = drop.type === 'text' ? getYouTubeVideoId(displayContent) : null;
@@ -277,6 +285,27 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
               </svg>
             ) : isImage && displayFileData ? (
               <img src={displayFileData} alt={drop.name} className="w-full h-full object-cover" />
+            ) : isVideo && videoThumbnail ? (
+              <div className="relative w-full h-full">
+                <img src={videoThumbnail} alt={drop.name} className="w-full h-full object-cover" />
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="w-6 h-6 bg-black/60 rounded-full flex items-center justify-center">
+                    <svg className="w-3 h-3 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
+                  </div>
+                </div>
+              </div>
+            ) : isVideo && isGeneratingThumbnail ? (
+              <div className={`w-5 h-5 ${tc.textMuted} animate-pulse`}>
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" />
+                </svg>
+              </div>
+            ) : isVideo ? (
+              <svg className={`w-5 h-5 ${tc.textColor}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" />
+              </svg>
             ) : (
               <svg className={`w-5 h-5 ${tc.textColor}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
                 <path d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />

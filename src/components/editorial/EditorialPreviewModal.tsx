@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Drop } from '@/types';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { formatFileSize, getYouTubeVideoId } from '@/lib/drops';
@@ -30,7 +30,69 @@ export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoadin
   const [shareCopied, setShareCopied] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
   const isImage = drop.mimeType?.startsWith('image/');
+  const isVideo = drop.mimeType?.startsWith('video/');
   const isText = isTextFile(drop);
+
+  const SUPPORTED_VIDEO_TYPES = new Set(['video/mp4', 'video/webm', 'video/ogg']);
+  const isSupportedVideo = isVideo && SUPPORTED_VIDEO_TYPES.has(drop.mimeType || '');
+
+  // Video blob URL: fetch data URL → Blob → blob URL (handles binary data correctly)
+  const [videoSrc, setVideoSrc] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isVideo) return;
+
+    let url: string | null = null;
+    let cancelled = false;
+
+    if (drop.fileData && drop.fileData.startsWith('data:')) {
+      // Encrypted video: data URL → blob
+      fetch(drop.fileData)
+        .then(res => res.blob())
+        .then(blob => {
+          if (!cancelled) {
+            url = URL.createObjectURL(blob);
+            setVideoSrc(url);
+          }
+        })
+        .catch(() => { if (!cancelled) setVideoSrc(null); });
+    } else if (drop.fileUrl) {
+      // Unencrypted video: fetch from R2 — may be raw binary or data URL string
+      fetch(drop.fileUrl)
+        .then(res => res.text())
+        .then(text => {
+          if (cancelled) return;
+          if (text.startsWith('data:')) {
+            // Stored as data URL string — convert to blob via fetch
+            return fetch(text).then(r => r.blob());
+          }
+          // Raw binary — wrap with correct MIME type
+          return new Blob([text], { type: drop.mimeType || 'video/mp4' });
+        })
+        .then(blob => {
+          if (!cancelled && blob) {
+            url = URL.createObjectURL(blob);
+            setVideoSrc(url);
+          }
+        })
+        .catch(() => { if (!cancelled) setVideoSrc(null); });
+    } else {
+      setVideoSrc(null);
+    }
+
+    return () => {
+      cancelled = true;
+      if (url && !url.startsWith('http')) {
+        URL.revokeObjectURL(url);
+      }
+    };
+
+    return () => {
+      if (url && !url.startsWith('http')) {
+        URL.revokeObjectURL(url);
+      }
+    };
+  }, [isVideo, drop.fileData, drop.fileUrl]);
 
   const tc = getEditorialThemeColors(theme);
 
@@ -121,6 +183,10 @@ export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoadin
                 <svg className={`w-4 h-4 ${tc.text}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                 </svg>
+              ) : isVideo ? (
+                <svg className={`w-4 h-4 ${tc.text}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" />
+                </svg>
               ) : (
                 <svg className={`w-4 h-4 ${tc.text}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
@@ -203,8 +269,39 @@ export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoadin
             </div>
           )}
 
+          {/* Video Preview */}
+          {!isLoading && drop.type === 'file' && isVideo && (
+            <div className="flex items-center justify-center p-5 min-h-[300px]">
+              {isSupportedVideo && videoSrc ? (
+                <video
+                  src={videoSrc}
+                  controls
+                  className="max-w-full max-h-[50vh] rounded-lg border ${tc.border}"
+                >
+                  Your browser does not support video playback.
+                </video>
+              ) : !isSupportedVideo ? (
+                <div className="flex flex-col items-center justify-center">
+                  <div className={`w-16 h-16 border ${tc.border} rounded-lg flex items-center justify-center mb-4`}>
+                    <svg className={`w-8 h-8 ${tc.muted}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" />
+                    </svg>
+                  </div>
+                  <p className={`${tc.fontClass} ${tc.muted} text-sm`}>
+                    Video preview not available for this format
+                  </p>
+                  <p className={`${tc.fontClass} ${tc.muted} text-xs mt-1`}>
+                    Download to watch
+                  </p>
+                </div>
+              ) : (
+                <div className={`animate-pulse ${tc.muted} ${tc.fontClass}`}>Loading video...</div>
+              )}
+            </div>
+          )}
+
           {/* Other Files */}
-          {!isLoading && !isText && !isImage && drop.fileData && (
+          {!isLoading && !isText && !isImage && !isVideo && drop.fileData && (
             <div className="p-5 flex flex-col items-center justify-center min-h-[200px]">
               <div className={`w-16 h-16 border ${tc.border} rounded-lg flex items-center justify-center mb-4`}>
                 <svg className={`w-8 h-8 ${tc.muted}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
