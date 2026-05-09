@@ -34,6 +34,8 @@ function AboutPageInner() {
   const [layoutMode, setLayoutMode] = useState<LayoutMode>(getStoredLayout);
   const [openFaqs, setOpenFaqs] = useState<Record<number, boolean>>({});
   const [pageVisible, setPageVisible] = useState(false);
+  const [themeDropdownOpen, setThemeDropdownOpen] = useState(false);
+  const [classicThemeDropdown, setClassicThemeDropdown] = useState(false);
 
   // Update theme/layout when localStorage changes
   useEffect(() => {
@@ -84,9 +86,9 @@ function AboutPageInner() {
               <div className="w-3 h-3" style={{ background: accentColor }} />
               <span className="font-mono text-sm uppercase tracking-widest">DROP/SYNC</span>
             </a>
-            <div className="flex items-center gap-6">
+            <div className="flex items-center gap-4 sm:gap-6">
               <a href="/" className="font-mono text-xs uppercase tracking-widest hover:opacity-70 transition-opacity" style={{ color: isDark ? 'rgba(255,255,255,0.6)' : 'rgba(26,26,26,0.6)' }}>HOME</a>
-              <div className="flex gap-2">
+              <div className="hidden sm:flex gap-2">
                 {(['light', 'dark'] as Theme[]).map((t) => (
                   <button key={t} onClick={() => { setTheme(t); localStorage.setItem(THEME_STORAGE_KEY, t); }}
                     className="font-mono text-xs uppercase tracking-widest border px-3 py-2 transition-all"
@@ -94,6 +96,34 @@ function AboutPageInner() {
                     {t}
                   </button>
                 ))}
+              </div>
+              {/* Mobile theme dropdown */}
+              <div className="relative sm:hidden">
+                <button
+                  onClick={() => setClassicThemeDropdown(!classicThemeDropdown)}
+                  className="flex items-center gap-1 font-mono text-xs uppercase tracking-widest border rounded px-2 py-1.5 transition-colors"
+                  style={{ borderColor: classicBorder, color: classicText }}
+                >
+                  {theme}
+                  <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9l6 6 6-6"/></svg>
+                </button>
+                {classicThemeDropdown && (
+                  <div className="absolute right-0 top-full mt-1 border rounded shadow-lg z-50"
+                    style={{ background: classicBg, borderColor: classicBorder }}>
+                    {(['light', 'dark'] as Theme[]).map((t) => (
+                      <button key={t}
+                        onClick={() => { setTheme(t); localStorage.setItem(THEME_STORAGE_KEY, t); setClassicThemeDropdown(false); }}
+                        className="block w-full text-left font-mono text-xs uppercase tracking-widest px-3 py-2 transition-colors"
+                        style={{
+                          background: t === theme ? accentColor : 'transparent',
+                          color: t === theme ? '#ffffff' : classicText,
+                        }}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -283,7 +313,7 @@ function AboutPageInner() {
         <footer className="relative z-10 flex justify-between items-center px-8 py-6 text-xs border-t font-mono uppercase tracking-widest" style={{ borderColor: classicBorder, color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(26,26,26,0.4)' }}>
           <a href="/" style={{ color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(26,26,26,0.4)' }} className="hover:opacity-70 transition-opacity">HOME</a>
           <span>EDITION 2.0</span>
-          <span>500MB / 200 DROPS</span>
+          <span className="hidden sm:inline">500MB / 200 DROPS</span>
         </footer>
       </div>
     );
@@ -309,13 +339,42 @@ function AboutPageInner() {
           </div>
           <div className="flex items-center gap-2 sm:gap-3 lg:gap-6">
             <Link href="/" className="text-sm font-[family-name:var(--font-raleway)] text-[#666] hover:text-[#1a1a1a] transition-colors tracking-wider">Home</Link>
-            <div className="flex gap-1 sm:gap-2">
+            {/* Desktop theme buttons */}
+            <div className="hidden sm:flex gap-1 sm:gap-2">
               {(['light', 'dark', 'minimal'] as Theme[]).map((t) => (
                 <button key={t} onClick={() => { setTheme(t); localStorage.setItem(THEME_STORAGE_KEY, t); }}
                   className={`text-sm font-[family-name:var(--font-raleway)] rounded-md border transition-all duration-350 px-3 sm:px-4 py-2 ${t === theme ? isDark ? 'bg-white text-[#0D0D0D] border-white' : 'bg-[#1a1a1a] text-white border-[#1a1a1a]' : `${isDark ? 'border-[#333] text-[#888]' : isMinimal ? 'border-[#b0b4a5] text-[#4a4a4a]' : 'border-[#e0e0e0] text-[#666]'} hover:bg-[#1a1a1a] hover:text-white`}`}>
                   {t === 'light' ? 'Light' : t === 'dark' ? 'Dark' : 'Minimal'}
                 </button>
               ))}
+            </div>
+            {/* Mobile theme dropdown */}
+            <div className="relative sm:hidden">
+              <button
+                onClick={() => setThemeDropdownOpen(!themeDropdownOpen)}
+                className="flex items-center gap-1 text-xs font-[family-name:var(--font-raleway)] border rounded px-2 py-1.5 transition-colors"
+                style={{ borderColor: isDark ? '#333' : isMinimal ? '#b0b4a5' : '#e0e0e0', color: isDark ? '#ffffff' : '#1a1a1a' }}
+              >
+                {theme === 'light' ? 'Light' : theme === 'dark' ? 'Dark' : 'Minimal'}
+                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9l6 6 6-6"/></svg>
+              </button>
+              {themeDropdownOpen && (
+                <div className="absolute right-0 top-full mt-1 border rounded shadow-lg z-50"
+                  style={{ background: isDark ? '#0D0D0D' : isMinimal ? '#C5C9B8' : '#FFFEF5', borderColor: isDark ? '#333' : isMinimal ? '#b0b4a5' : '#e0e0e0' }}>
+                  {(['light', 'dark', 'minimal'] as Theme[]).map((t) => (
+                    <button key={t}
+                      onClick={() => { setTheme(t); localStorage.setItem(THEME_STORAGE_KEY, t); setThemeDropdownOpen(false); }}
+                      className="block w-full text-left text-xs font-[family-name:var(--font-raleway)] px-3 py-2 transition-colors whitespace-nowrap"
+                      style={{
+                        background: t === theme ? (isDark ? '#ffffff' : '#1a1a1a') : 'transparent',
+                        color: t === theme ? (isDark ? '#0D0D0D' : '#ffffff') : (isDark ? '#ffffff' : '#1a1a1a'),
+                      }}
+                    >
+                      {t === 'light' ? 'Light' : t === 'dark' ? 'Dark' : 'Minimal'}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -515,7 +574,7 @@ function AboutPageInner() {
       <footer className={`relative z-10 flex justify-between items-center px-8 py-6 text-[0.75rem] tracking-[0.05em] text-[#666] border-t font-[family-name:var(--font-raleway)] ${isDark ? 'border-[#333]' : isMinimal ? 'border-[#b0b4a5]' : 'border-[#e0e0e0]'}`}>
         <Link href="/" className="text-[#666] hover:text-[#1a1a1a] transition-colors">Home</Link>
         <span>EDITION 2.0</span>
-        <span>Max 500MB · 200 drops</span>
+        <span className="hidden sm:inline">Max 500MB · 200 drops</span>
       </footer>
     </div>
   );
