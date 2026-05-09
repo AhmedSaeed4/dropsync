@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import { useAuth } from '@/hooks/useAuth';
 import { getEditorialThemeColors } from '@/components/editorial/editorialTheme';
 
@@ -11,34 +12,37 @@ type LayoutMode = 'classic' | 'editorial';
 const THEME_STORAGE_KEY = 'dropsync_theme';
 const LAYOUT_STORAGE_KEY = 'dropsync_layout';
 
-export default function AboutPage() {
+function AboutPageInner() {
   const { user } = useAuth();
-  const [theme, setTheme] = useState<Theme>('light');
-  const [themeLoaded, setThemeLoaded] = useState(false);
-  const [layoutMode, setLayoutMode] = useState<LayoutMode>('editorial');
+
+  // Read theme and layout synchronously from localStorage to avoid flash
+  const getStoredTheme = (): Theme => {
+    if (typeof window === 'undefined') return 'light';
+    const stored = localStorage.getItem(THEME_STORAGE_KEY);
+    if (stored === 'dark' || stored === 'minimal') return stored;
+    return 'light';
+  };
+
+  const getStoredLayout = (): LayoutMode => {
+    if (typeof window === 'undefined') return 'editorial';
+    const stored = localStorage.getItem(LAYOUT_STORAGE_KEY);
+    if (stored === 'classic') return 'classic';
+    return 'editorial';
+  };
+
+  const [theme, setTheme] = useState<Theme>(getStoredTheme);
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>(getStoredLayout);
   const [openFaqs, setOpenFaqs] = useState<Record<number, boolean>>({});
   const [pageVisible, setPageVisible] = useState(false);
 
+  // Update theme/layout when localStorage changes
   useEffect(() => {
-    const storedTheme = localStorage.getItem(THEME_STORAGE_KEY);
-    if (storedTheme === 'dark' || storedTheme === 'minimal') {
-      setTheme(storedTheme);
-    }
-    const storedLayout = localStorage.getItem(LAYOUT_STORAGE_KEY);
-    if (storedLayout === 'classic' || storedLayout === 'editorial') {
-      setLayoutMode(storedLayout);
-    }
-    setThemeLoaded(true);
-  }, []);
-
-  useEffect(() => {
-    if (layoutMode === 'classic') {
-      document.body.style.background = theme === 'dark' ? '#0D0D0D' : '#FAF7F2';
-      document.body.style.color = theme === 'dark' ? '#ffffff' : '#1a1a1a';
-    } else {
-      document.body.style.background = theme === 'dark' ? '#0D0D0D' : theme === 'minimal' ? '#C5C9B8' : '#FFFEF5';
-      document.body.style.color = theme === 'dark' ? '#ffffff' : '#1a1a1a';
-    }
+    const _isDark = theme === 'dark';
+    const _isMinimal = theme === 'minimal';
+    const _isClassic = layoutMode === 'classic';
+    const bgColor = _isDark ? '#0D0D0D' : _isMinimal ? '#C5C9B8' : (_isClassic ? '#FAF7F2' : '#FFFEF5');
+    document.body.style.background = bgColor;
+    document.body.style.color = _isDark ? '#ffffff' : '#1a1a1a';
     return () => {
       document.body.style.background = '';
       document.body.style.color = '';
@@ -50,13 +54,9 @@ export default function AboutPage() {
   };
 
   useEffect(() => {
-    const timer = setTimeout(() => setPageVisible(true), 50);
+    const timer = setTimeout(() => setPageVisible(true), 10);
     return () => clearTimeout(timer);
   }, []);
-
-  if (!themeLoaded) {
-    return null;
-  }
 
   const isDark = theme === 'dark';
   const isMinimal = theme === 'minimal';
@@ -520,3 +520,5 @@ export default function AboutPage() {
     </div>
   );
 }
+
+export default dynamic(() => Promise.resolve(AboutPageInner), { ssr: false });

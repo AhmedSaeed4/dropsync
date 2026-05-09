@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
 import { useDrops } from '@/hooks/useDrops';
 import { useWorkspaces } from '@/hooks/useWorkspaces';
@@ -25,6 +26,7 @@ const THEME_STORAGE_KEY = 'dropsync_theme';
 const LAYOUT_STORAGE_KEY = 'dropsync_layout';
 
 export default function Home() {
+  const router = useRouter();
   const { user, loading: authLoading, signIn, signUp, signInWithEmail: emailSignIn, resetPassword, resendVerification, signOutUser, updateDisplayName } = useAuth();
   const [previewDrop, setPreviewDrop] = useState<Drop | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -547,9 +549,10 @@ export default function Home() {
 
       const handleAboutClick = (e: React.MouseEvent) => {
         e.preventDefault();
+        document.body.style.background = bgColor;
         setPageTransition('fade-out');
         setTimeout(() => {
-          window.location.href = '/about';
+          router.push('/about');
         }, 500);
       };
 
