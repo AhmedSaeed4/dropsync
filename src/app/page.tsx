@@ -583,6 +583,36 @@ export default function Home() {
               </h1>
             </header>
 
+            {/* Auth section - MOBILE ONLY: above cards, smaller buttons */}
+            <div className="auth-section text-center sm:hidden mb-8" style={{ opacity: 0, animation: 'fadeInUp 800ms ease 600ms forwards' }}>
+              <p className="text-xs uppercase tracking-[0.15em] mb-3 font-[family-name:var(--font-raleway)]" style={{ color: mutedColor }}>GET STARTED</p>
+              <div className="flex flex-col items-center gap-2">
+                <button
+                  onClick={signIn}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 border rounded-lg text-xs font-medium font-[family-name:var(--font-raleway)]"
+                  style={{ borderColor, color: textColor, background: 'transparent' }}
+                >
+                  <svg viewBox="0 0 24 24" className="w-4 h-4" style={{ color: textColor }}>
+                    <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                    <path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                    <path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                    <path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                  </svg>
+                  Sign in with Google
+                </button>
+                <button
+                  onClick={() => setShowAuthModal(true)}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-xs font-medium font-[family-name:var(--font-raleway)]"
+                  style={{ background: accentBg, color: accentText }}
+                >
+                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5" className="w-4 h-4">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75" />
+                  </svg>
+                  Sign in with Email
+                </button>
+              </div>
+            </div>
+
             {/* Story container - centered with proper spacing */}
             <div className="flex-1 flex flex-col items-center justify-center">
               <div className="story-container flex items-center justify-center flex-wrap w-full max-w-[1200px] mx-auto" style={{ gap: '2rem' }}>
@@ -706,8 +736,8 @@ export default function Home() {
                 ))}
               </div>
 
-              {/* Auth section - smooth fade in */}
-              <div className="auth-section text-center mt-12" style={{ opacity: 0, animation: 'fadeInUp 800ms ease 800ms forwards' }}>
+              {/* Auth section - DESKTOP ONLY */}
+              <div className="auth-section text-center mt-12 hidden sm:block" style={{ opacity: 0, animation: 'fadeInUp 800ms ease 800ms forwards' }}>
                 <p className="text-xs uppercase tracking-[0.15em] mb-4 font-[family-name:var(--font-raleway)]" style={{ color: mutedColor }}>GET STARTED</p>
                 <div className="flex flex-col items-center gap-3">
                   <button
@@ -741,7 +771,7 @@ export default function Home() {
             <footer className="flex justify-between items-center px-4 sm:px-6 lg:px-8 py-6 text-xs tracking-[0.05em] font-[family-name:var(--font-raleway)]" style={{ color: mutedColor, opacity: 0, animation: 'fadeIn 800ms ease 1000ms forwards' }}>
               <a href="/about" onClick={handleAboutClick} className="hover:opacity-70 transition-opacity cursor-pointer">About</a>
               <span style={{ marginLeft: '104px' }}>EDITION 2.0</span>
-              <span>Max 500MB · 200 drops</span>
+              <span className="hidden sm:inline">Max 500MB · 200 drops</span>
             </footer>
           </div>
 
@@ -796,7 +826,8 @@ export default function Home() {
                 SIMPLE. SECURE. TEMPORARY.
               </p>
               <p className="text-[#1A1A1A]/60 text-xs tracking-wider mb-12">
-                Auto-expire: 1h - Forever • Max 500MB • 200 drops
+                Auto-expire: 1h - Forever
+                <span className="hidden sm:inline"> • Max 500MB • 200 drops</span>
               </p>
 
               {/* Auth Button - Pill Style */}
@@ -1040,7 +1071,7 @@ export default function Home() {
             <span className={`text-[10px] font-mono uppercase tracking-wider ${themeColors.isDark ? 'text-white/40' : 'text-[#1A1A1A]/40'}`}>
               EDITION 2.0
             </span>
-            <span className={`text-[10px] font-mono uppercase tracking-wider ${themeColors.isDark ? 'text-white/40' : 'text-[#1A1A1A]/40'}`}>
+            <span className={`hidden sm:inline text-[10px] font-mono uppercase tracking-wider ${themeColors.isDark ? 'text-white/40' : 'text-[#1A1A1A]/40'}`}>
               500MB / 200 DROPS
             </span>
           </div>
