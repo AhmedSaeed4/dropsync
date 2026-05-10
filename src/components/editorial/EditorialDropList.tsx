@@ -1,12 +1,14 @@
 'use client';
 
-import { useState, useCallback, useMemo, useEffect } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Drop, Workspace, Category } from '@/types';
 import { EditorialDropItem } from './EditorialDropItem';
 import { UndoToast } from '@/components/UndoToast';
 import { deleteDrop, moveDrop } from '@/lib/drops';
 import { EditorialMoveDropModal } from './EditorialMoveDropModal';
 import { getEditorialThemeColors } from './editorialTheme';
+import { MemberInfo } from '@/lib/workspaces';
 
 interface EditorialDropListProps {
   drops: Drop[];
@@ -20,6 +22,8 @@ interface EditorialDropListProps {
   categories?: Category[];
   onDeleteCategory?: (categoryId: string, categoryName: string) => void;
   showChat?: boolean;
+  currentWorkspace?: Workspace | null;
+  workspaceMembers?: MemberInfo[];
 }
 
 interface PendingDeletion {
@@ -46,6 +50,8 @@ export function EditorialDropList({
   categories = [],
   onDeleteCategory,
   showChat = false,
+  currentWorkspace,
+  workspaceMembers,
 }: EditorialDropListProps) {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -55,12 +61,38 @@ export function EditorialDropList({
   const [searchQuery, setSearchQuery] = useState('');
   const [bulkMoveDrops, setBulkMoveDrops] = useState<Drop[] | null>(null);
   const [moveLoading, setMoveLoading] = useState(false);
+  const [mentionFilter, setMentionFilter] = useState<MemberInfo | null>(null);
+  const [mentionSearch, setMentionSearch] = useState('');
+  const [mentionDropdownOpen, setMentionDropdownOpen] = useState(false);
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const searchContainerRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const isWorkspace = !!currentWorkspace;
+  const filteredMembers = useMemo(() => {
+    if (!isWorkspace || !workspaceMembers?.length) return [];
+    if (!mentionSearch) return workspaceMembers;
+    return workspaceMembers.filter(m => (m.displayName || '').toLowerCase().includes(mentionSearch.toLowerCase()));
+  }, [isWorkspace, workspaceMembers, mentionSearch]);
 
   useEffect(() => { setSelectedCategory('all'); }, [categories]);
+  useEffect(() => { setMentionFilter(null); setMentionSearch(''); setMentionDropdownOpen(false); }, [currentWorkspace]);
   const [confirmDeleteCategory, setConfirmDeleteCategory] = useState<string | null>(null);
 
   const tc = getEditorialThemeColors(theme);
   const font = tc.fontClass;
+
+  const openDropdown = () => {
+    const rect = searchContainerRef.current?.getBoundingClientRect();
+    if (rect) {
+      setDropdownPos({
+        top: rect.bottom + 4,
+        left: rect.left,
+        width: rect.width,
+      });
+    }
+    setMentionDropdownOpen(true);
+  };
 
   const toggleSelect = (id: string) => {
     const newSelected = new Set(selectedIds);
@@ -173,10 +205,13 @@ export function EditorialDropList({
     return counts;
   }, [visibleDrops, categories]);
 
-  // Filter drops based on category and search
+  // Filter drops based on category, search, and mention
   const filteredDrops = useMemo(() => {
     return visibleDrops.filter(drop => {
       if (searchQuery && !drop.name.toLowerCase().includes(searchQuery.toLowerCase())) {
+        return false;
+      }
+      if (mentionFilter && drop.userId !== mentionFilter.uid) {
         return false;
       }
       if (selectedCategory === 'all') return true;
@@ -184,7 +219,7 @@ export function EditorialDropList({
       if (selectedCategory === 'uncategorized') return drop.type === 'text' && getCategories(drop).length === 0;
       return hasCategory(drop, selectedCategory);
     });
-  }, [visibleDrops, selectedCategory, searchQuery]);
+  }, [visibleDrops, selectedCategory, searchQuery, mentionFilter]);
 
   // Category delete handlers
   const handleCategoryDeleteClick = (categoryId: string, e: React.MouseEvent) => {
@@ -327,15 +362,112 @@ export function EditorialDropList({
             <svg className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${tc.muted}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
               <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
             </svg>
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search drops..."
-              disabled={loading}
-              className={`w-full ${tc.cardBg} border ${tc.border} ${tc.text} pl-10 pr-8 py-2 text-sm ${font} placeholder:text-[#1A1A1A]/25 focus:outline-none focus:ring-1 focus:ring-[#1A1A1A]/20 transition-colors ${tc.roundedClass} ${loading ? 'opacity-50' : ''}`}
-            />
-            {searchQuery && !loading && (
+            {/* Mention chip + input container */}
+            <div ref={searchContainerRef} className={`flex items-center w-full ${tc.cardBg} border ${tc.border} ${tc.text} pl-10 pr-4 py-2 text-sm ${font} focus-within:outline-none focus-within:ring-1 focus-within:ring-[#1A1A1A]/20 transition-colors ${tc.roundedClass} ${loading ? 'opacity-50' : ''}`}>
+              {mentionFilter && (
+                <span className="inline-flex items-center gap-1 mr-2 flex-shrink-0 text-[11px]">
+                  <span className={`${tc.activePillBg} ${tc.activePillText} px-2 py-0.5 ${tc.roundedClass}`}>
+                    @{mentionFilter.displayName}{mentionFilter.isOwner ? ' ★' : ''}
+                  </span>
+                  <button onClick={() => { setMentionFilter(null); setMentionSearch(''); searchInputRef.current?.focus(); }} className={`${tc.muted} hover:${tc.text} transition-colors ml-0.5`}>
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </span>
+              )}
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={searchQuery}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setSearchQuery(val);
+                  if (isWorkspace && !loading) {
+                    const atIdx = val.lastIndexOf('@');
+                    if (atIdx >= 0 && atIdx >= val.length - 1) {
+                      setMentionSearch('');
+                      setHighlightedIndex(0);
+                      openDropdown();
+                    } else if (atIdx >= 0) {
+                      setMentionSearch(val.slice(atIdx + 1));
+                      setHighlightedIndex(0);
+                      openDropdown();
+                    } else {
+                      setMentionDropdownOpen(false);
+                      setMentionSearch('');
+                    }
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Backspace' && mentionFilter && !searchQuery) {
+                    e.preventDefault();
+                    setMentionFilter(null);
+                    return;
+                  }
+                  if (!mentionDropdownOpen || filteredMembers.length === 0 || loading) return;
+                  if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    setHighlightedIndex(prev => Math.min(prev + 1, filteredMembers.length - 1));
+                  } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    setHighlightedIndex(prev => Math.max(prev - 1, 0));
+                  } else if (e.key === 'Enter' && filteredMembers[highlightedIndex]) {
+                    e.preventDefault();
+                    const member = filteredMembers[highlightedIndex];
+                    setMentionFilter(member);
+                    setMentionDropdownOpen(false);
+                    const atIdx = searchQuery.lastIndexOf('@');
+                    setSearchQuery(searchQuery.slice(0, atIdx));
+                    setMentionSearch('');
+                  } else if (e.key === 'Escape') {
+                    setMentionDropdownOpen(false);
+                  }
+                }}
+                placeholder="Search drops..."
+                disabled={loading}
+                className="w-full bg-transparent border-none outline-none text-sm placeholder:text-[#1A1A1A]/25"
+              />
+            </div>
+            {/* Member dropdown (portal) */}
+            {mentionDropdownOpen && filteredMembers.length > 0 && !loading && dropdownPos && createPortal(
+              <>
+              <div
+                className={`border shadow-lg z-[100] max-h-48 overflow-y-auto ${tc.cardBg} ${tc.border} ${tc.roundedClass}`}
+                style={{ position: 'fixed', top: `${dropdownPos.top}px`, left: `${dropdownPos.left}px`, width: `${dropdownPos.width}px` }}
+              >
+                {filteredMembers.map((member, idx) => (
+                  <button
+                    key={member.uid}
+                    onClick={() => {
+                      setMentionFilter(member);
+                      setMentionDropdownOpen(false);
+                      const atIdx = searchQuery.lastIndexOf('@');
+                      setSearchQuery(searchQuery.slice(0, atIdx));
+                      setMentionSearch('');
+                      searchInputRef.current?.focus();
+                    }}
+                    onMouseEnter={() => setHighlightedIndex(idx)}
+                    className={`w-full px-3 py-2 text-left flex items-center gap-2 transition-colors ${
+                      idx === highlightedIndex ? 'bg-[#1a1a1a]/5' : ''
+                    }`}
+                  >
+                    <div className={`w-6 h-6 flex items-center justify-center flex-shrink-0 rounded-full ${tc.inactivePillBg}`}>
+                      <span className="text-[10px] font-medium">{(member.displayName || '?').charAt(0).toUpperCase()}</span>
+                    </div>
+                    <span className={`${tc.text} text-sm flex-1 truncate`}>{member.displayName}</span>
+                    {member.isOwner && (
+                      <span className={`text-[10px] ${tc.muted}`}>owner</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+              <div className="fixed inset-0 z-[99]" onClick={() => setMentionDropdownOpen(false)} />
+              </>
+              ,
+              document.body
+            )}
+            {!mentionFilter && searchQuery && !loading && (
               <button
                 onClick={() => setSearchQuery('')}
                 className={`absolute right-3 top-1/2 -translate-y-1/2 ${tc.muted} hover:${tc.text} transition-colors`}
@@ -435,7 +567,9 @@ export function EditorialDropList({
           ) : filteredDrops.length === 0 ? (
             <div className="p-8 text-center">
               <p className={`text-xs ${font} ${tc.muted}`}>
-                {searchQuery
+                {mentionFilter
+                  ? `No drops by ${mentionFilter.displayName}`
+                  : searchQuery
                   ? 'No drops match your search'
                   : 'No drops in this category'}
               </p>

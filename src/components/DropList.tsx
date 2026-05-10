@@ -1,12 +1,14 @@
 'use client';
 
-import { useState, useCallback, useMemo, useEffect } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Drop, Workspace, Category } from '@/types';
 import { DropItem } from './DropItem';
 import { UndoToast } from './UndoToast';
 import { CategoryFilter } from './CategoryFilter';
 import { deleteDrop, moveDrop } from '@/lib/drops';
 import { MoveDropModal } from '@/components/MoveDropModal';
+import { MemberInfo } from '@/lib/workspaces';
 
 interface DropListProps {
   drops: Drop[];
@@ -19,6 +21,8 @@ interface DropListProps {
   currentUserId?: string;
   categories?: Category[];
   onDeleteCategory?: (categoryId: string, categoryName: string) => void;
+  currentWorkspace?: Workspace | null;
+  workspaceMembers?: MemberInfo[];
 }
 
 interface PendingDeletion {
@@ -26,7 +30,7 @@ interface PendingDeletion {
   timeoutId: NodeJS.Timeout;
 }
 
-export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspaces = [], theme = 'light', currentUserId, categories = [], onDeleteCategory }: DropListProps) {
+export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspaces = [], theme = 'light', currentUserId, categories = [], onDeleteCategory, currentWorkspace, workspaceMembers }: DropListProps) {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
@@ -35,10 +39,36 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
   const [searchQuery, setSearchQuery] = useState('');
   const [bulkMoveDrops, setBulkMoveDrops] = useState<Drop[] | null>(null);
   const [moveLoading, setMoveLoading] = useState(false);
+  const [mentionFilter, setMentionFilter] = useState<MemberInfo | null>(null);
+  const [mentionSearch, setMentionSearch] = useState('');
+  const [mentionDropdownOpen, setMentionDropdownOpen] = useState(false);
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const searchContainerRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const isWorkspace = !!currentWorkspace;
+  const filteredMembers = useMemo(() => {
+    if (!isWorkspace || !workspaceMembers?.length) return [];
+    if (!mentionSearch) return workspaceMembers;
+    return workspaceMembers.filter(m => (m.displayName || '').toLowerCase().includes(mentionSearch.toLowerCase()));
+  }, [isWorkspace, workspaceMembers, mentionSearch]);
 
   useEffect(() => { setSelectedCategory('all'); }, [categories]);
+  useEffect(() => { setMentionFilter(null); setMentionSearch(''); setMentionDropdownOpen(false); }, [currentWorkspace]);
   const isDark = theme === 'dark';
   const isMinimal = theme === 'minimal';
+
+  const openDropdown = () => {
+    const rect = searchContainerRef.current?.getBoundingClientRect();
+    if (rect) {
+      setDropdownPos({
+        top: rect.bottom + 4,
+        left: rect.left,
+        width: rect.width,
+      });
+    }
+    setMentionDropdownOpen(true);
+  };
 
   const toggleSelect = (id: string) => {
     const newSelected = new Set(selectedIds);
@@ -153,11 +183,16 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
     return counts;
   }, [visibleDrops, categories]);
 
-  // Filter drops based on category and search
+  // Filter drops based on category, search, and mention
   const filteredDrops = useMemo(() => {
     return visibleDrops.filter(drop => {
       // Search filter
       if (searchQuery && !drop.name.toLowerCase().includes(searchQuery.toLowerCase())) {
+        return false;
+      }
+
+      // Mention filter
+      if (mentionFilter && drop.userId !== mentionFilter.uid) {
         return false;
       }
 
@@ -167,7 +202,7 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
       if (selectedCategory === 'uncategorized') return drop.type === 'text' && getCategories(drop).length === 0;
       return hasCategory(drop, selectedCategory);
     });
-  }, [visibleDrops, selectedCategory, searchQuery]);
+  }, [visibleDrops, selectedCategory, searchQuery, mentionFilter]);
 
   // Theme colors
   const getThemeColors = () => {
@@ -252,14 +287,109 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
             <svg className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${tc.textMuted}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
               <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
             </svg>
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={isMinimal ? 'Search drops...' : 'SEARCH_DROPS...'}
-              className={`w-full ${tc.inputBg} border ${tc.borderColor} ${tc.textColor} pl-10 pr-4 py-2 text-sm ${tc.placeholderColor} focus:outline-none focus:ring-1 focus:ring-[#1A1A1A] transition-colors duration-300 ${isMinimal ? 'rounded-lg' : ''}`}
-            />
-            {searchQuery && (
+            {/* Mention chip + input container */}
+            <div ref={searchContainerRef} className={`flex items-center w-full ${tc.inputBg} border ${tc.borderColor} ${tc.textColor} pl-10 pr-4 py-2 text-sm ${tc.placeholderColor} focus-within:outline-none focus-within:ring-1 focus-within:ring-[#1A1A1A] transition-colors duration-300 ${isMinimal ? 'rounded-lg' : ''}`}>
+              {mentionFilter && (
+                <span className={`inline-flex items-center gap-1 mr-2 flex-shrink-0 ${isMinimal ? 'text-[11px]' : `${tc.fontClass} ${isDark ? 'text-white' : 'text-[#FF5A47]'}`}`}>
+                  @{mentionFilter.displayName}{mentionFilter.isOwner ? (isMinimal ? '' : ' ★') : ''}
+                  <button onClick={() => { setMentionFilter(null); setMentionSearch(''); searchInputRef.current?.focus(); }} className="ml-0.5 opacity-60 hover:opacity-100 transition-opacity">
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </span>
+              )}
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={searchQuery}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setSearchQuery(val);
+                  if (isWorkspace) {
+                    const atIdx = val.lastIndexOf('@');
+                    if (atIdx >= 0 && atIdx >= val.length - 1) {
+                      setMentionSearch('');
+                      setHighlightedIndex(0);
+                      openDropdown();
+                    } else if (atIdx >= 0) {
+                      setMentionSearch(val.slice(atIdx + 1));
+                      setHighlightedIndex(0);
+                      openDropdown();
+                    } else {
+                      setMentionDropdownOpen(false);
+                      setMentionSearch('');
+                    }
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Backspace' && mentionFilter && !searchQuery) {
+                    e.preventDefault();
+                    setMentionFilter(null);
+                    return;
+                  }
+                  if (!mentionDropdownOpen || filteredMembers.length === 0) return;
+                  if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    setHighlightedIndex(prev => Math.min(prev + 1, filteredMembers.length - 1));
+                  } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    setHighlightedIndex(prev => Math.max(prev - 1, 0));
+                  } else if (e.key === 'Enter' && filteredMembers[highlightedIndex]) {
+                    e.preventDefault();
+                    const member = filteredMembers[highlightedIndex];
+                    setMentionFilter(member);
+                    setMentionDropdownOpen(false);
+                    const atIdx = searchQuery.lastIndexOf('@');
+                    setSearchQuery(searchQuery.slice(0, atIdx));
+                    setMentionSearch('');
+                  } else if (e.key === 'Escape') {
+                    setMentionDropdownOpen(false);
+                  }
+                }}
+                placeholder={isMinimal ? 'Search drops...' : 'SEARCH_DROPS...'}
+                className={`w-full bg-transparent border-none outline-none text-sm ${tc.textColor} ${tc.placeholderColor} placeholder:font-inherit`}
+              />
+            </div>
+            {mentionDropdownOpen && filteredMembers.length > 0 && dropdownPos && createPortal(
+              <>
+              <div
+                className={`border shadow-lg z-[100] max-h-48 overflow-y-auto ${isMinimal ? 'bg-[#D4D8C8] border-[#1A1A1A]/20 rounded-lg' : isDark ? 'bg-[#1A1A1A] border-white/10' : 'bg-white border-[#1A1A1A]'}`}
+                style={{ position: 'fixed', top: `${dropdownPos.top}px`, left: `${dropdownPos.left}px`, width: `${dropdownPos.width}px` }}
+              >
+                {filteredMembers.map((member, idx) => (
+                  <button
+                    key={member.uid}
+                    onClick={() => {
+                      setMentionFilter(member);
+                      setMentionDropdownOpen(false);
+                      const atIdx = searchQuery.lastIndexOf('@');
+                      setSearchQuery(searchQuery.slice(0, atIdx));
+                      setMentionSearch('');
+                      searchInputRef.current?.focus();
+                    }}
+                    onMouseEnter={() => setHighlightedIndex(idx)}
+                    className={`w-full px-3 py-2 text-left flex items-center gap-2 transition-colors ${
+                      idx === highlightedIndex
+                        ? (isMinimal ? 'bg-[#1A1A1A]/10' : isDark ? 'bg-white/10' : 'bg-[#F5F2ED]')
+                        : (isMinimal ? 'hover:bg-[#1A1A1A]/5' : isDark ? 'hover:bg-white/5' : 'hover:bg-[#f5f5f5]')
+                    }`}
+                  >
+                    <div className={`w-6 h-6 flex items-center justify-center flex-shrink-0 ${isMinimal ? 'bg-[#1A1A1A]/10 rounded-full' : isDark ? 'bg-white/10' : 'bg-[#1A1A1A]/5'} ${isMinimal ? 'rounded-full' : ''}`}>
+                      <span className="text-[10px] font-medium">{(member.displayName || '?').charAt(0).toUpperCase()}</span>
+                    </div>
+                    <span className={`${tc.textColor} text-sm flex-1 truncate`}>{member.displayName}</span>
+                    {member.isOwner && (
+                      <span className={`text-[10px] ${tc.textMuted}`}>{isMinimal ? 'owner' : 'OWNER'}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+              <div className="fixed inset-0 z-[99]" onClick={() => setMentionDropdownOpen(false)} />
+              </>,
+              document.body
+            )}
+            {!mentionFilter && searchQuery && (
               <button
                 onClick={() => setSearchQuery('')}
                 className={`absolute right-3 top-1/2 -translate-y-1/2 ${tc.textMuted} hover:${tc.textColor} transition-colors`}
@@ -338,7 +468,9 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
           {filteredDrops.length === 0 ? (
             <div className="p-8 text-center">
               <p className={`${tc.fontClass} ${tc.textMuted}`}>
-                {searchQuery
+                {mentionFilter
+                  ? (isMinimal ? `No drops by ${mentionFilter.displayName}` : `NO_DROPS_BY_${mentionFilter.displayName.toUpperCase()}`)
+                  : searchQuery
                   ? (isMinimal ? 'No drops found' : 'NO_MATCHES_FOUND')
                   : (isMinimal ? 'No drops in this category' : 'NO_DROPS_IN_CATEGORY')
                 }

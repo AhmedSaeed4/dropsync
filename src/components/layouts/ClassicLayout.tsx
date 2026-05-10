@@ -71,6 +71,7 @@ interface ClassicLayoutProps {
   currentWorkspace: Workspace | null;
   currentWorkspaceId: string | null;
   workspaceMembers: any[];
+  resolvedWorkspaceMembers: any[];
   switchWorkspace: (id: string | null) => void;
   drops: Drop[];
   dropsLoading: boolean;
@@ -117,7 +118,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
     previewDrop, setPreviewDrop,
     previewLoading, setPreviewLoading,
     encryptionInitializing,
-    workspaces, currentWorkspace, currentWorkspaceId, workspaceMembers,
+    workspaces, currentWorkspace, currentWorkspaceId, workspaceMembers, resolvedWorkspaceMembers,
     switchWorkspace,
     drops, dropsLoading, refreshDrops,
     categories, handleCreateCategory, handleDeleteCategory,
@@ -222,6 +223,8 @@ export function ClassicLayout(props: ClassicLayoutProps) {
                 currentUserId={user?.uid}
                 categories={categories}
                 onDeleteCategory={handleDeleteCategory}
+                currentWorkspace={currentWorkspace}
+                workspaceMembers={resolvedWorkspaceMembers}
               />
             </section>
           </div>
