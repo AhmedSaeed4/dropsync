@@ -17,6 +17,7 @@ import { VerifyEmailModal } from '@/components/VerifyEmailModal';
 import { Drop, Workspace, ExpirationOption } from '@/types';
 import { initializeUserKeys, hasUserKeys, getUserKeys } from '@/lib/keys';
 import { decryptDrop, updateTextDrop, updateDropMetadata, moveDrop } from '@/lib/drops';
+import { getWorkspaceMembers, MemberInfo } from '@/lib/workspaces';
 import { reauthenticateUser } from '@/lib/auth';
 
 type Theme = 'light' | 'dark' | 'minimal';
@@ -73,6 +74,7 @@ export default function Home() {
   const [isLeavingWorkspace, setIsLeavingWorkspace] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showChat, setShowChat] = useState(false);
+  const [resolvedWorkspaceMembers, setResolvedWorkspaceMembers] = useState<MemberInfo[]>([]);
 
   // Auto-close auth modal when user successfully logs in
   useEffect(() => {
@@ -277,6 +279,18 @@ export default function Home() {
 
   // Get workspace members for encryption
   const workspaceMembers = currentWorkspace?.members || [];
+
+  // Resolve workspace member display names for @mention search
+  useEffect(() => {
+    if (!currentWorkspace?.members?.length) {
+      setResolvedWorkspaceMembers([]);
+      return;
+    }
+    let cancelled = false;
+    getWorkspaceMembers(workspaceMembers, currentWorkspace.ownerId)
+      .then(members => { if (!cancelled) setResolvedWorkspaceMembers(members); });
+    return () => { cancelled = true; };
+  }, [currentWorkspace?.id]);
 
   // Handle edit drop — decrypt text drops, file drops just need metadata
   const handleEditDrop = async (drop: Drop) => {
@@ -1098,7 +1112,7 @@ export default function Home() {
     previewDrop, setPreviewDrop,
     previewLoading, setPreviewLoading,
     encryptionInitializing,
-    workspaces, currentWorkspace, currentWorkspaceId, workspaceMembers,
+    workspaces, currentWorkspace, currentWorkspaceId, workspaceMembers, resolvedWorkspaceMembers,
     switchWorkspace,
     drops, dropsLoading, refreshDrops,
     categories, handleCreateCategory, handleDeleteCategory,
