@@ -234,29 +234,28 @@ export function EditorialWorkspaceSwitcher({
                       </button>
 
                       {/* Copy invite */}
-                      {isOwner && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            copyInviteCode(workspace.inviteCode, workspace.id);
-                          }}
-                          className={`p-1 rounded transition-colors ${
-                            isActive ? 'hover:bg-white/20' : 'hover:bg-[#1a1a1a]/5'
-                          }`}
-                          title="Copy invite code"
-                        >
-                          {copiedId === workspace.id ? (
-                            <svg
-                              className="w-3 h-3 text-green-500"
-                              fill="none"
-                              stroke="currentColor"
-                              viewBox="0 0 24 24"
-                            >
-                              <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth={2}
-                                d="M5 13l4 4L19 7"
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          copyInviteCode(workspace.inviteCode, workspace.id);
+                        }}
+                        className={`p-1 rounded transition-colors ${
+                          isActive ? 'hover:bg-white/20' : 'hover:bg-[#1a1a1a]/5'
+                        }`}
+                        title="Copy invite code"
+                      >
+                        {copiedId === workspace.id ? (
+                          <svg
+                            className="w-3 h-3 text-green-500"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M5 13l4 4L19 7"
                               />
                             </svg>
                           ) : (
@@ -275,7 +274,6 @@ export function EditorialWorkspaceSwitcher({
                             </svg>
                           )}
                         </button>
-                      )}
 
                       {/* Delete/Leave */}
                       <button
