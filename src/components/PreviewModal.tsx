@@ -37,6 +37,8 @@ export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false
   const SUPPORTED_VIDEO_TYPES = new Set(['video/mp4', 'video/webm', 'video/ogg']);
   const isSupportedVideo = isVideo && SUPPORTED_VIDEO_TYPES.has(drop.mimeType || '');
 
+  const [showPlayer, setShowPlayer] = useState(false);
+
   // Video blob URL: fetch data URL → Blob → blob URL (handles binary data correctly)
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
 
@@ -300,6 +302,24 @@ export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false
             </div>
           )}
 
+          {/* YouTube Player */}
+          {!isLoading && youtubeVideoId && (
+            <div className="p-6 pt-0">
+              <div className="grid transition-[grid-template-rows] duration-300 ease-in-out" style={{ gridTemplateRows: showPlayer ? '1fr' : '0fr' }}>
+                <div className="overflow-hidden">
+                  <div className="aspect-video">
+                    <iframe
+                      src={`https://www.youtube.com/embed/${youtubeVideoId}`}
+                      className="w-full h-full"
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                      allowFullScreen
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Video Preview */}
           {!isLoading && drop.type === 'file' && isVideo && (
             <div className="flex items-center justify-center p-6 min-h-[300px]">
@@ -353,13 +373,13 @@ export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false
         <div className={`border-t ${tc.borderColor} px-4 py-3 sm:px-6 sm:py-4 flex flex-wrap justify-end gap-2 sm:gap-3 ${tc.bgColor} transition-colors duration-300`}>
           {youtubeVideoId && (
             <button
-              onClick={() => window.open(`https://www.youtube.com/watch?v=${youtubeVideoId}`, '_blank')}
+              onClick={() => setShowPlayer(p => !p)}
               className={`border ${tc.borderColor} ${tc.textColor} px-3 py-1.5 sm:px-5 sm:py-2 text-xs tracking-wider hover:bg-[#FF0000] hover:text-white hover:border-[#FF0000] transition-colors flex items-center gap-2 ${isMinimal ? 'rounded-full' : ''}`}
             >
               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+                <path d="M8 5v14l11-7z" />
               </svg>
-              {isMinimal ? 'YouTube' : 'YT'}
+              {showPlayer ? (isMinimal ? 'Close' : 'CLOSE') : (isMinimal ? 'Watch' : 'WATCH')}
             </button>
           )}
           <button

@@ -7,6 +7,8 @@ import { formatFileSize, getYouTubeVideoId } from '@/lib/drops';
 import { createShare } from '@/lib/shares';
 import { getEditorialThemeColors } from './editorialTheme';
 
+const YOUTUBE_PLAYER_TRANSITION = 'transition-[grid-template-rows] duration-300 ease-in-out';
+
 interface EditorialPreviewModalProps {
   drop: Drop;
   onClose: () => void;
@@ -35,6 +37,8 @@ export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoadin
 
   const SUPPORTED_VIDEO_TYPES = new Set(['video/mp4', 'video/webm', 'video/ogg']);
   const isSupportedVideo = isVideo && SUPPORTED_VIDEO_TYPES.has(drop.mimeType || '');
+
+  const [showPlayer, setShowPlayer] = useState(false);
 
   // Video blob URL: fetch data URL → Blob → blob URL (handles binary data correctly)
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
@@ -262,6 +266,24 @@ export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoadin
             </div>
           )}
 
+          {/* YouTube Player */}
+          {!isLoading && youtubeVideoId && (
+            <div className="p-5 pt-0">
+              <div className="grid transition-[grid-template-rows] duration-300 ease-in-out" style={{ gridTemplateRows: showPlayer ? '1fr' : '0fr' }}>
+                <div className="overflow-hidden">
+                  <div className="aspect-video rounded-lg overflow-hidden">
+                    <iframe
+                      src={`https://www.youtube.com/embed/${youtubeVideoId}`}
+                      className="w-full h-full"
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                      allowFullScreen
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Image */}
           {!isLoading && isImage && drop.fileData && (
             <div className="p-5 flex items-center justify-center">
@@ -349,14 +371,14 @@ export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoadin
             {/* YouTube */}
             {youtubeVideoId && (
               <button
-                onClick={() => window.open(`https://www.youtube.com/watch?v=${youtubeVideoId}`, '_blank')}
+                onClick={() => setShowPlayer(p => !p)}
                 className={`flex items-center gap-2 px-2 sm:px-4 py-2 rounded-md border ${tc.border} ${tc.text} hover:bg-[#FF0000] hover:text-white hover:border-[#FF0000] transition-all text-sm ${tc.fontClass}`}
-                title="Watch on YouTube"
+                title="Watch video"
               >
                 <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+                  <path d="M8 5v14l11-7z" />
                 </svg>
-                <span className="hidden sm:inline">Watch on YouTube</span>
+                <span className="hidden sm:inline">{showPlayer ? 'Close' : 'Watch video'}</span>
               </button>
             )}
 
@@ -421,7 +443,7 @@ export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoadin
           <button
             onClick={handleShare}
             disabled={isSharing}
-            className={`flex items-center gap-2 px-4 py-2 rounded-md ${tc.activePillBg} ${tc.activePillText} hover:opacity-90 transition-all text-sm ${tc.fontClass} disabled:opacity-50`}
+            className={`flex items-center gap-2 px-2 sm:px-4 py-2 rounded-md ${tc.activePillBg} ${tc.activePillText} hover:opacity-90 transition-all text-sm ${tc.fontClass} disabled:opacity-50`}
           >
             {isSharing ? (
               <>
@@ -443,7 +465,7 @@ export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoadin
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
                 </svg>
-                Share
+                <span className="hidden sm:inline">Share</span>
               </>
             )}
           </button>
