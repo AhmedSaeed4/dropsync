@@ -50,6 +50,8 @@ export interface Drop {
   categories?: string[]; // New: array of category names (max 3)
   // Creator name for workspace drops
   creatorName?: string;
+  // Pin state
+  pinned?: boolean;
 }
 
 export interface Category {

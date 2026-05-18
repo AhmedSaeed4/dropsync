@@ -5,6 +5,7 @@ import { formatFileSize, getTimeRemaining, decryptDrop, getYouTubeVideoId } from
 import { createShare } from '@/lib/shares';
 import { useState, useEffect } from 'react';
 import { useVideoThumbnail } from '@/hooks/useVideoThumbnail';
+import { DropContextMenu, useContextMenu } from './DropContextMenu';
 
 interface DropItemProps {
   drop: Drop;
@@ -16,6 +17,8 @@ interface DropItemProps {
   selectionMode: boolean;
   theme?: 'light' | 'dark' | 'minimal';
   currentUserId?: string;
+  onPin?: (drop: Drop) => void;
+  onUnpin?: (drop: Drop) => void;
 }
 
 function isTextFile(drop: Drop): boolean {
@@ -39,7 +42,7 @@ function getFileContent(drop: Drop): string {
   return '';
 }
 
-export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect, selectionMode, theme = 'light', currentUserId }: DropItemProps) {
+export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect, selectionMode, theme = 'light', currentUserId, onPin, onUnpin }: DropItemProps) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [copied, setCopied] = useState(false);
   const [decryptedContent, setDecryptedContent] = useState<string>('');
@@ -51,6 +54,8 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
   const [shareCopied, setShareCopied] = useState(false);
   const isDark = theme === 'dark';
   const isMinimal = theme === 'minimal';
+
+  const { menuState, closeMenu, contextMenuProps } = useContextMenu();
 
   const isImage = drop.mimeType?.startsWith('image/');
   const isVideo = drop.mimeType?.startsWith('video/');
@@ -258,10 +263,17 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
   return (
     <div
       onClick={() => selectionMode ? onSelect(drop.id) : onPreview(drop)}
-      className={`border ${tc.borderColor} ${tc.bgColor} transition-all cursor-pointer group overflow-hidden ${
+      {...contextMenuProps}
+      className={`relative border ${tc.borderColor} ${tc.bgColor} transition-all cursor-pointer group overflow-hidden ${
         selected ? `${tc.selectedBg} ${tc.selectedBorder}` : tc.hoverBg
       }`}
     >
+      {/* Pinned indicator */}
+      {drop.pinned && (
+        <div className={`absolute top-0 left-0 z-10 px-1.5 py-0.5 ${isMinimal ? 'bg-[#1A1A1A]/80 text-[#D4D8C8]' : isDark ? 'bg-white/80 text-[#1A1A1A]' : 'bg-[#FF5A47] text-white'} ${isMinimal ? 'text-[7px] font-sans tracking-wide' : 'text-[7px] font-mono uppercase tracking-wider'}`}>
+          PIN
+        </div>
+      )}
       <div className="flex items-stretch min-w-0 overflow-hidden">
         {/* Selection checkbox or icon */}
         {selectionMode ? (
@@ -464,6 +476,19 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
             {displayContent}
           </p>
         </div>
+      )}
+
+      {/* Context menu */}
+      {menuState && (
+        <DropContextMenu
+          x={menuState.x}
+          y={menuState.y}
+          isPinned={!!drop.pinned}
+          onPin={() => onPin?.(drop)}
+          onUnpin={() => onUnpin?.(drop)}
+          onClose={closeMenu}
+          theme={theme}
+        />
       )}
     </div>
   );
