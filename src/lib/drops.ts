@@ -104,12 +104,18 @@ export function createDropListener(
           category: data.category || undefined,
           categories: data.categories || (data.category ? [data.category] : []),
           creatorName: data.creatorName || undefined,
+          pinned: data.pinned || false,
         });
       }
     });
 
-    // Sort by createdAt desc on client side
-    drops.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    // Sort: pinned first, then by createdAt desc
+    drops.sort((a, b) => {
+      const aPinned = a.pinned ? 1 : 0;
+      const bPinned = b.pinned ? 1 : 0;
+      if (aPinned !== bPinned) return bPinned - aPinned;
+      return b.createdAt.getTime() - a.createdAt.getTime();
+    });
     callback(drops);
   }, (error) => {
     // Handle permission errors gracefully (e.g., workspace deleted)
@@ -694,6 +700,28 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
+export async function pinDrop(dropId: string): Promise<boolean> {
+  try {
+    const docRef = doc(db, DROPS_COLLECTION, dropId);
+    await updateDoc(docRef, { pinned: true });
+    return true;
+  } catch (error) {
+    console.error('Error pinning drop:', error);
+    return false;
+  }
+}
+
+export async function unpinDrop(dropId: string): Promise<boolean> {
+  try {
+    const docRef = doc(db, DROPS_COLLECTION, dropId);
+    await updateDoc(docRef, { pinned: false });
+    return true;
+  } catch (error) {
+    console.error('Error unpinning drop:', error);
+    return false;
+  }
+}
+
 export async function deleteDrop(drop: Drop): Promise<boolean> {
   try {
     // Delete from R2 if file has R2 key
@@ -1002,6 +1030,7 @@ export async function moveDrop(
     const docRef = doc(db, DROPS_COLLECTION, drop.id);
     const updateData: Record<string, unknown> = {
       workspaceId: targetWorkspaceId,
+      pinned: false, // Unpin on move
     };
 
     // When moving to personal, the mover takes ownership

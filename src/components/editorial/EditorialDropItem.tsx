@@ -6,6 +6,7 @@ import { createShare } from '@/lib/shares';
 import { useState, useEffect } from 'react';
 import { useVideoThumbnail } from '@/hooks/useVideoThumbnail';
 import { getEditorialThemeColors } from './editorialTheme';
+import { DropContextMenu, useContextMenu } from '../DropContextMenu';
 
 interface EditorialDropItemProps {
   drop: Drop;
@@ -17,6 +18,8 @@ interface EditorialDropItemProps {
   selectionMode: boolean;
   theme?: 'light' | 'dark' | 'minimal';
   currentUserId?: string;
+  onPin?: (drop: Drop) => void;
+  onUnpin?: (drop: Drop) => void;
 }
 
 function isTextFile(drop: Drop): boolean {
@@ -50,6 +53,8 @@ export function EditorialDropItem({
   selectionMode,
   theme = 'light',
   currentUserId,
+  onPin,
+  onUnpin,
 }: EditorialDropItemProps) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -63,6 +68,8 @@ export function EditorialDropItem({
 
   const tc = getEditorialThemeColors(theme);
   const font = tc.fontClass;
+
+  const { menuState, closeMenu, contextMenuProps } = useContextMenu();
 
   const isImage = drop.mimeType?.startsWith('image/');
   const isVideo = drop.mimeType?.startsWith('video/');
@@ -246,10 +253,19 @@ export function EditorialDropItem({
   return (
     <div
       onClick={() => selectionMode ? onSelect(drop.id) : onPreview(drop)}
-      className={`${tc.cardBg} ${tc.roundedClass} border ${tc.border} transition-all cursor-pointer group overflow-hidden ${
+      {...contextMenuProps}
+      className={`relative ${tc.cardBg} ${tc.roundedClass} border ${tc.border} transition-all cursor-pointer group overflow-hidden ${
         selected ? `${tc.activePillBg} ${tc.activePillText}` : tc.hoverBorder
       }`}
     >
+      {/* Pinned indicator */}
+      {drop.pinned && (
+        <div className={`absolute top-2 right-2 z-10 w-4 h-4 flex items-center justify-center ${tc.roundedClass} ${theme === 'dark' ? 'bg-white/10 text-white/70' : theme === 'minimal' ? 'bg-[#1A1A1A]/10 text-[#1A1A1A]/60' : 'bg-[#1A1A1A]/10 text-[#1A1A1A]/60'}`}>
+          <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 24 24" strokeWidth="0">
+            <path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z" />
+          </svg>
+        </div>
+      )}
       <div className="flex flex-col sm:flex-row items-stretch min-w-0 overflow-hidden p-3 gap-3">
         {/* Selection checkbox or thumbnail */}
         {selectionMode ? (
@@ -447,6 +463,20 @@ export function EditorialDropItem({
             {displayContent}
           </p>
         </div>
+      )}
+
+      {/* Context menu */}
+      {menuState && (
+        <DropContextMenu
+          x={menuState.x}
+          y={menuState.y}
+          isPinned={!!drop.pinned}
+          onPin={() => onPin?.(drop)}
+          onUnpin={() => onUnpin?.(drop)}
+          onClose={closeMenu}
+          theme={theme}
+          editorial
+        />
       )}
     </div>
   );

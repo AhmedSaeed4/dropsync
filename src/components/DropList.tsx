@@ -5,8 +5,9 @@ import { createPortal } from 'react-dom';
 import { Drop, Workspace, Category } from '@/types';
 import { DropItem } from './DropItem';
 import { UndoToast } from './UndoToast';
+import { Toast } from './Toast';
 import { CategoryFilter } from './CategoryFilter';
-import { deleteDrop, moveDrop } from '@/lib/drops';
+import { deleteDrop, moveDrop, pinDrop, unpinDrop } from '@/lib/drops';
 import { MoveDropModal } from '@/components/MoveDropModal';
 import { MemberInfo } from '@/lib/workspaces';
 
@@ -39,6 +40,7 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
   const [searchQuery, setSearchQuery] = useState('');
   const [bulkMoveDrops, setBulkMoveDrops] = useState<Drop[] | null>(null);
   const [moveLoading, setMoveLoading] = useState(false);
+  const [pinLimitToast, setPinLimitToast] = useState(false);
   const [mentionFilter, setMentionFilter] = useState<MemberInfo | null>(null);
   const [mentionSearch, setMentionSearch] = useState('');
   const [mentionDropdownOpen, setMentionDropdownOpen] = useState(false);
@@ -158,6 +160,19 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
 
   // Filter out all pending deletions from displayed drops
   const visibleDrops = drops.filter(d => !pendingDeletions.has(d.id));
+
+  const handlePinDrop = useCallback(async (drop: Drop) => {
+    if (drop.pinned) {
+      await unpinDrop(drop.id);
+    } else {
+      const pinnedCount = visibleDrops.filter(d => d.pinned).length;
+      if (pinnedCount >= 2) {
+        setPinLimitToast(true);
+        return;
+      }
+      await pinDrop(drop.id);
+    }
+  }, [visibleDrops]);
 
   const hasCategory = (drop: Drop, cat: string) =>
     (drop.categories && drop.categories.includes(cat)) || drop.category === cat;
@@ -489,6 +504,8 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
                   selectionMode={selectionMode}
                   theme={theme}
                   currentUserId={currentUserId}
+                  onPin={handlePinDrop}
+                  onUnpin={handlePinDrop}
                 />
               </div>
             ))
@@ -509,6 +526,16 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
           index={index}
         />
       ))}
+
+      {/* Pin limit toast */}
+      {pinLimitToast && (
+        <Toast
+          message="Max 2 pinned drops per space. Unpin another drop first."
+          duration={3}
+          theme={theme}
+          onDone={() => setPinLimitToast(false)}
+        />
+      )}
 
       {/* Bulk Move Modal */}
       {bulkMoveDrops && bulkMoveDrops.length > 0 && (

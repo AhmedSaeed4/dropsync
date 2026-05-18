@@ -5,7 +5,8 @@ import { createPortal } from 'react-dom';
 import { Drop, Workspace, Category } from '@/types';
 import { EditorialDropItem } from './EditorialDropItem';
 import { UndoToast } from '@/components/UndoToast';
-import { deleteDrop, moveDrop } from '@/lib/drops';
+import { Toast } from '@/components/Toast';
+import { deleteDrop, moveDrop, pinDrop, unpinDrop } from '@/lib/drops';
 import { EditorialMoveDropModal } from './EditorialMoveDropModal';
 import { getEditorialThemeColors } from './editorialTheme';
 import { MemberInfo } from '@/lib/workspaces';
@@ -61,6 +62,7 @@ export function EditorialDropList({
   const [searchQuery, setSearchQuery] = useState('');
   const [bulkMoveDrops, setBulkMoveDrops] = useState<Drop[] | null>(null);
   const [moveLoading, setMoveLoading] = useState(false);
+  const [pinLimitToast, setPinLimitToast] = useState(false);
   const [mentionFilter, setMentionFilter] = useState<MemberInfo | null>(null);
   const [mentionSearch, setMentionSearch] = useState('');
   const [mentionDropdownOpen, setMentionDropdownOpen] = useState(false);
@@ -181,6 +183,19 @@ export function EditorialDropList({
 
   // Filter out all pending deletions from displayed drops
   const visibleDrops = drops.filter(d => !pendingDeletions.has(d.id));
+
+  const handlePinDrop = useCallback(async (drop: Drop) => {
+    if (drop.pinned) {
+      await unpinDrop(drop.id);
+    } else {
+      const pinnedCount = visibleDrops.filter(d => d.pinned).length;
+      if (pinnedCount >= 2) {
+        setPinLimitToast(true);
+        return;
+      }
+      await pinDrop(drop.id);
+    }
+  }, [visibleDrops]);
 
   const hasCategory = (drop: Drop, cat: string) =>
     (drop.categories && drop.categories.includes(cat)) || drop.category === cat;
@@ -588,6 +603,8 @@ export function EditorialDropList({
                   selectionMode={selectionMode}
                   theme={theme}
                   currentUserId={currentUserId}
+                  onPin={handlePinDrop}
+                  onUnpin={handlePinDrop}
                 />
               ))}
             </div>
@@ -609,6 +626,17 @@ export function EditorialDropList({
           editorial
         />
       ))}
+
+      {/* Pin limit toast */}
+      {pinLimitToast && (
+        <Toast
+          message="Max 2 pinned drops per space. Unpin another drop first."
+          duration={3}
+          theme={theme}
+          editorial
+          onDone={() => setPinLimitToast(false)}
+        />
+      )}
 
       {/* Bulk Move Modal */}
       {bulkMoveDrops && bulkMoveDrops.length > 0 && (
