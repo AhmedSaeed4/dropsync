@@ -264,7 +264,7 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
     <div
       onClick={() => selectionMode ? onSelect(drop.id) : onPreview(drop)}
       {...contextMenuProps}
-      className={`relative border ${tc.borderColor} ${tc.bgColor} transition-all cursor-pointer group overflow-hidden ${
+      className={`relative select-none border ${tc.borderColor} ${tc.bgColor} transition-all cursor-pointer group overflow-hidden ${
         selected ? `${tc.selectedBg} ${tc.selectedBorder}` : tc.hoverBg
       }`}
     >

@@ -254,7 +254,7 @@ export function EditorialDropItem({
     <div
       onClick={() => selectionMode ? onSelect(drop.id) : onPreview(drop)}
       {...contextMenuProps}
-      className={`relative ${tc.cardBg} ${tc.roundedClass} border ${tc.border} transition-all cursor-pointer group overflow-hidden ${
+      className={`relative select-none ${tc.cardBg} ${tc.roundedClass} border ${tc.border} transition-all cursor-pointer group overflow-hidden ${
         selected ? `${tc.activePillBg} ${tc.activePillText}` : tc.hoverBorder
       }`}
     >
