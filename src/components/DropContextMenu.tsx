@@ -131,25 +131,44 @@ export function DropContextMenu({ x, y, isPinned, onPin, onUnpin, onClose, theme
 export function useContextMenu() {
   const [menuState, setMenuState] = useState<{ x: number; y: number } | null>(null);
   const longPressTimer = useRef<NodeJS.Timeout | null>(null);
+  const touchStartPos = useRef<{ x: number; y: number } | null>(null);
+  const MOVE_THRESHOLD = 10;
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     setMenuState({ x: e.clientX, y: e.clientY });
   }, []);
 
-  const handleTouchStart = useCallback((e: React.TouchEvent) => {
-    const touch = e.touches[0];
-    longPressTimer.current = setTimeout(() => {
-      setMenuState({ x: touch.clientX, y: touch.clientY });
-    }, 500);
-  }, []);
-
-  const handleTouchEnd = useCallback(() => {
+  const cancelLongPress = useCallback(() => {
     if (longPressTimer.current) {
       clearTimeout(longPressTimer.current);
       longPressTimer.current = null;
     }
+    touchStartPos.current = null;
   }, []);
+
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    const touch = e.touches[0];
+    touchStartPos.current = { x: touch.clientX, y: touch.clientY };
+    longPressTimer.current = setTimeout(() => {
+      setMenuState({ x: touch.clientX, y: touch.clientY });
+      touchStartPos.current = null;
+    }, 700);
+  }, []);
+
+  const handleTouchMove = useCallback((e: React.TouchEvent) => {
+    if (!touchStartPos.current) return;
+    const touch = e.touches[0];
+    const dx = Math.abs(touch.clientX - touchStartPos.current.x);
+    const dy = Math.abs(touch.clientY - touchStartPos.current.y);
+    if (dx > MOVE_THRESHOLD || dy > MOVE_THRESHOLD) {
+      cancelLongPress();
+    }
+  }, [cancelLongPress]);
+
+  const handleTouchEnd = useCallback(() => {
+    cancelLongPress();
+  }, [cancelLongPress]);
 
   const closeMenu = useCallback(() => {
     setMenuState(null);
@@ -161,6 +180,7 @@ export function useContextMenu() {
     contextMenuProps: {
       onContextMenu: handleContextMenu,
       onTouchStart: handleTouchStart,
+      onTouchMove: handleTouchMove,
       onTouchEnd: handleTouchEnd,
     },
   };
