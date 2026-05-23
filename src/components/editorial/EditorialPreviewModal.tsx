@@ -248,8 +248,16 @@ export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoadin
                 </div>
               )}
               {drop.imageData && (
-                <div className="rounded-lg overflow-hidden border ${tc.border}">
-                  <img src={drop.imageData} alt="Attached" className="max-w-full h-auto" />
+                <div className="flex items-center justify-center">
+                  <img
+                    src={drop.imageData}
+                    alt="Attached"
+                    className={`rounded-lg object-contain ${
+                      drop.isDrawing
+                        ? 'max-w-[80%] max-h-[50vh] border'
+                        : 'max-w-full h-auto'
+                    }`}
+                  />
                 </div>
               )}
             </div>

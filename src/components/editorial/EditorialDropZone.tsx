@@ -111,7 +111,8 @@ export function EditorialDropZone({
     textExpiration: ExpirationOption,
     category?: string,
     imageFile?: File,
-    categories?: string[]
+    categories?: string[],
+    isDrawing?: boolean
   ) => {
     if (!user) return;
     const creatorName =
@@ -127,7 +128,8 @@ export function EditorialDropZone({
       category,
       creatorName,
       imageFile,
-      categories
+      categories,
+      isDrawing
     );
     setUploading(false);
     setShowTextModal(false);

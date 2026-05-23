@@ -5,9 +5,10 @@ import { Drop, ExpirationOption } from '@/types';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { getEditorialThemeColors } from './editorialTheme';
 import { decryptDrop } from '@/lib/drops';
+import { DrawingCanvas, BG_COLORS } from '../DrawingCanvas';
 
 interface EditorialTextModalProps {
-  onSubmit: (name: string, content: string, expiration: ExpirationOption, category?: string, imageFile?: File, categories?: string[]) => Promise<void>;
+  onSubmit: (name: string, content: string, expiration: ExpirationOption, category?: string, imageFile?: File, categories?: string[], isDrawing?: boolean) => Promise<void>;
   onClose: () => void;
   theme?: 'light' | 'dark' | 'minimal';
   customCategories?: string[];
@@ -54,6 +55,11 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const [mode, setMode] = useState<'text' | 'draw'>('text');
+  const [bgColor, setBgColor] = useState('#ffffff');
+  const [hasDrawn, setHasDrawn] = useState(false);
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+  const [drawingFile, setDrawingFile] = useState<File | null>(null);
 
   // Load existing image for edit mode
   useEffect(() => {
@@ -89,19 +95,20 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isFileDrop && !content.trim()) return;
+    if (!isFileDrop && !content.trim() && !drawingFile) return;
 
     setLoading(true);
+    const imageToUpload = drawingFile || attachedImage || undefined;
     if (isEditMode && editDrop && onEdit) {
       await onEdit(editDrop, {
         name: name.trim() || editDrop.name,
         ...(!isFileDrop && content !== editDrop.content ? { content } : {}),
         categories: selectedCategories,
         expirationOption: expiration,
-        ...(!isFileDrop ? { imageFile: attachedImage || undefined, imageRemoved } : {}),
+        ...(!isFileDrop ? { imageFile: imageToUpload, imageRemoved } : {}),
       });
     } else {
-      await onSubmit(name.trim() || 'Text snippet', content, expiration, selectedCategories[0] || undefined, attachedImage || undefined, selectedCategories);
+      await onSubmit(name.trim() || 'Text snippet', content, expiration, selectedCategories[0] || undefined, imageToUpload, selectedCategories, !!drawingFile);
     }
     setLoading(false);
   };
@@ -137,8 +144,38 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
     expiration !== editDrop.expirationOption ||
     (!isFileDrop && content !== (editDrop.content || '')) ||
     !!attachedImage ||
-    imageRemoved
+    imageRemoved ||
+    !!drawingFile
   ) : true;
+
+  const handleModeSwitch = (newMode: 'text' | 'draw') => {
+    if (newMode === mode) return;
+    if (mode === 'draw' && hasDrawn) {
+      setShowDiscardConfirm(true);
+      return;
+    }
+    setMode(newMode);
+    setDrawingFile(null);
+    setHasDrawn(false);
+  };
+
+  const confirmDiscard = () => {
+    setShowDiscardConfirm(false);
+    setMode('text');
+    setDrawingFile(null);
+    setHasDrawn(false);
+  };
+
+  const handleDrawingSave = (file: File) => {
+    setDrawingFile(file);
+    setHasDrawn(false);
+    setMode('text');
+  };
+
+  const handleDrawingCancel = () => {
+    setMode('text');
+    setHasDrawn(false);
+  };
 
   const toggleRecording = useCallback(async () => {
     if (isRecording && mediaRecorderRef.current) {
@@ -356,6 +393,125 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
             </div>
 
             {!isFileDrop && (<>
+
+          {/* Text / Draw toggle — only in create mode */}
+          {!isEditMode && (
+            <div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleModeSwitch('text')}
+                  className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${tc.fontClass} ${
+                    mode === 'text'
+                      ? `${tc.activePillBg} ${tc.activePillText} border-[#1a1a1a]`
+                      : `${tc.border} ${tc.text} hover:border-[#1a1a1a]`
+                  }`}
+                >
+                  <svg className="w-3.5 h-3.5 inline-block mr-1 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                  </svg>
+                  Text
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleModeSwitch('draw')}
+                  className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${tc.fontClass} ${
+                    mode === 'draw'
+                      ? `${tc.activePillBg} ${tc.activePillText} border-[#1a1a1a]`
+                      : `${tc.border} ${tc.text} hover:border-[#1a1a1a]`
+                  }`}
+                >
+                  <svg className="w-3.5 h-3.5 inline-block mr-1 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487z" />
+                  </svg>
+                  Draw
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Drawing canvas */}
+          {mode === 'draw' && !isEditMode && (
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <label className={`block text-xs ${tc.muted} ${tc.fontClass}`}>
+                  Background
+                </label>
+                <div className="flex gap-1.5">
+                  {BG_COLORS.map((c) => (
+                    <button
+                      key={c.value}
+                      type="button"
+                      onClick={() => setBgColor(c.value)}
+                      className={`w-6 h-6 rounded-full border-2 transition-transform hover:scale-110 ${
+                        bgColor === c.value
+                          ? 'border-[#1A1A1A] scale-110'
+                          : 'border-[#1a1a1a]/20'
+                      }`}
+                      style={{ backgroundColor: c.value }}
+                      title={c.label}
+                    />
+                  ))}
+                </div>
+              </div>
+              <DrawingCanvas
+                onSave={handleDrawingSave}
+                onCancel={handleDrawingCancel}
+                onDraw={() => setHasDrawn(true)}
+                theme={theme}
+                bgColor={bgColor}
+              />
+            </div>
+          )}
+
+          {/* Discard drawing confirmation */}
+          {showDiscardConfirm && (
+            <div className={`border ${tc.border} ${tc.bg} p-4 rounded-lg`}>
+              <p className={`text-sm ${tc.text} mb-3 ${tc.fontClass}`}>
+                Discard drawing?
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={confirmDiscard}
+                  className="px-3 py-1.5 bg-red-500 text-white text-xs rounded-full hover:bg-red-600 transition-colors"
+                >
+                  Discard
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowDiscardConfirm(false)}
+                  className={`px-3 py-1.5 border ${tc.border} ${tc.text} text-xs rounded-full hover:border-[#1a1a1a] transition-colors`}
+                >
+                  Keep drawing
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Drawing saved indicator */}
+          {drawingFile && mode === 'text' && !isEditMode && (
+            <div className={`border ${tc.border} rounded-lg overflow-hidden`}>
+              <div className={`flex items-center gap-2 px-3 py-2 ${tc.bg}`}>
+                <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span className={`text-xs ${tc.text} ${tc.fontClass}`}>Drawing attached</span>
+                <button
+                  type="button"
+                  onClick={() => setDrawingFile(null)}
+                  className={`ml-auto ${tc.muted} hover:text-red-500 transition-colors`}
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Content textarea — show in text mode or edit mode */}
+          {(mode === 'text' || isEditMode) && (
             <div>
               <div className="flex items-center justify-between mb-2">
                 <label className={`block text-xs ${tc.muted} ${tc.fontClass}`}>
@@ -398,13 +554,15 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
                 onChange={(e) => setContent(e.target.value)}
                 placeholder="Enter your text here..."
                 rows={6}
-                required
+                required={mode === 'text' || isEditMode}
                 autoFocus
                 className={`w-full border ${tc.border} ${tc.bg} ${tc.text} px-4 py-3 text-sm rounded-lg focus:outline-none focus:border-[#1a1a1a] resize-none transition-colors ${tc.fontClass}`}
               />
             </div>
+          )}
 
-            {/* Image attachment */}
+          {/* Image attachment — show in text mode or edit mode */}
+          {(mode === 'text' || isEditMode) && !drawingFile && (
             <div>
               <input
                 ref={imageInputRef}
@@ -475,7 +633,9 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
                 </button>
               )}
             </div>
-            </>)}
+          )}
+
+          </>)}
 
             {/* Expiration selector */}
             <div>
@@ -510,7 +670,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
               </button>
               <button
                 type="submit"
-                disabled={loading || (isEditMode && !hasChanges) || (!isFileDrop && !content.trim())}
+                disabled={loading || (isEditMode && !hasChanges) || (!isFileDrop && !content.trim() && !drawingFile)}
                 className={`flex-1 ${tc.activePillBg} ${tc.activePillText} py-2.5 text-sm rounded-lg hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity flex items-center justify-center gap-2 ${tc.fontClass}`}
               >
                 {loading ? (
