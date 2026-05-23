@@ -273,7 +273,11 @@ export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false
                   <img
                     src={drop.imageData}
                     alt="Attached image"
-                    className={`max-w-full max-h-[50vh] border ${tc.borderColor} object-contain ${tc.roundedClass}`}
+                    className={`border ${tc.borderColor} object-contain ${tc.roundedClass} ${
+                      drop.isDrawing
+                        ? 'max-w-[80%] max-h-[50vh]'
+                        : 'max-w-full max-h-[50vh]'
+                    }`}
                   />
                 </div>
               )}

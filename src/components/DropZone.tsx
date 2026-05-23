@@ -96,13 +96,13 @@ export function DropZone({
     }
   }, [user, expiration, workspaceId, workspaceMembers]);
 
-  const handleTextSubmit = async (name: string, content: string, textExpiration: ExpirationOption, category?: string, imageFile?: File, categories?: string[]) => {
+  const handleTextSubmit = async (name: string, content: string, textExpiration: ExpirationOption, category?: string, imageFile?: File, categories?: string[], isDrawing?: boolean) => {
     if (!user) return;
 
     const creatorName = user.displayName || user.email?.split('@')[0] || undefined;
 
     setUploading(true);
-    await createTextDrop(user.uid, name, content, textExpiration, workspaceId, workspaceMembers, category, creatorName, imageFile, categories);
+    await createTextDrop(user.uid, name, content, textExpiration, workspaceId, workspaceMembers, category, creatorName, imageFile, categories, isDrawing);
     setUploading(false);
     setShowTextModal(false);
   };

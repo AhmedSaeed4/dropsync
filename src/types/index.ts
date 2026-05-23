@@ -52,6 +52,8 @@ export interface Drop {
   creatorName?: string;
   // Pin state
   pinned?: boolean;
+  // Drawing state
+  isDrawing?: boolean;
 }
 
 export interface Category {

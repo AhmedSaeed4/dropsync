@@ -105,6 +105,7 @@ export function createDropListener(
           categories: data.categories || (data.category ? [data.category] : []),
           creatorName: data.creatorName || undefined,
           pinned: data.pinned || false,
+          isDrawing: data.isDrawing || false,
         });
       }
     });
@@ -140,7 +141,8 @@ export async function createTextDrop(
   category?: string,
   creatorName?: string,
   imageFile?: File,
-  categories?: string[]
+  categories?: string[],
+  isDrawing?: boolean
 ): Promise<Drop | null> {
   try {
     const now = new Date();
@@ -254,6 +256,11 @@ export async function createTextDrop(
       if (imageIv) docData.imageIv = imageIv;
     }
 
+    // Mark as drawing if applicable
+    if (isDrawing) {
+      docData.isDrawing = true;
+    }
+
     const docRef = await addDoc(collection(db, DROPS_COLLECTION), docData);
 
     return {
@@ -275,6 +282,7 @@ export async function createTextDrop(
       imageMimeType: imageFile?.type || 'image/png',
       category,
       creatorName: workspaceId ? creatorName : undefined,
+      isDrawing: isDrawing || false,
     };
   } catch (error) {
     console.error('Error creating text drop:', error);
