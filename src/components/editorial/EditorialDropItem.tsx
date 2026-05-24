@@ -88,6 +88,8 @@ export function EditorialDropItem({
           } else if (decrypted.type === 'file' && decrypted.fileData) {
             setDecryptedFileData(decrypted.fileData);
             setDecryptError(false);
+          } else if (decrypted.imageData) {
+            setDecryptError(false);
           } else if (!decrypted.content && !decrypted.fileData) {
             setDecryptError(true);
           }
