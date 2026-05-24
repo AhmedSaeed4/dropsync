@@ -445,8 +445,8 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
                       onClick={() => setBgColor(c.value)}
                       className={`w-6 h-6 rounded-full border-2 transition-transform hover:scale-110 ${
                         bgColor === c.value
-                          ? 'border-[#1A1A1A] scale-110'
-                          : 'border-[#1a1a1a]/20'
+                          ? `${theme === 'dark' ? 'border-white scale-110' : 'border-[#1A1A1A] scale-110'}`
+                          : `${theme === 'dark' ? 'border-white/30' : 'border-[#1a1a1a]/20'}`
                       }`}
                       style={{ backgroundColor: c.value }}
                       title={c.label}

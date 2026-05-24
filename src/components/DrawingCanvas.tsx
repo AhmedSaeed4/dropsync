@@ -83,7 +83,7 @@ export function DrawingCanvas({ onSave, onCancel, onDraw, theme, bgColor }: Draw
     }
   }, [onSave, bgColor]);
 
-  const excalidrawTheme = isDark ? ('dark' as const) : ('light' as const);
+  const excalidrawTheme = 'light' as const;
 
   const canvasContent = (
     <div
@@ -115,7 +115,7 @@ export function DrawingCanvas({ onSave, onCancel, onDraw, theme, bgColor }: Draw
       <button
         type="button"
         onClick={() => setIsFullscreen(!isFullscreen)}
-        className={`absolute top-2 right-2 z-10 w-8 h-8 flex items-center justify-center ${isDark ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-[#1a1a1a]/10 hover:bg-[#1a1a1a]/20 text-[#1a1a1a]'} ${roundedClass} transition-colors`}
+        className={`absolute top-2 right-2 z-10 w-8 h-8 flex items-center justify-center bg-[#1a1a1a]/10 hover:bg-[#1a1a1a]/20 text-[#1a1a1a] ${roundedClass} transition-colors`}
         title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
       >
         {isFullscreen ? (
