@@ -56,11 +56,15 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
   const isDark = theme === 'dark';
   const isMinimal = theme === 'minimal';
   const isFileDrop = isEditMode && editDrop?.type === 'file';
-  const [mode, setMode] = useState<'text' | 'draw'>('text');
+  const [mode, setMode] = useState<'text' | 'draw'>(
+    isEditMode && editDrop?.isDrawing ? 'draw' : 'text'
+  );
   const [bgColor, setBgColor] = useState('#ffffff');
   const [hasDrawn, setHasDrawn] = useState(false);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const [drawingFile, setDrawingFile] = useState<File | null>(null);
+  const [initialScene, setInitialScene] = useState<{ elements: any[]; appState: any } | null>(null);
+  const [extractingScene, setExtractingScene] = useState(isEditMode && !!editDrop?.isDrawing);
 
   // Load existing image for edit mode
   useEffect(() => {
@@ -81,6 +85,34 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
       }
     }
   }, [isEditMode, editDrop, currentUserId]);
+
+  // Extract Excalidraw scene from drawing PNG when editing
+  useEffect(() => {
+    if (!isEditMode || !editDrop?.isDrawing || !existingImageUrl) return;
+
+    let cancelled = false;
+    setExtractingScene(true);
+
+    fetch(existingImageUrl)
+      .then(res => res.blob())
+      .then(async (blob) => {
+        const { loadFromBlob } = await import('@excalidraw/excalidraw');
+        const scene = await loadFromBlob(blob, null, null);
+        if (!cancelled) {
+          setInitialScene({ elements: scene.elements, appState: scene.appState });
+          if (scene.appState?.viewBackgroundColor) {
+            setBgColor(scene.appState.viewBackgroundColor);
+          }
+          setExtractingScene(false);
+        }
+      })
+      .catch((err) => {
+        console.warn('No scene data in drawing:', err);
+        if (!cancelled) setExtractingScene(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [isEditMode, editDrop?.isDrawing, existingImageUrl]);
 
   const toggleCategory = (cat: string) => {
     setSelectedCategories(prev => {
@@ -246,6 +278,10 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
   };
 
   const handleDrawingCancel = () => {
+    if (isEditMode && editDrop?.isDrawing) {
+      onClose();
+      return;
+    }
     setMode('text');
     setHasDrawn(false);
   };
@@ -469,36 +505,50 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
           )}
 
           {/* Drawing canvas */}
-          {mode === 'draw' && !isEditMode && (
+          {mode === 'draw' && (!isEditMode || !!editDrop?.isDrawing) && (
             <div>
-              <div className="flex items-center gap-2 mb-3">
-                <label className={`block ${tc.fontClass} ${tc.textMuted}`}>
-                  {isMinimal ? 'Background' : 'BG_COLOR'}
-                </label>
-                <div className="flex gap-1.5">
-                  {BG_COLORS.map((c) => (
-                    <button
-                      key={c.value}
-                      type="button"
-                      onClick={() => setBgColor(c.value)}
-                      className={`w-6 h-6 ${isMinimal ? 'rounded-full' : ''} border-2 transition-transform hover:scale-110 ${
-                        bgColor === c.value
-                          ? `${isDark ? 'border-white scale-110' : 'border-[#1A1A1A] scale-110'}`
-                          : `${isDark ? 'border-white/30' : 'border-[#1a1a1a]/20'}`
-                      }`}
-                      style={{ backgroundColor: c.value }}
-                      title={c.label}
-                    />
-                  ))}
+              {(!isEditMode || !!editDrop?.isDrawing) && (
+                <div className="flex items-center gap-2 mb-3">
+                  <label className={`block ${tc.fontClass} ${tc.textMuted}`}>
+                    {isMinimal ? 'Background' : 'BG_COLOR'}
+                  </label>
+                  <div className="flex gap-1.5">
+                    {BG_COLORS.map((c) => (
+                      <button
+                        key={c.value}
+                        type="button"
+                        onClick={() => setBgColor(c.value)}
+                        className={`w-6 h-6 ${isMinimal ? 'rounded-full' : ''} border-2 transition-transform hover:scale-110 ${
+                          bgColor === c.value
+                            ? `${isDark ? 'border-white scale-110' : 'border-[#1A1A1A] scale-110'}`
+                            : `${isDark ? 'border-white/30' : 'border-[#1a1a1a]/20'}`
+                        }`}
+                        style={{ backgroundColor: c.value }}
+                        title={c.label}
+                      />
+                    ))}
+                  </div>
                 </div>
-              </div>
-              <DrawingCanvas
-                onSave={handleDrawingSave}
-                onCancel={handleDrawingCancel}
-                onDraw={() => setHasDrawn(true)}
-                theme={theme}
-                bgColor={bgColor}
-              />
+              )}
+              {extractingScene ? (
+                <div className={`flex items-center justify-center h-[350px] border ${tc.borderColor} ${tc.roundedClass}`}>
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 border border-current/30 border-t-current animate-spin rounded-full" />
+                    <span className={`text-xs ${tc.textMuted} ${isMinimal ? 'font-sans' : 'font-mono'}`}>
+                      {isMinimal ? 'Loading drawing...' : 'LOADING_DRAWING...'}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <DrawingCanvas
+                  onSave={handleDrawingSave}
+                  onCancel={handleDrawingCancel}
+                  onDraw={() => setHasDrawn(true)}
+                  theme={theme}
+                  bgColor={bgColor}
+                  initialScene={initialScene || undefined}
+                />
+              )}
             </div>
           )}
 
@@ -528,7 +578,7 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
           )}
 
           {/* Drawing saved indicator */}
-          {drawingFile && mode === 'text' && !isEditMode && (
+          {drawingFile && mode === 'text' && (!isEditMode || !!editDrop?.isDrawing) && (
             <div className={`border ${tc.borderColor} ${tc.roundedClass} overflow-hidden`}>
               <div className={`flex items-center gap-2 px-3 py-2 ${tc.inputBg}`}>
                 <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
@@ -548,7 +598,7 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
             </div>
           )}
 
-          {/* Content textarea — show in text mode or edit mode */}
+          {/* Content textarea — show in text mode or edit mode (not for drawing edits) */}
           {(mode === 'text' || isEditMode) && (
           <div>
             <div className="flex items-center justify-between mb-2">
@@ -592,14 +642,14 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
               onChange={(e) => setContent(e.target.value)}
               placeholder={isMinimal ? 'Enter your text here...' : 'ENTER_CONTENT_HERE...'}
               rows={8}
-              required={mode === 'text' || isEditMode}
+              required={!drawingFile && (mode === 'text' || isEditMode)}
               className={`w-full border ${tc.borderColor} ${tc.inputBg} ${tc.textColor} px-4 py-3 text-sm ${isMinimal ? 'font-sans' : 'font-mono'} ${tc.placeholderColor} focus:outline-none focus:ring-2 focus:ring-[#1A1A1A] focus:border-transparent resize-none transition-colors duration-300 ${tc.roundedClass}`}
             />
           </div>
           )}
 
-          {/* Image attachment — show in text mode or edit mode */}
-          {(mode === 'text' || isEditMode) && !drawingFile && (
+          {/* Image attachment — show in text mode or edit mode (not for drawing edits) */}
+          {(mode === 'text' || (isEditMode && !editDrop?.isDrawing)) && !drawingFile && (
           <div>
             <input
               ref={imageInputRef}
