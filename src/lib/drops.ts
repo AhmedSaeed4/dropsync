@@ -867,7 +867,7 @@ export async function moveDrop(
   try {
     // Step 1: Decrypt the drop to get plaintext
     const decrypted = await decryptDrop(drop, currentUserId);
-    if (drop.encrypted && !decrypted.content && drop.type === 'text') {
+    if (drop.encrypted && !decrypted.content && drop.type === 'text' && !drop.isDrawing) {
       return { success: false, error: 'Failed to decrypt drop content' };
     }
     if (drop.encrypted && !decrypted.fileData && drop.type === 'file') {
