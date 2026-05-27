@@ -63,7 +63,7 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
   const [hasDrawn, setHasDrawn] = useState(false);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const [drawingFile, setDrawingFile] = useState<File | null>(null);
-  const [initialScene, setInitialScene] = useState<{ elements: any[]; appState: any } | null>(null);
+  const [initialScene, setInitialScene] = useState<{ elements: any[]; appState: any; files?: any } | null>(null);
   const [extractingScene, setExtractingScene] = useState(isEditMode && !!editDrop?.isDrawing);
 
   // Load existing image for edit mode
@@ -99,7 +99,7 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
         const { loadFromBlob } = await import('@excalidraw/excalidraw');
         const scene = await loadFromBlob(blob, null, null);
         if (!cancelled) {
-          setInitialScene({ elements: scene.elements, appState: scene.appState });
+          setInitialScene({ elements: scene.elements, appState: scene.appState, files: scene.files || undefined });
           if (scene.appState?.viewBackgroundColor) {
             setBgColor(scene.appState.viewBackgroundColor);
           }
