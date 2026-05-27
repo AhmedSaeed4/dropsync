@@ -21,7 +21,7 @@ interface DrawingCanvasProps {
   onDraw?: () => void;
   theme: 'light' | 'dark' | 'minimal';
   bgColor: string;
-  initialScene?: { elements: any[]; appState: any };
+  initialScene?: { elements: any[]; appState: any; files?: any };
 }
 
 const BG_COLORS = [
@@ -104,6 +104,7 @@ export function DrawingCanvas({ onSave, onCancel, onDraw, theme, bgColor, initia
                   viewBackgroundColor: bgColor,
                   ...initialScene?.appState,
                 },
+                files: initialScene?.files,
               }}
               onChange={handleChange}
               theme={excalidrawTheme}
@@ -114,7 +115,7 @@ export function DrawingCanvas({ onSave, onCancel, onDraw, theme, bgColor, initia
                   saveToActiveFile: false,
                   changeViewBackgroundColor: false,
                 },
-                tools: { image: false },
+                tools: { image: true },
               }}
               renderTopRightUI={() => null}
               isCollaborating={false}
