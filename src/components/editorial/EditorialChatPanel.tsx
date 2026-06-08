@@ -13,19 +13,23 @@ import {
   Conversation,
   ChatMessage,
 } from '@/lib/chat';
+import { subscribeToGroupMessages, sendGroupMessage } from '@/lib/groupChat';
+import { GroupChatMessage } from '@/types';
 import { getEditorialThemeColors } from './editorialTheme';
 
 interface EditorialChatPanelProps {
   theme: 'light' | 'dark' | 'minimal';
   onClose: () => void;
   onPreviewDrop?: (dropId: string, workspaceId: string | null) => void;
+  workspaceId?: string | null;
+  workspaceMembers?: any[];
 }
 
 const AGENT_URL = process.env.NEXT_PUBLIC_AGENT_URL || 'http://localhost:8000';
 
 const WELCOME = 'Hi! I can help you manage your drops. Ask me to list drops, search content, check storage stats, or manage workspaces.';
 
-export function EditorialChatPanel({ theme, onClose, onPreviewDrop }: EditorialChatPanelProps) {
+export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspaceMembers }: EditorialChatPanelProps) {
   const tc = getEditorialThemeColors(theme);
 
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -36,6 +40,13 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop }: EditorialC
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [showSidebar, setShowSidebar] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  // Group chat state
+  const [chatMode, setChatMode] = useState<'ai' | 'group'>('ai');
+  const [groupMessages, setGroupMessages] = useState<GroupChatMessage[]>([]);
+  const [groupInput, setGroupInput] = useState('');
+  const [groupSending, setGroupSending] = useState(false);
+  const groupUnsubRef = useRef<(() => void) | null>(null);
+
   const [switchingConv, setSwitchingConv] = useState<string | null>(null);
   const [animateMessages, setAnimateMessages] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -96,13 +107,57 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop }: EditorialC
     }
   }, [messages, loading]);
 
+  // Auto-switch to AI mode when workspace is deselected
+  useEffect(() => {
+    if (!workspaceId && chatMode === 'group') {
+      setChatMode('ai');
+    }
+  }, [workspaceId]);
+
+  // Subscribe to group chat messages when group tab is active
+  useEffect(() => {
+    if (chatMode !== 'group' || !workspaceId || !userId) {
+      if (groupUnsubRef.current) {
+        groupUnsubRef.current();
+        groupUnsubRef.current = null;
+      }
+      return;
+    }
+
+    groupUnsubRef.current = subscribeToGroupMessages(workspaceId, userId, (msgs) => {
+      setGroupMessages(msgs);
+    });
+
+    return () => {
+      if (groupUnsubRef.current) {
+        groupUnsubRef.current();
+        groupUnsubRef.current = null;
+      }
+    };
+  }, [chatMode, workspaceId, userId]);
+
+  // Auto-scroll group messages
+  useEffect(() => {
+    if (chatMode === 'group' && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [groupMessages, chatMode]);
+
   // Auto-resize textarea
   useEffect(() => {
-    if (textareaRef.current) {
+    if (textareaRef.current && chatMode === 'ai') {
       textareaRef.current.style.height = 'auto';
       textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + 'px';
     }
-  }, [input]);
+  }, [input, chatMode]);
+
+  // Auto-resize group textarea
+  useEffect(() => {
+    if (textareaRef.current && chatMode === 'group') {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + 'px';
+    }
+  }, [groupInput, chatMode]);
 
   const handleNewChat = () => {
     setActiveConvId(null);
@@ -216,36 +271,85 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop }: EditorialC
     }
   };
 
+  const handleGroupSend = async () => {
+    const text = groupInput.trim();
+    if (!text || groupSending || !userId || !workspaceId) return;
+    const senderName = auth.currentUser?.displayName || auth.currentUser?.email?.split('@')[0] || 'Unknown';
+    setGroupInput('');
+    setGroupSending(true);
+    await sendGroupMessage(workspaceId, userId, senderName, text);
+    setGroupSending(false);
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  };
+
+  const handleGroupKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleGroupSend();
+    }
+  };
+
   return (
     <div className={`flex flex-col h-full border-l ${tc.border} ${tc.bg} transition-colors duration-500`}>
       {/* Header with staggered fade-in */}
       <div className={`border-b ${tc.border} px-5 py-4 flex items-center justify-between shrink-0 transition-all duration-300 ease-out ${showHeader ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-[10px]'}`}>
         <div className="flex items-center gap-1.5">
           <h3 className={`text-[15px] font-medium ${tc.fontClass} ${tc.text}`}>
-            AI Assistant
+            {chatMode === 'group' ? 'Workspace Chat' : 'AI Assistant'}
           </h3>
         </div>
+
+        {/* Tab toggle */}
+        <div className="flex gap-1">
+          <button
+            onClick={() => setChatMode('ai')}
+            className={`px-2.5 py-1 text-xs ${tc.fontClass} transition-colors rounded-md ${
+              chatMode === 'ai'
+                ? `${tc.activePillBg} ${tc.activePillText}`
+                : `${tc.inactivePillBg} ${tc.inactivePillText} ${tc.inactivePillHoverBg}`
+            }`}
+          >
+            AI
+          </button>
+          <button
+            onClick={() => workspaceId && setChatMode('group')}
+            disabled={!workspaceId}
+            title={!workspaceId ? 'Select a workspace to chat' : ''}
+            className={`px-2.5 py-1 text-xs ${tc.fontClass} transition-colors rounded-md ${
+              chatMode === 'group'
+                ? `${tc.activePillBg} ${tc.activePillText}`
+                : `${tc.inactivePillBg} ${tc.inactivePillText} ${tc.inactivePillHoverBg}`
+            } ${!workspaceId ? 'opacity-30 cursor-not-allowed' : ''}`}
+          >
+            Workspace
+          </button>
+        </div>
+
         <div className="flex items-center gap-1">
-          {/* History button */}
-          <button
-            onClick={() => setShowSidebar(true)}
-            className={`w-7 h-7 flex items-center justify-center rounded-md ${tc.text} opacity-50 hover:opacity-100 hover:bg-black/5 transition-all`}
-            title="Chat history"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          </button>
-          {/* New chat button */}
-          <button
-            onClick={handleNewChat}
-            className={`w-7 h-7 flex items-center justify-center rounded-md ${tc.text} opacity-50 hover:opacity-100 hover:bg-black/5 transition-all`}
-            title="New chat"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-            </svg>
-          </button>
+          {/* History button — AI mode only */}
+          {chatMode === 'ai' && (
+            <button
+              onClick={() => setShowSidebar(true)}
+              className={`w-7 h-7 flex items-center justify-center rounded-md ${tc.text} opacity-50 hover:opacity-100 hover:bg-black/5 transition-all`}
+              title="Chat history"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </button>
+          )}
+          {/* New chat button — AI mode only */}
+          {chatMode === 'ai' && (
+            <button
+              onClick={handleNewChat}
+              className={`w-7 h-7 flex items-center justify-center rounded-md ${tc.text} opacity-50 hover:opacity-100 hover:bg-black/5 transition-all`}
+              title="New chat"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+              </svg>
+            </button>
+          )}
           {/* Close button */}
           <button
             onClick={onClose}
@@ -259,8 +363,8 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop }: EditorialC
         </div>
       </div>
 
-      {/* Sidebar overlay */}
-      {showSidebar && (
+      {/* Sidebar overlay — AI mode only */}
+      {chatMode === 'ai' && showSidebar && (
         <div className="absolute inset-0 z-10 flex overflow-hidden">
           <div className={`w-full ${tc.bg} border-r ${tc.border} flex flex-col overflow-hidden`}>
             <div className={`px-5 py-4 border-b ${tc.border} flex items-center justify-between`}>
@@ -309,106 +413,162 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop }: EditorialC
         </div>
       )}
 
-      {/* Messages area with staggered fade-in */}
-      <div ref={scrollRef} className={`flex-1 overflow-y-auto p-5 space-y-4 min-h-0 transition-all duration-[350ms] ease-out ${showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-[10px]'}`}>
-        {/* Welcome message */}
-        {messages.length === 0 && !loading && (
-          <div className="flex flex-col items-center justify-center h-full">
-            <svg className={`w-10 h-10 ${tc.muted} mb-4`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-            </svg>
-            <p className={`text-sm ${tc.fontClass} ${tc.muted} text-center max-w-[240px]`}>
-              Ask me anything about your drops
-            </p>
-          </div>
-        )}
-
-        {/* Messages with fadeInUp animation */}
-        {!showSidebar && messages.map((msg, idx) => (
-          <div
-            key={msg.id}
-            className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-fade-in-up`}
-            style={{ animationDelay: `${idx * 50}ms` }}
-          >
-            <div
-              className={`relative max-w-[85%] px-3.5 py-2.5 text-sm leading-relaxed overflow-x-auto group ${
-                msg.role === 'user'
-                  ? 'bg-[#1a1a1a] text-[#FFFEF5] rounded-lg'
-                  : `bg-[#f5f5f5] ${theme === 'dark' ? 'bg-white/10 text-white' : 'text-[#1a1a1a]'} rounded-lg border ${tc.border}`
-              }`}
-              style={msg.role === 'user' ? { borderBottomRightRadius: '3px' } : { borderBottomLeftRadius: '3px' }}
-            >
-              {msg.role === 'assistant' && (
-                <button
-                  onClick={(e) => handleCopy(msg.id, msg.content, e.currentTarget.parentElement!)}
-                  aria-label="Copy message"
-                  className={`absolute top-1 right-1 p-1 ${tc.roundedClass} transition-opacity ${
-                    theme === 'minimal'
-                      ? 'opacity-40 hover:opacity-100'
-                      : 'opacity-0 group-hover:opacity-70 hover:!opacity-100'
-                  } ${theme === 'dark' ? 'text-white/60 hover:text-white' : 'text-[#1a1a1a]/40 hover:text-[#1a1a1a]'}`}
-                  title={copiedId === msg.id ? 'Copied!' : 'Copy'}
-                >
-                  {copiedId === msg.id ? (
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                    </svg>
-                  ) : (
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                      <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
-                    </svg>
-                  )}
-                </button>
-              )}
-              {msg.role === 'assistant' ? (
-                <div className={`break-words [&_p]:mb-1 [&_p:last-child]:mb-0 [&_pre]:overflow-x-auto [&_pre]:max-w-full [&_code]:break-all ${tc.fontClass}`}>
-                  <ReactMarkdown remarkPlugins={[remarkBreaks]}>{msg.content}</ReactMarkdown>
-                </div>
-              ) : (
-                <div className={`whitespace-pre-wrap break-words ${tc.fontClass}`}>{msg.content}</div>
-              )}
+      {/* AI Agent Messages area with staggered fade-in */}
+      {chatMode === 'ai' && (
+        <div ref={chatMode === 'ai' ? scrollRef : undefined} className={`flex-1 overflow-y-auto p-5 space-y-4 min-h-0 transition-all duration-[350ms] ease-out ${showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-[10px]'}`}>
+          {/* Welcome message */}
+          {messages.length === 0 && !loading && (
+            <div className="flex flex-col items-center justify-center h-full">
+              <svg className={`w-10 h-10 ${tc.muted} mb-4`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+              </svg>
+              <p className={`text-sm ${tc.fontClass} ${tc.muted} text-center max-w-[240px]`}>
+                Ask me anything about your drops
+              </p>
             </div>
-          </div>
-        ))}
+          )}
 
-        {/* Loading indicator */}
-        {loading && (
-          <div className="flex justify-start px-4 py-3">
-            <div className="w-3.5 h-3.5 rounded-full bg-[#1a1a1a]" style={{
-              animation: 'l1-chat 2s infinite cubic-bezier(0.3,1,0,1)',
-              ['--bg-mid' as string]: theme === 'dark' ? '#ffffff' : '#555555',
-              ['--bg-end' as string]: theme === 'dark' ? '#cccccc' : '#333333',
-            }} />
-            <style>{`
-              @keyframes l1-chat {
-                0%   { border-radius: 50%; clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); }
-                33%  { border-radius: 0; clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); background: var(--bg-mid); }
-                66%  { border-radius: 0; clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%); background: var(--bg-end); }
-                100% { border-radius: 50%; clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); }
-              }
-            `}</style>
-          </div>
-        )}
-      </div>
+          {/* Messages with fadeInUp animation */}
+          {!showSidebar && messages.map((msg, idx) => (
+            <div
+              key={msg.id}
+              className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-fade-in-up`}
+              style={{ animationDelay: `${idx * 50}ms` }}
+            >
+              <div
+                className={`relative max-w-[85%] px-3.5 py-2.5 text-sm leading-relaxed overflow-x-auto group ${
+                  msg.role === 'user'
+                    ? 'bg-[#1a1a1a] text-[#FFFEF5] rounded-lg'
+                    : `bg-[#f5f5f5] ${theme === 'dark' ? 'bg-white/10 text-white' : 'text-[#1a1a1a]'} rounded-lg border ${tc.border}`
+                }`}
+                style={msg.role === 'user' ? { borderBottomRightRadius: '3px' } : { borderBottomLeftRadius: '3px' }}
+              >
+                {msg.role === 'assistant' && (
+                  <button
+                    onClick={(e) => handleCopy(msg.id, msg.content, e.currentTarget.parentElement!)}
+                    aria-label="Copy message"
+                    className={`absolute top-1 right-1 p-1 ${tc.roundedClass} transition-opacity ${
+                      theme === 'minimal'
+                        ? 'opacity-40 hover:opacity-100'
+                        : 'opacity-0 group-hover:opacity-70 hover:!opacity-100'
+                    } ${theme === 'dark' ? 'text-white/60 hover:text-white' : 'text-[#1a1a1a]/40 hover:text-[#1a1a1a]'}`}
+                    title={copiedId === msg.id ? 'Copied!' : 'Copy'}
+                  >
+                    {copiedId === msg.id ? (
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    ) : (
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                        <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                      </svg>
+                    )}
+                  </button>
+                )}
+                {msg.role === 'assistant' ? (
+                  <div className={`break-words [&_p]:mb-1 [&_p:last-child]:mb-0 [&_pre]:overflow-x-auto [&_pre]:max-w-full [&_code]:break-all ${tc.fontClass}`}>
+                    <ReactMarkdown remarkPlugins={[remarkBreaks]}>{msg.content}</ReactMarkdown>
+                  </div>
+                ) : (
+                  <div className={`whitespace-pre-wrap break-words ${tc.fontClass}`}>{msg.content}</div>
+                )}
+              </div>
+            </div>
+          ))}
+
+          {/* Loading indicator */}
+          {loading && (
+            <div className="flex justify-start px-4 py-3">
+              <div className="w-3.5 h-3.5 rounded-full bg-[#1a1a1a]" style={{
+                animation: 'l1-chat 2s infinite cubic-bezier(0.3,1,0,1)',
+                ['--bg-mid' as string]: theme === 'dark' ? '#ffffff' : '#555555',
+                ['--bg-end' as string]: theme === 'dark' ? '#cccccc' : '#333333',
+              }} />
+              <style>{`
+                @keyframes l1-chat {
+                  0%   { border-radius: 50%; clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); }
+                  33%  { border-radius: 0; clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); background: var(--bg-mid); }
+                  66%  { border-radius: 0; clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%); background: var(--bg-end); }
+                  100% { border-radius: 50%; clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); }
+                }
+              `}</style>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Group Chat Messages */}
+      {chatMode === 'group' && (
+        <div ref={scrollRef} className="flex-1 overflow-y-auto p-5 space-y-2 min-h-0">
+          {groupMessages.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-8">
+              <svg className={`w-8 h-8 ${tc.muted} mb-3`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
+              </svg>
+              <p className={`text-xs ${tc.fontClass} ${tc.muted} text-center`}>
+                No messages yet. Start the conversation!
+              </p>
+            </div>
+          )}
+          {groupMessages.map((msg) => {
+            const isOwn = msg.senderId === userId;
+            const idx = groupMessages.indexOf(msg);
+            const prevMsg = idx > 0 ? groupMessages[idx - 1] : null;
+            const showSender = !prevMsg || prevMsg.senderId !== msg.senderId;
+            const initial = msg.senderName.charAt(0).toUpperCase();
+            const timeStr = msg.createdAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+            return (
+              <div key={msg.id} className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}>
+                {/* Avatar for other users */}
+                {!isOwn && showSender && (
+                  <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-medium shrink-0 mr-1.5 mt-0.5 ${tc.activePillBg} ${tc.activePillText}`}>
+                    {initial}
+                  </div>
+                )}
+                {!isOwn && !showSender && <div className="w-6 mr-1.5 shrink-0" />}
+                <div className="max-w-[80%]">
+                  {showSender && !isOwn && (
+                    <p className={`text-[10px] ${tc.muted} mb-0.5 ml-1 truncate max-w-[160px]`}>{msg.senderName}</p>
+                  )}
+                  <div
+                    className={`px-3.5 py-2.5 text-sm leading-relaxed ${tc.roundedClass} ${
+                      isOwn
+                        ? 'bg-[#1a1a1a] text-[#FFFEF5]'
+                        : `bg-[#f5f5f5] ${theme === 'dark' ? 'bg-white/10 text-white' : 'text-[#1a1a1a]'} border ${tc.border}`
+                    }`}
+                    style={isOwn ? { borderBottomRightRadius: '3px' } : { borderBottomLeftRadius: '3px' }}
+                  >
+                    <div className={`whitespace-pre-wrap break-words ${tc.fontClass}`}>{msg.content}</div>
+                  </div>
+                  {showSender && (
+                    <p className={`text-[9px] ${tc.muted} mt-0.5 ${isOwn ? 'text-right mr-1' : 'ml-1'}`}>{timeStr}</p>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* Input area with staggered fade-in */}
       <div className={`border-t ${tc.border} p-4 shrink-0 transition-all duration-300 ease-out ${showInputArea ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-[10px]'}`}>
         <div className="flex gap-2 items-end">
           <textarea
             ref={textareaRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Type a message..."
-            disabled={loading}
+            value={chatMode === 'group' ? groupInput : input}
+            onChange={(e) => chatMode === 'group' ? setGroupInput(e.target.value) : setInput(e.target.value)}
+            onKeyDown={chatMode === 'group' ? handleGroupKeyDown : handleKeyDown}
+            placeholder={chatMode === 'group' ? 'Message workspace...' : 'Type a message...'}
+            disabled={chatMode === 'group' ? groupSending : loading}
             rows={1}
             className={`flex-1 px-4 py-3 text-[14px] ${tc.fontClass} ${tc.bg} ${tc.text} border ${tc.border} rounded-lg resize-none focus:outline-none focus:border-[#1a1a1a] disabled:opacity-50 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]`}
             style={{ maxHeight: '120px' }}
           />
           <button
-            onClick={handleSend}
-            disabled={loading || !input.trim()}
+            onClick={chatMode === 'group' ? handleGroupSend : handleSend}
+            disabled={chatMode === 'group' ? (groupSending || !groupInput.trim()) : (loading || !input.trim())}
             className="w-10 h-10 shrink-0 flex items-center justify-center bg-[#1a1a1a] text-white rounded-lg hover:bg-[#333] disabled:opacity-30 transition-colors"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>

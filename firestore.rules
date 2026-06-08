@@ -29,6 +29,19 @@ service cloud.firestore {
         request.auth.uid in resource.data.members ||
         resource.data.ownerId == request.auth.uid
       );
+
+      // Group chat messages - only workspace members can read/write
+      match /messages/{messageId} {
+        allow read: if request.auth != null &&
+          request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members;
+        allow create: if request.auth != null &&
+          request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members &&
+          request.auth.uid == request.resource.data.senderId;
+        allow delete: if request.auth != null &&
+          request.auth.uid == resource.data.senderId &&
+          request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members;
+        allow update: if false;
+      }
     }
 
     // Workspace encryption keys - only workspace members can access
