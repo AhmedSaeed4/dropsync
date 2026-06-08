@@ -265,6 +265,8 @@ export function EditorialLayout(props: EditorialLayoutProps) {
               theme={theme}
               onClose={() => setShowChat(false)}
               onPreviewDrop={handlePreviewDrop}
+              workspaceId={currentWorkspaceId}
+              workspaceMembers={resolvedWorkspaceMembers}
             />
           )}
         </div>

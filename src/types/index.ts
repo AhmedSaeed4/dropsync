@@ -70,3 +70,13 @@ export interface DropFormData {
   content?: string;
   file?: File;
 }
+
+export interface GroupChatMessage {
+  id: string;
+  senderId: string;
+  senderName: string;
+  content: string;  // decrypted plaintext at runtime
+  encrypted: boolean;
+  iv: string;
+  createdAt: Date;
+}
