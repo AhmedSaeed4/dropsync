@@ -147,7 +147,6 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const chatPanelRef = useRef<HTMLDivElement>(null);
   const unsubRef = useRef<(() => void) | null>(null);
   const s = getThemeStyles(theme);
   const userId = auth.currentUser?.uid;
@@ -221,32 +220,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
     };
   }, [chatMode, workspaceId, userId]);
 
-  // Keep panel above mobile virtual keyboard
-  useEffect(() => {
-    if (typeof window === 'undefined' || !window.visualViewport) return;
-
-    const viewport = window.visualViewport;
-    const panel = chatPanelRef.current;
-    if (!panel) return;
-
-    const onResize = () => {
-      const offsetTop = viewport.offsetTop || 0;
-      panel.style.height = `${viewport.height}px`;
-      panel.style.top = `${offsetTop}px`;
-    };
-
-    onResize();
-    viewport.addEventListener('resize', onResize);
-    viewport.addEventListener('scroll', onResize);
-    return () => {
-      viewport.removeEventListener('resize', onResize);
-      viewport.removeEventListener('scroll', onResize);
-      panel.style.height = '';
-      panel.style.top = '';
-    };
-  }, []);
-
-  // Lock body scroll on mobile when chat is open
+  // Lock body scroll on mobile
   useEffect(() => {
     const isMobile = window.innerWidth < 1024;
     if (!isMobile) return;
@@ -378,13 +352,6 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
 
   const activeConv = conversations.find((c) => c.id === activeConvId);
 
-  const handleInputBlur = (e: React.FocusEvent<HTMLInputElement>) => {
-    if (chatMode === 'group') {
-      // Prevent keyboard from closing on mobile — refocus immediately
-      setTimeout(() => e.target.focus(), 10);
-    }
-  };
-
   const handleGroupSend = async () => {
     const text = groupInput.trim();
     if (!text || groupSending || !userId || !workspaceId) return;
@@ -393,7 +360,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
     setGroupSending(true);
     await sendGroupMessage(workspaceId, userId, senderName, text);
     setGroupSending(false);
-    // Don't refocus — textarea was never blurred, keyboard stays open naturally
+    setTimeout(() => inputRef.current?.focus(), 100);
   };
 
   const handleClose = () => {
@@ -414,7 +381,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
   const animationClass = isExiting ? s.exitAnimation : s.enterAnimation;
 
   return (
-    <div ref={chatPanelRef} onClick={() => inputRef.current?.focus()} className={`relative flex flex-col h-[520px] overflow-hidden ${s.panelBorderWidth} ${s.borderColor} ${s.panelBg} ${s.panelShadow} ${animationClass} ${s.roundedClass} ${theme === 'minimal' ? 'minimal-scroll' : ''}`} style={{ touchAction: 'none' }}>
+    <div onClick={() => inputRef.current?.focus()} className={`relative flex flex-col h-[520px] overflow-hidden ${s.panelBorderWidth} ${s.borderColor} ${s.panelBg} ${s.panelShadow} ${animationClass} ${s.roundedClass} ${theme === 'minimal' ? 'minimal-scroll' : ''}`}>
       {/* Header */}
       <div className={`border-b ${s.borderColor} px-4 py-3 ${s.headerBg} flex items-center justify-between shrink-0`}>
         <div className="flex items-center gap-2">
@@ -609,7 +576,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
 
       {/* Group Chat Messages */}
       {chatMode === 'group' && (
-        <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-2 min-h-0" style={{ touchAction: 'pan-y' }}>
+        <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-2 min-h-0">
           {!groupMessagesLoading && groupMessages.length === 0 && (
             <div className="flex flex-col items-center justify-center py-8">
               <svg className={`w-8 h-8 ${s.muted} mb-3`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
@@ -692,7 +659,6 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
               type="text"
               value={groupInput}
               onChange={(e) => setGroupInput(e.target.value)}
-              onBlur={handleInputBlur}
               placeholder="Message workspace..."
               disabled={false}
               className={`flex-1 px-3 py-2 text-xs ${s.inputBg} ${s.inputText} ${s.placeholder} ${s.fontClass} tracking-wider border ${s.inputBorder} ${s.roundedClass} focus:outline-none focus:ring-1 ${s.focusRing} disabled:opacity-50`}

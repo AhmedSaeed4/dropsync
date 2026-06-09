@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import { Drop, Workspace, ExpirationOption } from '@/types';
 import { EditorialPreviewModal } from './EditorialPreviewModal';
 import { EditorialCreateWorkspaceModal } from './EditorialCreateWorkspaceModal';
@@ -138,6 +138,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
   // Ref to always access the latest drops value (avoids stale closure issues)
   const dropsRef = useRef(drops);
   dropsRef.current = drops;
+  const chatOverlayRef = useRef<HTMLDivElement>(null);
 
   // Move drop state
   const [moveDrops, setMoveDrops] = useState<Drop[] | null>(null);
@@ -175,6 +176,31 @@ export function EditorialLayout(props: EditorialLayoutProps) {
       handlePreview(found);
     }
   };
+
+  // iOS viewport safety net — resize overlay to match visualViewport
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.visualViewport) return;
+    if (!showChat) return;
+    const viewport = window.visualViewport;
+    const overlay = chatOverlayRef.current;
+    if (!overlay) return;
+
+    const onResize = () => {
+      const offsetTop = viewport.offsetTop || 0;
+      overlay.style.height = `${viewport.height}px`;
+      overlay.style.top = `${offsetTop}px`;
+    };
+
+    onResize();
+    viewport.addEventListener('resize', onResize);
+    viewport.addEventListener('scroll', onResize);
+    return () => {
+      viewport.removeEventListener('resize', onResize);
+      viewport.removeEventListener('scroll', onResize);
+      overlay.style.height = '';
+      overlay.style.top = '';
+    };
+  }, [showChat]);
 
   return (
     <div className={`min-h-screen ${tc.bg} transition-colors duration-500`}>
@@ -269,7 +295,9 @@ export function EditorialLayout(props: EditorialLayoutProps) {
 
         {/* Chat panel: full screen overlay on mobile, slides in as third column on desktop */}
         <div
-          className={`${showChat ? `fixed inset-0 z-40 ${tc.bg} lg:static lg:inset-auto lg:z-auto lg:h-[calc(100vh-160px)]` : 'hidden lg:block lg:w-0 lg:opacity-0 lg:translate-x-[30px]'} lg:shrink-0 lg:relative overflow-hidden transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${showChat ? 'lg:w-[420px] lg:opacity-100 lg:translate-x-0 lg:pl-0' : ''}`}
+          ref={chatOverlayRef}
+          className={`${showChat ? `fixed top-0 left-0 right-0 z-40 ${tc.bg} lg:static lg:inset-auto lg:z-auto lg:h-[calc(100vh-160px)]` : 'hidden lg:block lg:w-0 lg:opacity-0 lg:translate-x-[30px]'} lg:shrink-0 lg:relative overflow-hidden transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${showChat ? 'lg:w-[420px] lg:opacity-100 lg:translate-x-0 lg:pl-0' : ''}`}
+          style={showChat ? { height: '100dvh' } : undefined}
           onTouchMove={(e) => { if (showChat) e.preventDefault(); }}
         >
           {showChat && (
