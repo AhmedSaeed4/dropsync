@@ -186,9 +186,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
     if (!overlay) return;
 
     const onResize = () => {
-      const offsetTop = viewport.offsetTop || 0;
       overlay.style.height = `${viewport.height}px`;
-      overlay.style.top = `${offsetTop}px`;
     };
 
     onResize();
@@ -293,10 +291,15 @@ export function EditorialLayout(props: EditorialLayoutProps) {
           </div>
         </div>
 
+        {/* Black backdrop behind chat — hides app during keyboard animations */}
+        {showChat && (
+          <div className="fixed inset-0 z-30 bg-black lg:hidden" />
+        )}
+
         {/* Chat panel: full screen overlay on mobile, slides in as third column on desktop */}
         <div
           ref={chatOverlayRef}
-          className={`${showChat ? `fixed top-0 left-0 right-0 z-40 bg-black ${tc.bg} lg:static lg:inset-auto lg:z-auto lg:h-[calc(100vh-160px)]` : 'hidden lg:block lg:w-0 lg:opacity-0 lg:translate-x-[30px]'} lg:shrink-0 lg:relative overflow-hidden transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${showChat ? 'lg:w-[420px] lg:opacity-100 lg:translate-x-0 lg:pl-0' : ''}`}
+          className={`${showChat ? `fixed top-0 left-0 right-0 z-40 ${tc.bg} lg:static lg:inset-auto lg:z-auto lg:h-[calc(100vh-160px)]` : 'hidden lg:block lg:w-0 lg:opacity-0 lg:translate-x-[30px]'} lg:shrink-0 lg:relative overflow-hidden transition-[width,opacity,transform,padding] duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${showChat ? 'lg:w-[420px] lg:opacity-100 lg:translate-x-0 lg:pl-0' : ''}`}
           style={showChat ? { height: '100dvh' } : undefined}
           onTouchMove={(e) => { if (showChat) e.preventDefault(); }}
         >
