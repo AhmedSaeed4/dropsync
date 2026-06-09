@@ -249,11 +249,21 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
   // Lock body scroll on mobile when chat is open
   useEffect(() => {
     const isMobile = window.innerWidth < 1024;
-    if (isMobile) {
-      const original = document.body.style.overflow;
-      document.body.style.overflow = 'hidden';
-      return () => { document.body.style.overflow = original; };
-    }
+    if (!isMobile) return;
+    const scrollY = window.scrollY;
+    document.body.style.position = 'fixed';
+    document.body.style.top = `-${scrollY}px`;
+    document.body.style.left = '0';
+    document.body.style.right = '0';
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.position = '';
+      document.body.style.top = '';
+      document.body.style.left = '';
+      document.body.style.right = '';
+      document.body.style.overflow = '';
+      window.scrollTo(0, scrollY);
+    };
   }, []);
 
   // Auto-scroll group messages
@@ -368,6 +378,13 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
 
   const activeConv = conversations.find((c) => c.id === activeConvId);
 
+  const handleInputBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+    if (chatMode === 'group') {
+      // Prevent keyboard from closing on mobile — refocus immediately
+      setTimeout(() => e.target.focus(), 10);
+    }
+  };
+
   const handleGroupSend = async () => {
     const text = groupInput.trim();
     if (!text || groupSending || !userId || !workspaceId) return;
@@ -397,7 +414,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
   const animationClass = isExiting ? s.exitAnimation : s.enterAnimation;
 
   return (
-    <div ref={chatPanelRef} onClick={() => inputRef.current?.focus()} className={`relative flex flex-col h-[520px] overflow-hidden ${s.panelBorderWidth} ${s.borderColor} ${s.panelBg} ${s.panelShadow} ${animationClass} ${s.roundedClass} ${theme === 'minimal' ? 'minimal-scroll' : ''}`}>
+    <div ref={chatPanelRef} onClick={() => inputRef.current?.focus()} className={`relative flex flex-col h-[520px] overflow-hidden ${s.panelBorderWidth} ${s.borderColor} ${s.panelBg} ${s.panelShadow} ${animationClass} ${s.roundedClass} ${theme === 'minimal' ? 'minimal-scroll' : ''}`} style={{ touchAction: 'none' }}>
       {/* Header */}
       <div className={`border-b ${s.borderColor} px-4 py-3 ${s.headerBg} flex items-center justify-between shrink-0`}>
         <div className="flex items-center gap-2">
@@ -592,7 +609,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
 
       {/* Group Chat Messages */}
       {chatMode === 'group' && (
-        <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-2 min-h-0">
+        <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-2 min-h-0" style={{ touchAction: 'pan-y' }}>
           {!groupMessagesLoading && groupMessages.length === 0 && (
             <div className="flex flex-col items-center justify-center py-8">
               <svg className={`w-8 h-8 ${s.muted} mb-3`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
@@ -675,6 +692,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
               type="text"
               value={groupInput}
               onChange={(e) => setGroupInput(e.target.value)}
+              onBlur={handleInputBlur}
               placeholder="Message workspace..."
               disabled={false}
               className={`flex-1 px-3 py-2 text-xs ${s.inputBg} ${s.inputText} ${s.placeholder} ${s.fontClass} tracking-wider border ${s.inputBorder} ${s.roundedClass} focus:outline-none focus:ring-1 ${s.focusRing} disabled:opacity-50`}
