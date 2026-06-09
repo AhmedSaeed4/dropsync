@@ -170,6 +170,16 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
     };
   }, []);
 
+  // Lock body scroll on mobile when chat is open
+  useEffect(() => {
+    const isMobile = window.innerWidth < 1024;
+    if (isMobile) {
+      const original = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      return () => { document.body.style.overflow = original; };
+    }
+  }, []);
+
   // Auto-scroll group messages
   useEffect(() => {
     if (chatMode === 'group' && scrollRef.current) {
@@ -313,6 +323,8 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
     setGroupSending(true);
     await sendGroupMessage(workspaceId, userId, senderName, text);
     setGroupSending(false);
+    // Mobile: refocus with small delay to keep keyboard open
+    setTimeout(() => textareaRef.current?.focus(), 100);
   };
 
   const handleGroupKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {

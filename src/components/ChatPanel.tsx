@@ -246,6 +246,16 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
     };
   }, []);
 
+  // Lock body scroll on mobile when chat is open
+  useEffect(() => {
+    const isMobile = window.innerWidth < 1024;
+    if (isMobile) {
+      const original = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      return () => { document.body.style.overflow = original; };
+    }
+  }, []);
+
   // Auto-scroll group messages
   useEffect(() => {
     if (chatMode === 'group' && scrollRef.current) {
@@ -366,6 +376,8 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
     setGroupSending(true);
     await sendGroupMessage(workspaceId, userId, senderName, text);
     setGroupSending(false);
+    // Mobile: refocus with small delay to keep keyboard open
+    setTimeout(() => inputRef.current?.focus(), 100);
   };
 
   const handleClose = () => {
