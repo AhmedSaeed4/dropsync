@@ -47,6 +47,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   const chatMode = chatModeProp ?? localChatMode;
   const setChatMode = onChatModeChange ?? setLocalChatMode;
   const [groupMessages, setGroupMessages] = useState<GroupChatMessage[]>([]);
+  const [groupMessagesLoading, setGroupMessagesLoading] = useState(true);
   const [groupInput, setGroupInput] = useState('');
   const [groupSending, setGroupSending] = useState(false);
   const groupUnsubRef = useRef<(() => void) | null>(null);
@@ -128,8 +129,11 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
       return;
     }
 
+    setGroupMessagesLoading(true);
+
     groupUnsubRef.current = subscribeToGroupMessages(workspaceId, userId, (msgs) => {
       setGroupMessages(msgs);
+      setGroupMessagesLoading(false);
     });
 
     return () => {
@@ -437,7 +441,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
             <div
               key={msg.id}
               className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-fade-in-up`}
-              style={{ animationDelay: `${idx * 50}ms` }}
+              style={{ animationDelay: `${Math.min(idx, 10) * 30}ms` }}
             >
               <div
                 className={`relative max-w-[85%] px-3.5 py-2.5 text-sm leading-relaxed overflow-x-auto group ${
@@ -504,8 +508,8 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
 
       {/* Group Chat Messages */}
       {chatMode === 'group' && (
-        <div ref={scrollRef} className="flex-1 overflow-y-auto p-5 space-y-2 min-h-0">
-          {groupMessages.length === 0 && (
+        <div ref={scrollRef} className={`flex-1 overflow-y-auto p-5 space-y-2 min-h-0 transition-all duration-[350ms] ease-out ${showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-[10px]'}`}>
+          {!groupMessagesLoading && groupMessages.length === 0 && (
             <div className="flex flex-col items-center justify-center py-8">
               <svg className={`w-8 h-8 ${tc.muted} mb-3`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
@@ -524,7 +528,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
             const timeStr = msg.createdAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
             return (
-              <div key={msg.id} className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}>
+              <div key={msg.id} className={`flex ${isOwn ? 'justify-end' : 'justify-start'} animate-fade-in-up`} style={{ animationDelay: `${Math.min(idx, 10) * 30}ms` }}>
                 {/* Avatar for other users */}
                 {!isOwn && showSender && (
                   <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-medium shrink-0 mr-1.5 mt-0.5 ${tc.activePillBg} ${tc.activePillText}`}>
