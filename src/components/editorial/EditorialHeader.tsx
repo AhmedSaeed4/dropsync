@@ -78,14 +78,14 @@ export function EditorialHeader({
           {onToggleChat && (
             <button
               onClick={onToggleChat}
-              className={`text-sm ${tc.fontClass} rounded-md transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] hidden sm:flex
+              className={`text-xs ${tc.fontClass} rounded-md transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] hidden sm:flex
                 ${chatOpen
-                  ? `border ${tc.border} ${tc.btnBg} ${tc.text} hover:border-[#1a1a1a] px-3 sm:px-4 py-2`
-                  : `${tc.activePillBg} ${tc.activePillText} hover:opacity-90 px-4 sm:px-6 py-2 sm:py-2.5`
+                  ? `border ${tc.border} ${tc.btnBg} ${tc.text} hover:border-[#1a1a1a] px-2.5 sm:px-3 py-2`
+                  : `${tc.activePillBg} ${tc.activePillText} hover:opacity-90 px-2.5 sm:px-4 py-2 sm:py-2.5`
                 }`}
             >
-              <span className="hidden sm:inline">{chatOpen ? 'Close Chat' : <>Agent / <span className={unreadCount > 0 && !chatOpen ? 'animate-text-rgb' : ''}>Chat</span></>}</span>
-              <span className="sm:hidden">{chatOpen ? 'Close' : 'Agent'}</span>
+              <span className="hidden sm:inline">{chatOpen ? 'Close' : <>Agent / <span className={unreadCount > 0 && !chatOpen ? 'animate-text-rgb' : ''}>Chat</span></>}</span>
+              <span className="sm:hidden">{chatOpen ? 'Close' : 'Chat'}</span>
             </button>
           )}
 

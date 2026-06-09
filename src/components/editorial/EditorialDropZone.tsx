@@ -15,6 +15,8 @@ interface EditorialDropZoneProps {
   onCreateCategory?: (name: string) => Promise<string | null>;
   showChat?: boolean;
   editModalOpen?: boolean;
+  onToggleChat?: () => void;
+  unreadCount?: number;
 }
 
 const EXPIRATION_OPTIONS: { value: ExpirationOption; label: string }[] = [
@@ -33,6 +35,8 @@ export function EditorialDropZone({
   onCreateCategory,
   showChat = false,
   editModalOpen = false,
+  onToggleChat,
+  unreadCount = 0,
 }: EditorialDropZoneProps) {
   const { user } = useAuth();
   const [isDragging, setIsDragging] = useState(false);
@@ -264,7 +268,28 @@ export function EditorialDropZone({
               >
                 Add Text
               </button>
+
             </div>
+
+              {/* Chat - mobile only, on its own line below */}
+              {onToggleChat && (
+                <div className="flex sm:hidden mt-3">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onToggleChat();
+                    }}
+                    className={`${tc.fontClass} rounded-lg border ${tc.border} bg-transparent ${tc.text} ${tc.hoverBorder} transition-colors flex items-center gap-1.5 ${showChat ? 'px-4 py-2.5 text-sm' : 'px-6 py-3 text-sm'}`}
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                    </svg>
+                    <span className={unreadCount > 0 && !showChat ? 'animate-text-rgb' : ''}>
+                      {showChat ? 'Close Chat' : 'Chat'}
+                    </span>
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Expiry selector */}
