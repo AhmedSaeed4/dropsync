@@ -56,7 +56,6 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   const [animateMessages, setAnimateMessages] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const chatPanelRef = useRef<HTMLDivElement>(null);
   const unsubRef = useRef<(() => void) | null>(null);
   const userId = auth.currentUser?.uid;
   const activeConv = conversations.find(c => c.id === activeConvId) || null;
@@ -145,32 +144,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
     };
   }, [chatMode, workspaceId, userId]);
 
-  // Keep panel above mobile virtual keyboard
-  useEffect(() => {
-    if (typeof window === 'undefined' || !window.visualViewport) return;
-
-    const viewport = window.visualViewport;
-    const panel = chatPanelRef.current;
-    if (!panel) return;
-
-    const onResize = () => {
-      const offsetTop = viewport.offsetTop || 0;
-      panel.style.height = `${viewport.height}px`;
-      panel.style.top = `${offsetTop}px`;
-    };
-
-    onResize();
-    viewport.addEventListener('resize', onResize);
-    viewport.addEventListener('scroll', onResize);
-    return () => {
-      viewport.removeEventListener('resize', onResize);
-      viewport.removeEventListener('scroll', onResize);
-      panel.style.height = '';
-      panel.style.top = '';
-    };
-  }, []);
-
-  // Lock body scroll on mobile when chat is open
+  // Lock body scroll on mobile
   useEffect(() => {
     const isMobile = window.innerWidth < 1024;
     if (!isMobile) return;
@@ -325,13 +299,6 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
     }
   };
 
-  const handleTextareaBlur = (e: React.FocusEvent<HTMLTextAreaElement>) => {
-    if (chatMode === 'group') {
-      // Prevent keyboard from closing on mobile — refocus immediately
-      setTimeout(() => e.target.focus(), 10);
-    }
-  };
-
   const handleGroupSend = async () => {
     const text = groupInput.trim();
     if (!text || groupSending || !userId || !workspaceId) return;
@@ -340,7 +307,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
     setGroupSending(true);
     await sendGroupMessage(workspaceId, userId, senderName, text);
     setGroupSending(false);
-    // Don't refocus — textarea was never blurred, keyboard stays open naturally
+    setTimeout(() => textareaRef.current?.focus(), 100);
   };
 
   const handleGroupKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -351,7 +318,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   };
 
   return (
-    <div ref={chatPanelRef} className={`flex flex-col h-full overflow-hidden border-l ${tc.border} ${tc.bg} transition-colors duration-500`} style={{ touchAction: 'none' }}>
+    <div className={`flex flex-col h-full overflow-hidden border-l ${tc.border} ${tc.bg} transition-colors duration-500`}>
       {/* Header with staggered fade-in */}
       <div className={`border-b ${tc.border} px-5 py-4 flex items-center justify-between shrink-0 transition-all duration-300 ease-out ${showHeader ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-[10px]'}`}>
         <div className="flex items-center gap-1.5">
@@ -561,7 +528,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
 
       {/* Group Chat Messages */}
       {chatMode === 'group' && (
-        <div ref={scrollRef} className={`flex-1 overflow-y-auto p-5 space-y-2 min-h-0 transition-all duration-[350ms] ease-out ${showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-[10px]'}`} style={{ touchAction: 'pan-y' }}>
+        <div ref={scrollRef} className={`flex-1 overflow-y-auto p-5 space-y-2 min-h-0 transition-all duration-[350ms] ease-out ${showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-[10px]'}`}>
           {!groupMessagesLoading && groupMessages.length === 0 && (
             <div className="flex flex-col items-center justify-center py-8">
               <svg className={`w-8 h-8 ${tc.muted} mb-3`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
@@ -621,7 +588,6 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
             value={chatMode === 'group' ? groupInput : input}
             onChange={(e) => chatMode === 'group' ? setGroupInput(e.target.value) : setInput(e.target.value)}
             onKeyDown={chatMode === 'group' ? handleGroupKeyDown : handleKeyDown}
-            onBlur={handleTextareaBlur}
             placeholder={chatMode === 'group' ? 'Message workspace...' : 'Type a message...'}
             disabled={chatMode === 'group' ? false : loading}
             rows={1}
