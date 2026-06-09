@@ -225,7 +225,10 @@ export function EditorialLayout(props: EditorialLayoutProps) {
               onCreateCategory={handleCreateCategory}
               showChat={showChat}
               editModalOpen={!!editDrop}
+              onToggleChat={() => { if (!showChat && unreadCount > 0) setChatMode('group'); setShowChat(!showChat); }}
+              unreadCount={unreadCount}
             />
+
             <EditorialStatusPanel
               dropsCount={drops.length}
               encryptionInitializing={encryptionInitializing}
