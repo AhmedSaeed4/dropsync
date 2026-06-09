@@ -56,6 +56,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   const [animateMessages, setAnimateMessages] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const chatPanelRef = useRef<HTMLDivElement>(null);
   const unsubRef = useRef<(() => void) | null>(null);
   const userId = auth.currentUser?.uid;
   const activeConv = conversations.find(c => c.id === activeConvId) || null;
@@ -143,6 +144,31 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
       }
     };
   }, [chatMode, workspaceId, userId]);
+
+  // Keep panel above mobile virtual keyboard
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.visualViewport) return;
+
+    const viewport = window.visualViewport;
+    const panel = chatPanelRef.current;
+    if (!panel) return;
+
+    const onResize = () => {
+      const offsetTop = viewport.offsetTop || 0;
+      panel.style.height = `${viewport.height}px`;
+      panel.style.top = `${offsetTop}px`;
+    };
+
+    onResize();
+    viewport.addEventListener('resize', onResize);
+    viewport.addEventListener('scroll', onResize);
+    return () => {
+      viewport.removeEventListener('resize', onResize);
+      viewport.removeEventListener('scroll', onResize);
+      panel.style.height = '';
+      panel.style.top = '';
+    };
+  }, []);
 
   // Auto-scroll group messages
   useEffect(() => {
@@ -287,7 +313,6 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
     setGroupSending(true);
     await sendGroupMessage(workspaceId, userId, senderName, text);
     setGroupSending(false);
-    requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
   const handleGroupKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -298,7 +323,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   };
 
   return (
-    <div className={`flex flex-col h-full border-l ${tc.border} ${tc.bg} transition-colors duration-500`}>
+    <div ref={chatPanelRef} className={`flex flex-col h-full border-l ${tc.border} ${tc.bg} transition-colors duration-500`}>
       {/* Header with staggered fade-in */}
       <div className={`border-b ${tc.border} px-5 py-4 flex items-center justify-between shrink-0 transition-all duration-300 ease-out ${showHeader ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-[10px]'}`}>
         <div className="flex items-center gap-1.5">
@@ -569,7 +594,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
             onChange={(e) => chatMode === 'group' ? setGroupInput(e.target.value) : setInput(e.target.value)}
             onKeyDown={chatMode === 'group' ? handleGroupKeyDown : handleKeyDown}
             placeholder={chatMode === 'group' ? 'Message workspace...' : 'Type a message...'}
-            disabled={chatMode === 'group' ? groupSending : loading}
+            disabled={chatMode === 'group' ? false : loading}
             rows={1}
             className={`flex-1 px-4 py-3 text-[14px] ${tc.fontClass} ${tc.bg} ${tc.text} border ${tc.border} rounded-lg resize-none focus:outline-none focus:border-[#1a1a1a] disabled:opacity-50 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]`}
             style={{ maxHeight: '120px' }}
