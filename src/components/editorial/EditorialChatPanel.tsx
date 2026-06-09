@@ -173,11 +173,21 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   // Lock body scroll on mobile when chat is open
   useEffect(() => {
     const isMobile = window.innerWidth < 1024;
-    if (isMobile) {
-      const original = document.body.style.overflow;
-      document.body.style.overflow = 'hidden';
-      return () => { document.body.style.overflow = original; };
-    }
+    if (!isMobile) return;
+    const scrollY = window.scrollY;
+    document.body.style.position = 'fixed';
+    document.body.style.top = `-${scrollY}px`;
+    document.body.style.left = '0';
+    document.body.style.right = '0';
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.position = '';
+      document.body.style.top = '';
+      document.body.style.left = '';
+      document.body.style.right = '';
+      document.body.style.overflow = '';
+      window.scrollTo(0, scrollY);
+    };
   }, []);
 
   // Auto-scroll group messages
@@ -315,6 +325,13 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
     }
   };
 
+  const handleTextareaBlur = (e: React.FocusEvent<HTMLTextAreaElement>) => {
+    if (chatMode === 'group') {
+      // Prevent keyboard from closing on mobile — refocus immediately
+      setTimeout(() => e.target.focus(), 10);
+    }
+  };
+
   const handleGroupSend = async () => {
     const text = groupInput.trim();
     if (!text || groupSending || !userId || !workspaceId) return;
@@ -334,7 +351,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   };
 
   return (
-    <div ref={chatPanelRef} className={`flex flex-col h-full overflow-hidden border-l ${tc.border} ${tc.bg} transition-colors duration-500`}>
+    <div ref={chatPanelRef} className={`flex flex-col h-full overflow-hidden border-l ${tc.border} ${tc.bg} transition-colors duration-500`} style={{ touchAction: 'none' }}>
       {/* Header with staggered fade-in */}
       <div className={`border-b ${tc.border} px-5 py-4 flex items-center justify-between shrink-0 transition-all duration-300 ease-out ${showHeader ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-[10px]'}`}>
         <div className="flex items-center gap-1.5">
@@ -544,7 +561,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
 
       {/* Group Chat Messages */}
       {chatMode === 'group' && (
-        <div ref={scrollRef} className={`flex-1 overflow-y-auto p-5 space-y-2 min-h-0 transition-all duration-[350ms] ease-out ${showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-[10px]'}`}>
+        <div ref={scrollRef} className={`flex-1 overflow-y-auto p-5 space-y-2 min-h-0 transition-all duration-[350ms] ease-out ${showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-[10px]'}`} style={{ touchAction: 'pan-y' }}>
           {!groupMessagesLoading && groupMessages.length === 0 && (
             <div className="flex flex-col items-center justify-center py-8">
               <svg className={`w-8 h-8 ${tc.muted} mb-3`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
@@ -604,6 +621,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
             value={chatMode === 'group' ? groupInput : input}
             onChange={(e) => chatMode === 'group' ? setGroupInput(e.target.value) : setInput(e.target.value)}
             onKeyDown={chatMode === 'group' ? handleGroupKeyDown : handleKeyDown}
+            onBlur={handleTextareaBlur}
             placeholder={chatMode === 'group' ? 'Message workspace...' : 'Type a message...'}
             disabled={chatMode === 'group' ? false : loading}
             rows={1}
