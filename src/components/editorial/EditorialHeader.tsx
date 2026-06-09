@@ -12,6 +12,7 @@ interface EditorialHeaderProps {
   onOpenSettings?: () => void;
   onToggleChat?: () => void;
   chatOpen?: boolean;
+  unreadCount?: number;
   user: { email: string | null; displayName: string | null } | null;
   onSignOut?: () => void;
   // Workspace props
@@ -30,6 +31,7 @@ export function EditorialHeader({
   onOpenSettings,
   onToggleChat,
   chatOpen = false,
+  unreadCount = 0,
   // Workspace props
   workspaces,
   currentWorkspace,
@@ -82,8 +84,8 @@ export function EditorialHeader({
                   : `${tc.activePillBg} ${tc.activePillText} hover:opacity-90 px-4 sm:px-6 py-2 sm:py-2.5`
                 }`}
             >
-              <span className="hidden sm:inline">{chatOpen ? 'Close Chat' : 'AI Assistant'}</span>
-              <span className="sm:hidden">{chatOpen ? 'Close' : 'AI'}</span>
+              <span className="hidden sm:inline">{chatOpen ? 'Close Chat' : <>Agent / <span className={unreadCount > 0 && !chatOpen ? 'animate-text-rgb' : ''}>Chat</span></>}</span>
+              <span className="sm:hidden">{chatOpen ? 'Close' : 'Agent'}</span>
             </button>
           )}
 

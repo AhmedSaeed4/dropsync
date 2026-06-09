@@ -43,6 +43,9 @@ interface ClassicLayoutProps {
   setLayoutMode: (l: LayoutMode) => void;
   showChat: boolean;
   setShowChat: (v: boolean) => void;
+  chatMode?: 'ai' | 'group';
+  setChatMode: (v: 'ai' | 'group') => void;
+  unreadCount?: number;
   showSettingsModal: boolean;
   setShowSettingsModal: (v: boolean) => void;
   showAuthModal: boolean;
@@ -105,6 +108,8 @@ export function ClassicLayout(props: ClassicLayoutProps) {
     theme, setTheme, themeColors,
     user, layoutMode, setLayoutMode,
     showChat, setShowChat,
+    chatMode = 'ai', setChatMode,
+    unreadCount = 0,
     showSettingsModal, setShowSettingsModal,
     showAuthModal, setShowAuthModal,
     showVerifyModal, setShowVerifyModal,
@@ -185,7 +190,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
           </div>
         </div>
       )}
-      <Header theme={theme} onThemeChange={setTheme} onOpenSettings={() => setShowSettingsModal(true)} onToggleChat={() => setShowChat(!showChat)} chatOpen={showChat}>
+      <Header theme={theme} onThemeChange={setTheme} onOpenSettings={() => setShowSettingsModal(true)} onToggleChat={() => { if (!showChat && unreadCount > 0) setChatMode('group'); setShowChat(!showChat); }} chatOpen={showChat} unreadCount={unreadCount}>
         <WorkspaceSwitcher
           workspaces={workspaces}
           currentWorkspace={currentWorkspace}
@@ -231,7 +236,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
 
           <div className={`sticky ${theme === 'minimal' ? 'top-24' : 'top-28'} self-start w-full flex flex-col min-h-0 transition-all duration-300 ease-out ${showChat ? 'lg:w-[480px]' : 'lg:w-80'}`}>
             {showChat ? (
-              <ChatPanel theme={theme} onClose={() => setShowChat(false)} onPreviewDrop={handlePreviewDrop} workspaceId={currentWorkspaceId} workspaceMembers={resolvedWorkspaceMembers} />
+              <ChatPanel theme={theme} onClose={() => setShowChat(false)} onPreviewDrop={handlePreviewDrop} workspaceId={currentWorkspaceId} workspaceMembers={resolvedWorkspaceMembers} chatMode={chatMode} onChatModeChange={setChatMode} />
             ) : (
               <div className="space-y-6">
             {/* Theme Toggle Panel */}

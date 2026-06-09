@@ -23,13 +23,15 @@ interface EditorialChatPanelProps {
   onPreviewDrop?: (dropId: string, workspaceId: string | null) => void;
   workspaceId?: string | null;
   workspaceMembers?: any[];
+  chatMode?: 'ai' | 'group';
+  onChatModeChange?: (mode: 'ai' | 'group') => void;
 }
 
 const AGENT_URL = process.env.NEXT_PUBLIC_AGENT_URL || 'http://localhost:8000';
 
 const WELCOME = 'Hi! I can help you manage your drops. Ask me to list drops, search content, check storage stats, or manage workspaces.';
 
-export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspaceMembers }: EditorialChatPanelProps) {
+export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspaceMembers, chatMode: chatModeProp, onChatModeChange }: EditorialChatPanelProps) {
   const tc = getEditorialThemeColors(theme);
 
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -40,8 +42,10 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [showSidebar, setShowSidebar] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  // Group chat state
-  const [chatMode, setChatMode] = useState<'ai' | 'group'>('ai');
+  // Group chat state — lifted to parent, fallback to local
+  const [localChatMode, setLocalChatMode] = useState<'ai' | 'group'>('ai');
+  const chatMode = chatModeProp ?? localChatMode;
+  const setChatMode = onChatModeChange ?? setLocalChatMode;
   const [groupMessages, setGroupMessages] = useState<GroupChatMessage[]>([]);
   const [groupInput, setGroupInput] = useState('');
   const [groupSending, setGroupSending] = useState(false);

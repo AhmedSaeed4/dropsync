@@ -43,6 +43,9 @@ interface EditorialLayoutProps {
   setLayoutMode: (l: LayoutMode) => void;
   showChat: boolean;
   setShowChat: (v: boolean) => void;
+  chatMode?: 'ai' | 'group';
+  setChatMode: (v: 'ai' | 'group') => void;
+  unreadCount?: number;
   showSettingsModal: boolean;
   setShowSettingsModal: (v: boolean) => void;
   showAuthModal: boolean;
@@ -105,6 +108,8 @@ export function EditorialLayout(props: EditorialLayoutProps) {
     theme, setTheme, themeColors,
     user, layoutMode, setLayoutMode,
     showChat, setShowChat,
+    chatMode = 'ai', setChatMode,
+    unreadCount = 0,
     showSettingsModal, setShowSettingsModal,
     showAuthModal, setShowAuthModal,
     showVerifyModal, setShowVerifyModal,
@@ -192,8 +197,9 @@ export function EditorialLayout(props: EditorialLayoutProps) {
         theme={theme}
         onThemeChange={setTheme}
         onOpenSettings={() => setShowSettingsModal(true)}
-        onToggleChat={() => setShowChat(!showChat)}
+        onToggleChat={() => { if (!showChat && unreadCount > 0) setChatMode('group'); setShowChat(!showChat); }}
         chatOpen={showChat}
+        unreadCount={unreadCount}
         user={user}
         onSignOut={signOutUser}
         workspaces={workspaces}
@@ -267,6 +273,8 @@ export function EditorialLayout(props: EditorialLayoutProps) {
               onPreviewDrop={handlePreviewDrop}
               workspaceId={currentWorkspaceId}
               workspaceMembers={resolvedWorkspaceMembers}
+              chatMode={chatMode}
+              onChatModeChange={setChatMode}
             />
           )}
         </div>
