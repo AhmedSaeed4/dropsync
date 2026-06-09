@@ -293,6 +293,11 @@ export function EditorialLayout(props: EditorialLayoutProps) {
           </div>
         </div>
 
+        {/* Black backdrop behind chat — hides app during keyboard animations */}
+        {showChat && (
+          <div className="fixed inset-0 z-30 bg-black lg:hidden" />
+        )}
+
         {/* Chat panel: full screen overlay on mobile, slides in as third column on desktop */}
         <div
           ref={chatOverlayRef}
