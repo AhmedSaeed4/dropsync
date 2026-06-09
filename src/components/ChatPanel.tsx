@@ -23,6 +23,8 @@ interface ChatPanelProps {
   onPreviewDrop?: (dropId: string, workspaceId: string | null) => void;
   workspaceId?: string | null;
   workspaceMembers?: any[];
+  chatMode?: 'ai' | 'group';
+  onChatModeChange?: (mode: 'ai' | 'group') => void;
 }
 
 const AGENT_URL = process.env.NEXT_PUBLIC_AGENT_URL || 'http://localhost:8000';
@@ -121,7 +123,7 @@ function getThemeStyles(theme: 'light' | 'dark' | 'minimal') {
 
 const WELCOME = 'Hi! I can help you manage your drops. Ask me to list drops, search content, check storage stats, or manage workspaces.';
 
-export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspaceMembers }: ChatPanelProps) {
+export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspaceMembers, chatMode: chatModeProp, onChatModeChange }: ChatPanelProps) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -133,8 +135,10 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
   const [showWelcome, setShowWelcome] = useState(false);
   const [animateMessages, setAnimateMessages] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  // Group chat state
-  const [chatMode, setChatMode] = useState<'ai' | 'group'>('ai');
+  // Group chat state — lifted to parent, fallback to local
+  const [localChatMode, setLocalChatMode] = useState<'ai' | 'group'>('ai');
+  const chatMode = chatModeProp ?? localChatMode;
+  const setChatMode = onChatModeChange ?? setLocalChatMode;
   const [groupMessages, setGroupMessages] = useState<GroupChatMessage[]>([]);
   const [groupInput, setGroupInput] = useState('');
   const [groupSending, setGroupSending] = useState(false);

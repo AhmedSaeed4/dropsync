@@ -484,6 +484,22 @@ body {
   to { opacity: 1; }
 }
 
+/* Unread text RGB animation */
+@keyframes text-rgb {
+  0% { color: #FF5A47; }
+  15% { color: #FF47B2; }
+  30% { color: #B247FF; }
+  45% { color: #477BFF; }
+  60% { color: #47D4FF; }
+  75% { color: #47FF8B; }
+  90% { color: #FFD447; }
+  100% { color: #FF5A47; }
+}
+
+.animate-text-rgb {
+  animation: text-rgb 4s linear infinite;
+}
+
 @keyframes fadeInUp {
   from { opacity: 0; transform: translateY(16px); }
   to { opacity: 1; transform: translateY(0); }

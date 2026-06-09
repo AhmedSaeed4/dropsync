@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
@@ -19,6 +19,8 @@ import { initializeUserKeys, hasUserKeys, getUserKeys } from '@/lib/keys';
 import { decryptDrop, updateTextDrop, updateDropMetadata, moveDrop } from '@/lib/drops';
 import { getWorkspaceMembers, MemberInfo } from '@/lib/workspaces';
 import { reauthenticateUser } from '@/lib/auth';
+import { db } from '@/lib/firebase';
+import { collection, query, orderBy, limit, onSnapshot, Timestamp } from 'firebase/firestore';
 
 type Theme = 'light' | 'dark' | 'minimal';
 type LayoutMode = 'classic' | 'editorial';
@@ -74,6 +76,10 @@ export default function Home() {
   const [isLeavingWorkspace, setIsLeavingWorkspace] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showChat, setShowChat] = useState(false);
+  const [chatMode, setChatMode] = useState<'ai' | 'group'>('ai');
+  const [unreadCount, setUnreadCount] = useState(0);
+  const unreadUnsubRef = useRef<(() => void) | null>(null);
+  const prevShowChatRef = useRef(showChat);
   const [resolvedWorkspaceMembers, setResolvedWorkspaceMembers] = useState<MemberInfo[]>([]);
 
   // Auto-close auth modal when user successfully logs in
@@ -291,6 +297,72 @@ export default function Home() {
       .then(members => { if (!cancelled) setResolvedWorkspaceMembers(members); });
     return () => { cancelled = true; };
   }, [currentWorkspace?.id]);
+
+  // Mark as read when chat opens/closes (MUST come before unread listener)
+  useEffect(() => {
+    const prevShowChat = prevShowChatRef.current;
+    prevShowChatRef.current = showChat;
+
+    if (currentWorkspaceId && prevShowChat !== showChat) {
+      localStorage.setItem(`chat-read-${currentWorkspaceId}`, new Date().toISOString());
+      setUnreadCount(0);
+    }
+  }, [showChat, currentWorkspaceId]);
+
+  // Lightweight unread workspace chat counter — no decryption needed
+  useEffect(() => {
+    // Unsubscribe from previous listener
+    if (unreadUnsubRef.current) {
+      unreadUnsubRef.current();
+      unreadUnsubRef.current = null;
+    }
+
+    // Only listen when: logged in, workspace selected, and chat is closed
+    if (!user || !currentWorkspaceId || showChat) {
+      setUnreadCount(0);
+      return;
+    }
+
+    const lastRead = localStorage.getItem(`chat-read-${currentWorkspaceId}`);
+    const lastReadTime = lastRead ? new Date(lastRead) : new Date(0);
+
+    const q = query(
+      collection(db, 'workspaces', currentWorkspaceId, 'messages'),
+      orderBy('createdAt', 'desc'),
+      limit(50)
+    );
+
+    unreadUnsubRef.current = onSnapshot(q, (snap) => {
+      let count = 0;
+      snap.forEach((doc) => {
+        const data = doc.data();
+        const ts = data.createdAt as Timestamp | undefined;
+        if (ts && ts.toDate() > lastReadTime) {
+          count++;
+        }
+      });
+      setUnreadCount(count);
+    }, (err) => {
+      // Permission denied = user not in workspace anymore, just clear
+      console.warn('Unread listener error:', err.message);
+      setUnreadCount(0);
+    });
+
+    return () => {
+      if (unreadUnsubRef.current) {
+        unreadUnsubRef.current();
+        unreadUnsubRef.current = null;
+      }
+    };
+  }, [user, currentWorkspaceId, showChat]);
+
+  // Toggle chat panel — auto-switch to workspace tab when unreads exist
+  const handleToggleChat = () => {
+    if (!showChat && unreadCount > 0) {
+      setChatMode('group');
+    }
+    setShowChat(!showChat);
+  };
 
   // Handle edit drop — decrypt text drops, file drops just need metadata
   const handleEditDrop = async (drop: Drop) => {
@@ -1099,6 +1171,8 @@ export default function Home() {
     theme, setTheme, themeColors,
     user, layoutMode, setLayoutMode: handleLayoutChange,
     showChat, setShowChat,
+    chatMode, setChatMode,
+    unreadCount,
     showSettingsModal, setShowSettingsModal,
     showAuthModal, setShowAuthModal,
     showVerifyModal, setShowVerifyModal,
