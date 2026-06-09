@@ -376,8 +376,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
     setGroupSending(true);
     await sendGroupMessage(workspaceId, userId, senderName, text);
     setGroupSending(false);
-    // Mobile: refocus with small delay to keep keyboard open
-    setTimeout(() => inputRef.current?.focus(), 100);
+    // Don't refocus — textarea was never blurred, keyboard stays open naturally
   };
 
   const handleClose = () => {
@@ -398,7 +397,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
   const animationClass = isExiting ? s.exitAnimation : s.enterAnimation;
 
   return (
-    <div ref={chatPanelRef} onClick={() => inputRef.current?.focus()} className={`relative flex flex-col h-[520px] ${s.panelBorderWidth} ${s.borderColor} ${s.panelBg} ${s.panelShadow} ${animationClass} ${s.roundedClass} ${theme === 'minimal' ? 'minimal-scroll' : ''}`}>
+    <div ref={chatPanelRef} onClick={() => inputRef.current?.focus()} className={`relative flex flex-col h-[520px] overflow-hidden ${s.panelBorderWidth} ${s.borderColor} ${s.panelBg} ${s.panelShadow} ${animationClass} ${s.roundedClass} ${theme === 'minimal' ? 'minimal-scroll' : ''}`}>
       {/* Header */}
       <div className={`border-b ${s.borderColor} px-4 py-3 ${s.headerBg} flex items-center justify-between shrink-0`}>
         <div className="flex items-center gap-2">

@@ -323,8 +323,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
     setGroupSending(true);
     await sendGroupMessage(workspaceId, userId, senderName, text);
     setGroupSending(false);
-    // Mobile: refocus with small delay to keep keyboard open
-    setTimeout(() => textareaRef.current?.focus(), 100);
+    // Don't refocus — textarea was never blurred, keyboard stays open naturally
   };
 
   const handleGroupKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -335,7 +334,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   };
 
   return (
-    <div ref={chatPanelRef} className={`flex flex-col h-full border-l ${tc.border} ${tc.bg} transition-colors duration-500`}>
+    <div ref={chatPanelRef} className={`flex flex-col h-full overflow-hidden border-l ${tc.border} ${tc.bg} transition-colors duration-500`}>
       {/* Header with staggered fade-in */}
       <div className={`border-b ${tc.border} px-5 py-4 flex items-center justify-between shrink-0 transition-all duration-300 ease-out ${showHeader ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-[10px]'}`}>
         <div className="flex items-center gap-1.5">
