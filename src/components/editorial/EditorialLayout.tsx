@@ -268,7 +268,10 @@ export function EditorialLayout(props: EditorialLayoutProps) {
         </div>
 
         {/* Chat panel: full screen overlay on mobile, slides in as third column on desktop */}
-        <div className={`${showChat ? 'fixed inset-0 z-40 lg:static lg:inset-auto lg:z-auto lg:h-[calc(100vh-160px)]' : 'hidden lg:block lg:w-0 lg:opacity-0 lg:translate-x-[30px]'} lg:shrink-0 lg:relative overflow-hidden transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${showChat ? 'lg:w-[420px] lg:opacity-100 lg:translate-x-0 lg:pl-0' : ''}`}>
+        <div
+          className={`${showChat ? `fixed inset-0 z-40 ${tc.bg} lg:static lg:inset-auto lg:z-auto lg:h-[calc(100vh-160px)]` : 'hidden lg:block lg:w-0 lg:opacity-0 lg:translate-x-[30px]'} lg:shrink-0 lg:relative overflow-hidden transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${showChat ? 'lg:w-[420px] lg:opacity-100 lg:translate-x-0 lg:pl-0' : ''}`}
+          onTouchMove={(e) => { if (showChat) e.preventDefault(); }}
+        >
           {showChat && (
             <EditorialChatPanel
               theme={theme}
