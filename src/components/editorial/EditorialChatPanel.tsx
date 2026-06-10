@@ -112,6 +112,31 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
     }
   }, [messages, loading]);
 
+  // Scroll to bottom when chat panel mounts (user opens chat)
+  useEffect(() => {
+    const scrollToBottom = () => {
+      if (scrollRef.current) {
+        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      }
+    };
+    // Delay matches the staggered animation duration so the DOM has settled
+    const timer = setTimeout(scrollToBottom, 400);
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Scroll to bottom when keyboard opens/closes (visual viewport resize)
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.visualViewport) return;
+    const viewport = window.visualViewport;
+    const scrollToBottom = () => {
+      if (scrollRef.current) {
+        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      }
+    };
+    viewport.addEventListener('resize', scrollToBottom);
+    return () => viewport.removeEventListener('resize', scrollToBottom);
+  }, []);
+
   // Auto-switch to AI mode when workspace is deselected
   useEffect(() => {
     if (!workspaceId && chatMode === 'group') {
