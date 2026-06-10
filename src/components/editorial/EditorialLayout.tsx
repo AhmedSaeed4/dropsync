@@ -202,23 +202,6 @@ export function EditorialLayout(props: EditorialLayoutProps) {
     };
   }, [showChat]);
 
-  // Prevent scroll bleed on iOS — non-passive touchmove (CSS approaches don't work)
-  useEffect(() => {
-    if (!showChat) return;
-    const overlay = chatOverlayRef.current;
-    if (!overlay) return;
-
-    const preventScroll = (e: TouchEvent) => {
-      const target = e.target as HTMLElement;
-      // Allow scroll inside messages area only
-      if (target.closest('[data-scroll-area]')) return;
-      e.preventDefault();
-    };
-
-    overlay.addEventListener('touchmove', preventScroll, { passive: false });
-    return () => overlay.removeEventListener('touchmove', preventScroll);
-  }, [showChat]);
-
   return (
     <div className={`min-h-screen ${tc.bg} transition-colors duration-500`}>
       {/* Encryption initializing overlay */}
@@ -319,7 +302,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
         <div
           ref={chatOverlayRef}
           className={`${showChat ? `fixed top-0 left-0 right-0 z-40 ${tc.bg} overscroll-none lg:static lg:inset-auto lg:z-auto lg:h-[calc(100vh-160px)]` : 'hidden lg:block lg:w-0 lg:opacity-0 lg:translate-x-[30px]'} lg:shrink-0 lg:relative overflow-hidden transition-[width,opacity,transform,padding] duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${showChat ? 'lg:w-[420px] lg:opacity-100 lg:translate-x-0 lg:pl-0' : ''}`}
-          style={showChat && typeof window !== 'undefined' && window.innerWidth < 1024 ? { height: '100dvh' } : undefined}
+          style={showChat && typeof window !== 'undefined' && window.innerWidth < 1024 ? { height: '100dvh', touchAction: 'none' } : undefined}
         >
           {showChat && (
             <EditorialChatPanel
