@@ -181,6 +181,8 @@ export function EditorialLayout(props: EditorialLayoutProps) {
   useEffect(() => {
     if (typeof window === 'undefined' || !window.visualViewport) return;
     if (!showChat) return;
+    const isMobile = window.innerWidth < 1024;
+    if (!isMobile) return;
     const viewport = window.visualViewport;
     const overlay = chatOverlayRef.current;
     if (!overlay) return;
@@ -299,8 +301,8 @@ export function EditorialLayout(props: EditorialLayoutProps) {
         {/* Chat panel: full screen overlay on mobile, slides in as third column on desktop */}
         <div
           ref={chatOverlayRef}
-          className={`${showChat ? `fixed top-0 left-0 right-0 z-40 ${tc.bg} lg:static lg:inset-auto lg:z-auto lg:h-[calc(100vh-160px)]` : 'hidden lg:block lg:w-0 lg:opacity-0 lg:translate-x-[30px]'} lg:shrink-0 lg:relative overflow-hidden transition-[width,opacity,transform,padding] duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${showChat ? 'lg:w-[420px] lg:opacity-100 lg:translate-x-0 lg:pl-0' : ''}`}
-          style={showChat ? { height: '100dvh' } : undefined}
+          className={`${showChat ? `fixed top-0 left-0 right-0 z-40 ${tc.bg} overscroll-behavior-none lg:static lg:inset-auto lg:z-auto lg:h-[calc(100vh-160px)]` : 'hidden lg:block lg:w-0 lg:opacity-0 lg:translate-x-[30px]'} lg:shrink-0 lg:relative overflow-hidden transition-[width,opacity,transform,padding] duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${showChat ? 'lg:w-[420px] lg:opacity-100 lg:translate-x-0 lg:pl-0' : ''}`}
+          style={showChat && typeof window !== 'undefined' && window.innerWidth < 1024 ? { height: '100dvh' } : undefined}
           onTouchMove={(e) => { if (showChat) e.preventDefault(); }}
         >
           {showChat && (
