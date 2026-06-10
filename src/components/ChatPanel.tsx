@@ -225,17 +225,17 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
     const isMobile = window.innerWidth < 1024;
     if (!isMobile) return;
     const scrollY = window.scrollY;
-    document.body.style.position = 'fixed';
-    document.body.style.top = `-${scrollY}px`;
-    document.body.style.left = '0';
-    document.body.style.right = '0';
+    document.documentElement.style.overflow = 'hidden';
+    document.documentElement.style.height = '100%';
     document.body.style.overflow = 'hidden';
+    document.body.style.height = '100%';
+    document.body.style.scrollbarGutter = 'auto';
     return () => {
-      document.body.style.position = '';
-      document.body.style.top = '';
-      document.body.style.left = '';
-      document.body.style.right = '';
+      document.documentElement.style.overflow = '';
+      document.documentElement.style.height = '';
       document.body.style.overflow = '';
+      document.body.style.height = '';
+      document.body.style.scrollbarGutter = '';
       window.scrollTo(0, scrollY);
     };
   }, []);
