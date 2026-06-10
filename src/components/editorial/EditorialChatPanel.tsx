@@ -322,7 +322,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   return (
     <div className={`flex flex-col h-full overflow-hidden border-l ${tc.border} ${tc.bg} transition-colors duration-500`}>
       {/* Header with staggered fade-in */}
-      <div className={`border-b ${tc.border} px-5 py-4 flex items-center justify-between shrink-0 transition-all duration-300 ease-out ${showHeader ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-[10px]'}`}>
+      <div className={`border-b ${tc.border} px-5 py-4 flex items-center justify-between shrink-0 transition-all duration-300 ease-out ${showHeader ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-[10px]'}`} style={{ touchAction: 'none' }}>
         <div className="flex items-center gap-1.5">
           <h3 className={`text-[15px] font-medium ${tc.fontClass} ${tc.text}`}>
             {chatMode === 'group' ? 'Workspace Chat' : 'AI Assistant'}
@@ -583,7 +583,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
       )}
 
       {/* Input area with staggered fade-in */}
-      <div className={`border-t ${tc.border} p-4 shrink-0 transition-all duration-300 ease-out ${showInputArea ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-[10px]'}`}>
+      <div className={`border-t ${tc.border} p-4 shrink-0 transition-all duration-300 ease-out ${showInputArea ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-[10px]'}`} style={{ touchAction: 'none' }}>
         <div className="flex gap-2 items-end">
           <textarea
             ref={textareaRef}
@@ -594,7 +594,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
             disabled={chatMode === 'group' ? false : loading}
             rows={1}
             className={`flex-1 px-4 py-3 text-[14px] ${tc.fontClass} ${tc.bg} ${tc.text} border ${tc.border} rounded-lg resize-none focus:outline-none focus:border-[#1a1a1a] disabled:opacity-50 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]`}
-            style={{ maxHeight: '120px' }}
+            style={{ maxHeight: '120px', touchAction: 'none' }}
           />
           <button
             onClick={chatMode === 'group' ? handleGroupSend : handleSend}
