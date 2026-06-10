@@ -198,12 +198,11 @@ export function EditorialLayout(props: EditorialLayoutProps) {
       viewport.removeEventListener('resize', onResize);
       viewport.removeEventListener('scroll', onResize);
       overlay.style.height = '';
-      overlay.style.top = '';
     };
   }, [showChat]);
 
   return (
-    <div className={`min-h-screen ${tc.bg} transition-colors duration-500`}>
+    <div className={`relative min-h-screen ${tc.bg} transition-colors duration-500`}>
       {/* Encryption initializing overlay */}
       {encryptionInitializing && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 overscroll-contain">
@@ -295,14 +294,14 @@ export function EditorialLayout(props: EditorialLayoutProps) {
 
         {/* Black backdrop behind chat — hides app during keyboard animations */}
         {showChat && (
-          <div className="fixed inset-0 z-30 bg-black overflow-hidden lg:hidden" style={{ touchAction: 'none' }} />
+          <div className="absolute inset-0 z-30 bg-black overflow-hidden lg:hidden" />
         )}
 
         {/* Chat panel: full screen overlay on mobile, slides in as third column on desktop */}
         <div
           ref={chatOverlayRef}
-          className={`${showChat ? `fixed top-0 left-0 right-0 z-40 ${tc.bg} overscroll-none lg:static lg:inset-auto lg:z-auto lg:h-[calc(100vh-160px)]` : 'hidden lg:block lg:w-0 lg:opacity-0 lg:translate-x-[30px]'} lg:shrink-0 lg:relative overflow-hidden transition-[width,opacity,transform,padding] duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${showChat ? 'lg:w-[420px] lg:opacity-100 lg:translate-x-0 lg:pl-0' : ''}`}
-          style={showChat && typeof window !== 'undefined' && window.innerWidth < 1024 ? { height: '100dvh', touchAction: 'none' } : undefined}
+          className={`${showChat ? `absolute top-0 left-0 right-0 z-40 ${tc.bg} lg:static lg:inset-auto lg:z-auto lg:h-[calc(100vh-160px)]` : 'hidden lg:block lg:w-0 lg:opacity-0 lg:translate-x-[30px]'} lg:shrink-0 lg:relative overflow-hidden transition-[width,opacity,transform,padding] duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${showChat ? 'lg:w-[420px] lg:opacity-100 lg:translate-x-0 lg:pl-0' : ''}`}
+          style={showChat && typeof window !== 'undefined' && window.innerWidth < 1024 ? { height: '100dvh' } : undefined}
         >
           {showChat && (
             <EditorialChatPanel
