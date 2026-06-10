@@ -318,7 +318,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   };
 
   return (
-    <div className={`flex flex-col h-full overflow-hidden overscroll-behavior-none border-l ${tc.border} ${tc.bg} transition-colors duration-500`}>
+    <div className={`flex flex-col h-full overflow-hidden overscroll-none touch-none border-l ${tc.border} ${tc.bg} transition-colors duration-500`}>
       {/* Header with staggered fade-in */}
       <div className={`border-b ${tc.border} px-5 py-4 flex items-center justify-between shrink-0 transition-all duration-300 ease-out ${showHeader ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-[10px]'}`}>
         <div className="flex items-center gap-1.5">
@@ -443,7 +443,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
 
       {/* AI Agent Messages area with staggered fade-in */}
       {chatMode === 'ai' && (
-        <div ref={chatMode === 'ai' ? scrollRef : undefined} className={`flex-1 overflow-y-auto p-5 space-y-4 min-h-0 transition-all duration-[350ms] ease-out ${showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-[10px]'}`}>
+        <div ref={chatMode === 'ai' ? scrollRef : undefined} className={`flex-1 overflow-y-auto p-5 space-y-4 min-h-0 transition-all duration-[350ms] ease-out ${showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-[10px]'}`} style={{ touchAction: 'pan-y' }}>
           {/* Welcome message */}
           {messages.length === 0 && !loading && (
             <div className="flex flex-col items-center justify-center h-full">
@@ -528,7 +528,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
 
       {/* Group Chat Messages */}
       {chatMode === 'group' && (
-        <div ref={scrollRef} className={`flex-1 overflow-y-auto p-5 space-y-2 min-h-0 transition-all duration-[350ms] ease-out ${showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-[10px]'}`}>
+        <div ref={scrollRef} className={`flex-1 overflow-y-auto p-5 space-y-2 min-h-0 transition-all duration-[350ms] ease-out ${showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-[10px]'}`} style={{ touchAction: 'pan-y' }}>
           {!groupMessagesLoading && groupMessages.length === 0 && (
             <div className="flex flex-col items-center justify-center py-8">
               <svg className={`w-8 h-8 ${tc.muted} mb-3`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
