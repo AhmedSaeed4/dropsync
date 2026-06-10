@@ -138,8 +138,6 @@ export function EditorialLayout(props: EditorialLayoutProps) {
   // Ref to always access the latest drops value (avoids stale closure issues)
   const dropsRef = useRef(drops);
   dropsRef.current = drops;
-  const chatOverlayRef = useRef<HTMLDivElement>(null);
-
   // Move drop state
   const [moveDrops, setMoveDrops] = useState<Drop[] | null>(null);
   const [moveLoading, setMoveLoading] = useState(false);
@@ -176,30 +174,6 @@ export function EditorialLayout(props: EditorialLayoutProps) {
       handlePreview(found);
     }
   };
-
-  // iOS viewport safety net — resize overlay to match visualViewport
-  useEffect(() => {
-    if (typeof window === 'undefined' || !window.visualViewport) return;
-    if (!showChat) return;
-    const isMobile = window.innerWidth < 1024;
-    if (!isMobile) return;
-    const viewport = window.visualViewport;
-    const overlay = chatOverlayRef.current;
-    if (!overlay) return;
-
-    const onResize = () => {
-      overlay.style.height = `${viewport.height}px`;
-    };
-
-    onResize();
-    viewport.addEventListener('resize', onResize);
-    viewport.addEventListener('scroll', onResize);
-    return () => {
-      viewport.removeEventListener('resize', onResize);
-      viewport.removeEventListener('scroll', onResize);
-      overlay.style.height = '';
-    };
-  }, [showChat]);
 
   return (
     <div className={`relative min-h-screen ${tc.bg} transition-colors duration-500`}>
@@ -299,7 +273,6 @@ export function EditorialLayout(props: EditorialLayoutProps) {
 
         {/* Chat panel: full screen overlay on mobile, slides in as third column on desktop */}
         <div
-          ref={chatOverlayRef}
           className={`${showChat ? `absolute top-0 left-0 right-0 z-40 ${tc.bg} lg:static lg:inset-auto lg:z-auto lg:h-[calc(100vh-160px)]` : 'hidden lg:block lg:w-0 lg:opacity-0 lg:translate-x-[30px]'} lg:shrink-0 lg:relative overflow-hidden transition-[width,opacity,transform,padding] duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${showChat ? 'lg:w-[420px] lg:opacity-100 lg:translate-x-0 lg:pl-0' : ''}`}
           style={showChat && typeof window !== 'undefined' && window.innerWidth < 1024 ? { height: '100dvh' } : undefined}
         >
