@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import { auth } from '@/lib/firebase';
@@ -15,7 +15,8 @@ import {
   ChatMessage,
 } from '@/lib/chat';
 import { subscribeToGroupMessages, sendGroupMessage } from '@/lib/groupChat';
-import { GroupChatMessage } from '@/types';
+import { Drop, GroupChatMessage } from '@/types';
+import { parseMessageContent, detectHashtagTrigger } from '@/lib/dropTagUtils';
 
 interface ChatPanelProps {
   theme: 'light' | 'dark' | 'minimal';
@@ -25,6 +26,7 @@ interface ChatPanelProps {
   workspaceMembers?: any[];
   chatMode?: 'ai' | 'group';
   onChatModeChange?: (mode: 'ai' | 'group') => void;
+  drops?: Drop[];
 }
 
 const AGENT_URL = process.env.NEXT_PUBLIC_AGENT_URL || 'http://localhost:8000';
@@ -123,7 +125,7 @@ function getThemeStyles(theme: 'light' | 'dark' | 'minimal') {
 
 const WELCOME = 'Hi! I can help you manage your drops. Ask me to list drops, search content, check storage stats, or manage workspaces.';
 
-export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspaceMembers, chatMode: chatModeProp, onChatModeChange }: ChatPanelProps) {
+export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspaceMembers, chatMode: chatModeProp, onChatModeChange, drops }: ChatPanelProps) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -144,6 +146,13 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
   const [groupInput, setGroupInput] = useState('');
   const [groupSending, setGroupSending] = useState(false);
   const groupUnsubRef = useRef<(() => void) | null>(null);
+
+  // Drop tag picker state
+  const [showDropPicker, setShowDropPicker] = useState(false);
+  const [hashtagQuery, setHashtagQuery] = useState('');
+  const [pickerSelectedIndex, setPickerSelectedIndex] = useState(0);
+  const [tagReplaceRange, setTagReplaceRange] = useState<{ start: number; end: number } | null>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -194,6 +203,27 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
       setChatMode('ai');
     }
   }, [workspaceId]);
+
+  // Reset selected index when query changes
+  useEffect(() => {
+    setPickerSelectedIndex(0);
+  }, [hashtagQuery]);
+
+  // Scroll highlighted dropdown item into view
+  useEffect(() => {
+    if (!showDropPicker) return;
+    const el = document.querySelector('[data-drop-highlighted="true"]');
+    if (el) {
+      el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }, [pickerSelectedIndex, showDropPicker]);
+
+  // Close dropdown when switching out of group mode
+  useEffect(() => {
+    if (chatMode !== 'group') {
+      setShowDropPicker(false);
+    }
+  }, [chatMode]);
 
   // Subscribe to group chat messages when group tab is active
   useEffect(() => {
@@ -352,7 +382,45 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
 
   const activeConv = conversations.find((c) => c.id === activeConvId);
 
+  // Filter drops for hashtag autocomplete
+  const filteredDrops = useMemo(() => {
+    if (!drops || !workspaceId) return [];
+    const query = hashtagQuery.toLowerCase();
+    const workspaceDrops = drops.filter(d => d.workspaceId === workspaceId);
+    const matched = query
+      ? workspaceDrops.filter(d => d.name.toLowerCase().includes(query))
+      : workspaceDrops;
+    const MAX_RESULTS = typeof window !== 'undefined' && window.innerWidth < 640 ? 5 : 8;
+    return matched.slice(0, MAX_RESULTS);
+  }, [drops, workspaceId, hashtagQuery]);
+
+  const insertDropTag = (drop: Drop) => {
+    if (!tagReplaceRange) return;
+    const { start, end } = tagReplaceRange;
+    const inputValue = groupInput;
+
+    const before = inputValue.slice(0, start);
+    const after = inputValue.slice(end);
+    const tag = `#[${drop.name}](${drop.id})`;
+    const newValue = before + tag + after;
+
+    setGroupInput(newValue);
+    setShowDropPicker(false);
+    setTagReplaceRange(null);
+
+    // Move cursor after the inserted tag
+    requestAnimationFrame(() => {
+      const newCursor = start + tag.length;
+      const el = inputRef.current;
+      if (el) {
+        el.setSelectionRange(newCursor, newCursor);
+        el.focus();
+      }
+    });
+  };
+
   const handleGroupSend = async () => {
+    setShowDropPicker(false);
     const text = groupInput.trim();
     if (!text || groupSending || !userId || !workspaceId) return;
     const senderName = auth.currentUser?.displayName || auth.currentUser?.email?.split('@')[0] || 'Unknown';
@@ -611,7 +679,32 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
                   <div className={`px-3 py-2 text-xs leading-relaxed ${s.roundedClass} ${
                     isOwn ? s.userBubble : s.assistantBubble
                   }`}>
-                    <div className="whitespace-pre-wrap break-words">{msg.content}</div>
+                    <div className="whitespace-pre-wrap break-words">
+                      {parseMessageContent(msg.content).map((part, i) => {
+                        if (part.type === 'text') {
+                          return <span key={i}>{part.value}</span>;
+                        }
+                        const dropExists = drops?.some(d => d.id === part.dropId);
+                        return (
+                          <button
+                            key={i}
+                            onClick={() => {
+                              if (dropExists && onPreviewDrop && workspaceId) {
+                                onPreviewDrop(part.dropId!, workspaceId);
+                              }
+                            }}
+                            disabled={!dropExists}
+                            className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium mx-0.5 transition-opacity ${
+                              dropExists
+                                ? `${s.activeBg} hover:opacity-80 cursor-pointer`
+                                : 'bg-gray-500/20 text-gray-500 cursor-not-allowed opacity-50'
+                            }`}
+                          >
+                            {part.name}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                   {showSender && (
                     <p className={`text-[9px] ${s.muted} mt-0.5 ${isOwn ? 'text-right mr-1' : 'ml-1'}`}>{timeStr}</p>
@@ -624,7 +717,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
       )}
 
       {/* Input */}
-      <div className={`border-t ${s.borderColor} p-3 shrink-0`}>
+      <div className={`border-t ${s.borderColor} p-3 shrink-0 ${chatMode === 'group' ? 'relative' : ''}`}>
         {chatMode === 'ai' ? (
           <form
             onSubmit={(e) => { e.preventDefault(); handleSend(); }}
@@ -650,29 +743,90 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
             </button>
           </form>
         ) : (
-          <form
-            onSubmit={(e) => { e.preventDefault(); handleGroupSend(); }}
-            className="flex gap-2"
-          >
-            <input
-              ref={inputRef}
-              type="text"
-              value={groupInput}
-              onChange={(e) => setGroupInput(e.target.value)}
-              placeholder="Message workspace..."
-              disabled={false}
-              className={`flex-1 px-3 py-2 text-xs ${s.inputBg} ${s.inputText} ${s.placeholder} ${s.fontClass} tracking-wider border ${s.inputBorder} ${s.roundedClass} focus:outline-none focus:ring-1 ${s.focusRing} disabled:opacity-50`}
-            />
-            <button
-              type="submit"
-              disabled={groupSending || !groupInput.trim()}
-              className={`px-3 py-2 text-white text-xs disabled:opacity-30 transition-colors flex items-center justify-center ${s.sendBtn} ${s.roundedClass}`}
+          <>
+            {/* Dropdown */}
+            {showDropPicker && filteredDrops.length > 0 && (
+              <div
+                ref={dropdownRef}
+                className={`absolute bottom-full left-0 right-0 mb-1 z-50 max-h-[200px] overflow-y-auto rounded-md border ${s.borderColor} ${s.panelBg} shadow-lg`}
+                style={{ touchAction: 'pan-y' }}
+              >
+                {filteredDrops.map((drop, idx) => (
+                  <button
+                    key={drop.id}
+                    onClick={() => insertDropTag(drop)}
+                    data-drop-highlighted={idx === pickerSelectedIndex}
+                    className={`w-full text-left px-3 py-2 text-xs truncate ${s.fontClass} ${s.inputText} ${
+                      idx === pickerSelectedIndex ? s.activeBg : s.hoverBg
+                    }`}
+                  >
+                    {drop.name}
+                  </button>
+                ))}
+              </div>
+            )}
+            <form
+              onSubmit={(e) => { e.preventDefault(); handleGroupSend(); }}
+              className="flex gap-2"
             >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
-              </svg>
-            </button>
-          </form>
+              <input
+                ref={inputRef}
+                type="text"
+                value={groupInput}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setGroupInput(value);
+                  if (chatMode !== 'group') return;
+                  const cursor = e.target.selectionStart;
+                  const textBeforeCursor = value.slice(0, cursor ?? 0);
+                  const trigger = detectHashtagTrigger(textBeforeCursor);
+                  if (trigger && trigger.query.length > 0) {
+                    setShowDropPicker(true);
+                    setHashtagQuery(trigger.query);
+                    setTagReplaceRange({ start: trigger.startIndex, end: cursor ?? 0 });
+                  } else {
+                    setShowDropPicker(false);
+                    setTagReplaceRange(null);
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (!showDropPicker || filteredDrops.length === 0) return;
+                  if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    setPickerSelectedIndex(prev => Math.max(0, prev - 1));
+                  } else if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    setPickerSelectedIndex(prev => Math.min(filteredDrops.length - 1, prev + 1));
+                  } else if (e.key === 'Enter' || e.key === 'Tab') {
+                    e.preventDefault();
+                    const selected = filteredDrops[pickerSelectedIndex];
+                    if (selected) insertDropTag(selected);
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    setShowDropPicker(false);
+                  }
+                }}
+                onBlur={(e) => {
+                  if (dropdownRef.current?.contains(e.relatedTarget as Node)) {
+                    return;
+                  }
+                  setShowDropPicker(false);
+                }}
+                placeholder="Message workspace..."
+                disabled={false}
+                className={`flex-1 px-3 py-2 text-xs ${s.inputBg} ${s.inputText} ${s.placeholder} ${s.fontClass} tracking-wider border ${s.inputBorder} ${s.roundedClass} focus:outline-none focus:ring-1 ${s.focusRing} disabled:opacity-50`}
+              />
+              <button
+                type="submit"
+                disabled={groupSending || !groupInput.trim()}
+                className={`px-3 py-2 text-white text-xs disabled:opacity-30 transition-colors flex items-center justify-center ${s.sendBtn} ${s.roundedClass}`}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
+                </svg>
+              </button>
+            </form>
+          </>
         )}
       </div>
     </div>

@@ -285,6 +285,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
               workspaceMembers={resolvedWorkspaceMembers}
               chatMode={chatMode}
               onChatModeChange={setChatMode}
+              drops={drops}
             />
           )}
         </div>

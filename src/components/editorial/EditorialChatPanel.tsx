@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import { auth } from '@/lib/firebase';
@@ -14,8 +14,9 @@ import {
   ChatMessage,
 } from '@/lib/chat';
 import { subscribeToGroupMessages, sendGroupMessage } from '@/lib/groupChat';
-import { GroupChatMessage } from '@/types';
+import { Drop, GroupChatMessage } from '@/types';
 import { getEditorialThemeColors } from './editorialTheme';
+import { parseMessageContent, detectHashtagTrigger } from '@/lib/dropTagUtils';
 
 interface EditorialChatPanelProps {
   theme: 'light' | 'dark' | 'minimal';
@@ -25,13 +26,14 @@ interface EditorialChatPanelProps {
   workspaceMembers?: any[];
   chatMode?: 'ai' | 'group';
   onChatModeChange?: (mode: 'ai' | 'group') => void;
+  drops?: Drop[];
 }
 
 const AGENT_URL = process.env.NEXT_PUBLIC_AGENT_URL || 'http://localhost:8000';
 
 const WELCOME = 'Hi! I can help you manage your drops. Ask me to list drops, search content, check storage stats, or manage workspaces.';
 
-export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspaceMembers, chatMode: chatModeProp, onChatModeChange }: EditorialChatPanelProps) {
+export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspaceMembers, chatMode: chatModeProp, onChatModeChange, drops }: EditorialChatPanelProps) {
   const tc = getEditorialThemeColors(theme);
 
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -51,6 +53,13 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   const [groupInput, setGroupInput] = useState('');
   const [groupSending, setGroupSending] = useState(false);
   const groupUnsubRef = useRef<(() => void) | null>(null);
+
+  // Drop tag picker state
+  const [showDropPicker, setShowDropPicker] = useState(false);
+  const [hashtagQuery, setHashtagQuery] = useState('');
+  const [pickerSelectedIndex, setPickerSelectedIndex] = useState(0);
+  const [tagReplaceRange, setTagReplaceRange] = useState<{ start: number; end: number } | null>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   const [switchingConv, setSwitchingConv] = useState<string | null>(null);
   const [animateMessages, setAnimateMessages] = useState(false);
@@ -143,6 +152,27 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
       setChatMode('ai');
     }
   }, [workspaceId]);
+
+  // Reset selected index when query changes
+  useEffect(() => {
+    setPickerSelectedIndex(0);
+  }, [hashtagQuery]);
+
+  // Scroll highlighted dropdown item into view
+  useEffect(() => {
+    if (!showDropPicker) return;
+    const el = document.querySelector('[data-drop-highlighted="true"]');
+    if (el) {
+      el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }, [pickerSelectedIndex, showDropPicker]);
+
+  // Close dropdown when switching out of group mode
+  useEffect(() => {
+    if (chatMode !== 'group') {
+      setShowDropPicker(false);
+    }
+  }, [chatMode]);
 
   // Subscribe to group chat messages when group tab is active
   useEffect(() => {
@@ -325,6 +355,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   };
 
   const handleGroupSend = async () => {
+    setShowDropPicker(false);
     const text = groupInput.trim();
     if (!text || groupSending || !userId || !workspaceId) return;
     const senderName = auth.currentUser?.displayName || auth.currentUser?.email?.split('@')[0] || 'Unknown';
@@ -335,7 +366,68 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
     setTimeout(() => textareaRef.current?.focus(), 100);
   };
 
+  // Filter drops for hashtag autocomplete
+  const filteredDrops = useMemo(() => {
+    if (!drops || !workspaceId) return [];
+    const query = hashtagQuery.toLowerCase();
+    const workspaceDrops = drops.filter(d => d.workspaceId === workspaceId);
+    const matched = query
+      ? workspaceDrops.filter(d => d.name.toLowerCase().includes(query))
+      : workspaceDrops;
+    const MAX_RESULTS = typeof window !== 'undefined' && window.innerWidth < 640 ? 5 : 8;
+    return matched.slice(0, MAX_RESULTS);
+  }, [drops, workspaceId, hashtagQuery]);
+
+  const insertDropTag = (drop: Drop) => {
+    if (!tagReplaceRange) return;
+    const { start, end } = tagReplaceRange;
+    const inputValue = groupInput;
+
+    const before = inputValue.slice(0, start);
+    const after = inputValue.slice(end);
+    const tag = `#[${drop.name}](${drop.id})`;
+    const newValue = before + tag + after;
+
+    setGroupInput(newValue);
+    setShowDropPicker(false);
+    setTagReplaceRange(null);
+
+    // Move cursor after the inserted tag
+    requestAnimationFrame(() => {
+      const newCursor = start + tag.length;
+      const el = textareaRef.current;
+      if (el) {
+        el.setSelectionRange(newCursor, newCursor);
+        el.focus();
+      }
+    });
+  };
+
   const handleGroupKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Dropdown navigation takes precedence
+    if (showDropPicker && filteredDrops.length > 0) {
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setPickerSelectedIndex(prev => Math.max(0, prev - 1));
+        return;
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setPickerSelectedIndex(prev => Math.min(filteredDrops.length - 1, prev + 1));
+        return;
+      }
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        const selected = filteredDrops[pickerSelectedIndex];
+        if (selected) insertDropTag(selected);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setShowDropPicker(false);
+        return;
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleGroupSend();
@@ -593,7 +685,32 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
                     }`}
                     style={isOwn ? { borderBottomRightRadius: '3px' } : { borderBottomLeftRadius: '3px' }}
                   >
-                    <div className={`whitespace-pre-wrap break-words ${tc.fontClass}`}>{msg.content}</div>
+                    <div className={`whitespace-pre-wrap break-words ${tc.fontClass}`}>
+                      {parseMessageContent(msg.content).map((part, i) => {
+                        if (part.type === 'text') {
+                          return <span key={i}>{part.value}</span>;
+                        }
+                        const dropExists = drops?.some(d => d.id === part.dropId);
+                        return (
+                          <button
+                            key={i}
+                            onClick={() => {
+                              if (dropExists && onPreviewDrop && workspaceId) {
+                                onPreviewDrop(part.dropId!, workspaceId);
+                              }
+                            }}
+                            disabled={!dropExists}
+                            className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium mx-0.5 transition-opacity ${
+                              dropExists
+                                ? `${tc.activePillBg} ${tc.activePillText} hover:opacity-80 cursor-pointer`
+                                : 'bg-gray-500/20 text-gray-500 cursor-not-allowed opacity-50'
+                            }`}
+                          >
+                            {part.name}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                   {showSender && (
                     <p className={`text-[9px] ${tc.muted} mt-0.5 ${isOwn ? 'text-right mr-1' : 'ml-1'}`}>{timeStr}</p>
@@ -606,13 +723,58 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
       )}
 
       {/* Input area with staggered fade-in */}
-      <div className={`border-t ${tc.border} p-4 shrink-0 transition-all duration-300 ease-out ${showInputArea ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-[10px]'}`} style={{ touchAction: 'none' }}>
+      <div className={`border-t ${tc.border} p-4 shrink-0 relative transition-all duration-300 ease-out ${showInputArea ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-[10px]'}`} style={{ touchAction: 'none' }}>
+        {/* Dropdown */}
+        {showDropPicker && filteredDrops.length > 0 && (
+          <div
+            ref={dropdownRef}
+            className={`absolute bottom-full left-4 right-14 mb-1 z-50 max-h-[200px] overflow-y-auto rounded-md border ${tc.border} ${tc.bg} shadow-lg`}
+            style={{ touchAction: 'pan-y' }}
+          >
+            {filteredDrops.map((drop, idx) => (
+              <button
+                key={drop.id}
+                onClick={() => insertDropTag(drop)}
+                data-drop-highlighted={idx === pickerSelectedIndex}
+                className={`w-full text-left px-4 py-2.5 text-sm truncate ${tc.fontClass} ${tc.text} ${
+                  idx === pickerSelectedIndex ? 'bg-black/10' : 'hover:bg-black/5'
+                }`}
+              >
+                {drop.name}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="flex gap-2 items-end">
           <textarea
             ref={textareaRef}
             value={chatMode === 'group' ? groupInput : input}
-            onChange={(e) => chatMode === 'group' ? setGroupInput(e.target.value) : setInput(e.target.value)}
+            onChange={(e) => {
+              const value = e.target.value;
+              if (chatMode === 'group') {
+                setGroupInput(value);
+                const cursor = e.target.selectionStart;
+                const textBeforeCursor = value.slice(0, cursor ?? 0);
+                const trigger = detectHashtagTrigger(textBeforeCursor);
+                if (trigger && trigger.query.length > 0) {
+                  setShowDropPicker(true);
+                  setHashtagQuery(trigger.query);
+                  setTagReplaceRange({ start: trigger.startIndex, end: cursor ?? 0 });
+                } else {
+                  setShowDropPicker(false);
+                  setTagReplaceRange(null);
+                }
+              } else {
+                setInput(value);
+              }
+            }}
             onKeyDown={chatMode === 'group' ? handleGroupKeyDown : handleKeyDown}
+            onBlur={(e) => {
+              if (dropdownRef.current?.contains(e.relatedTarget as Node)) {
+                return;
+              }
+              setShowDropPicker(false);
+            }}
             placeholder={chatMode === 'group' ? 'Message workspace...' : 'Type a message...'}
             disabled={chatMode === 'group' ? false : loading}
             rows={1}
