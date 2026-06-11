@@ -236,7 +236,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
 
           <div className={`sticky ${theme === 'minimal' ? 'top-24' : 'top-28'} self-start w-full flex flex-col min-h-0 transition-all duration-300 ease-out ${showChat ? 'lg:w-[480px]' : 'lg:w-80'}`}>
             {showChat ? (
-              <ChatPanel theme={theme} onClose={() => setShowChat(false)} onPreviewDrop={handlePreviewDrop} workspaceId={currentWorkspaceId} workspaceMembers={resolvedWorkspaceMembers} chatMode={chatMode} onChatModeChange={setChatMode} />
+              <ChatPanel theme={theme} onClose={() => setShowChat(false)} onPreviewDrop={handlePreviewDrop} workspaceId={currentWorkspaceId} workspaceMembers={resolvedWorkspaceMembers} chatMode={chatMode} onChatModeChange={setChatMode} drops={drops} />
             ) : (
               <div className="space-y-6">
             {/* Theme Toggle Panel */}
