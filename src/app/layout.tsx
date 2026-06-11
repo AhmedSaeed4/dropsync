@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter, Raleway } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/components/Providers";
@@ -19,6 +19,12 @@ export const metadata: Metadata = {
   icons: {
     icon: "/icon.svg",
   },
+};
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  interactiveWidget: 'resizes-content',
 };
 
 export default function RootLayout({
