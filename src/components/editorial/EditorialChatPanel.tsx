@@ -58,8 +58,11 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   const [showDropPicker, setShowDropPicker] = useState(false);
   const [hashtagQuery, setHashtagQuery] = useState('');
   const [pickerSelectedIndex, setPickerSelectedIndex] = useState(0);
-  const [tagReplaceRange, setTagReplaceRange] = useState<{ start: number; end: number } | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const [tagReplaceRange, setTagReplaceRange] = useState<{ start: number; end: number } | null>(null);
+
+  // Attachment state — drops selected for the current message
+  const [attachments, setAttachments] = useState<Drop[]>([]);
 
   const [switchingConv, setSwitchingConv] = useState<string | null>(null);
   const [animateMessages, setAnimateMessages] = useState(false);
@@ -128,7 +131,6 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
         scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
       }
     };
-    // Delay matches the staggered animation duration so the DOM has settled
     const timer = setTimeout(scrollToBottom, 400);
     return () => clearTimeout(timer);
   }, []);
@@ -171,6 +173,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   useEffect(() => {
     if (chatMode !== 'group') {
       setShowDropPicker(false);
+      setAttachments([]);
     }
   }, [chatMode]);
 
@@ -325,7 +328,6 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
       const data = await res.json();
       let response = data.response;
 
-      // Check for preview drop from backend
       if (data.previewDropId && onPreviewDrop) {
         onPreviewDrop(data.previewDropId, data.previewWorkspaceId);
       }
@@ -357,11 +359,17 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   const handleGroupSend = async () => {
     setShowDropPicker(false);
     const text = groupInput.trim();
-    if (!text || groupSending || !userId || !workspaceId) return;
+    if ((!text && attachments.length === 0) || groupSending || !userId || !workspaceId) return;
+
+    // Build message with attachments at the top
+    const attachmentTags = attachments.map(drop => `#[${drop.name}](${drop.id})`).join(' ');
+    const fullText = attachmentTags ? `${attachmentTags} ${text}` : text;
+
     const senderName = auth.currentUser?.displayName || auth.currentUser?.email?.split('@')[0] || 'Unknown';
     setGroupInput('');
+    setAttachments([]);
     setGroupSending(true);
-    await sendGroupMessage(workspaceId, userId, senderName, text);
+    await sendGroupMessage(workspaceId, userId, senderName, fullText);
     setGroupSending(false);
     setTimeout(() => textareaRef.current?.focus(), 100);
   };
@@ -378,33 +386,34 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
     return matched.slice(0, MAX_RESULTS);
   }, [drops, workspaceId, hashtagQuery]);
 
-  const insertDropTag = (drop: Drop) => {
-    if (!tagReplaceRange) return;
-    const { start, end } = tagReplaceRange;
-    const inputValue = groupInput;
+  const attachDrop = (drop: Drop) => {
+    // Don't attach duplicates
+    if (attachments.some(a => a.id === drop.id)) {
+      setShowDropPicker(false);
+      setTagReplaceRange(null);
+      return;
+    }
 
-    const before = inputValue.slice(0, start);
-    const after = inputValue.slice(end);
-    const tag = `#[${drop.name}](${drop.id})`;
-    const newValue = before + tag + after;
+    // Remove the trigger text from input
+    if (tagReplaceRange) {
+      const { start, end } = tagReplaceRange;
+      const before = groupInput.slice(0, start);
+      const after = groupInput.slice(end);
+      setGroupInput(before + after);
+    }
 
-    setGroupInput(newValue);
+    setAttachments(prev => [...prev, drop]);
     setShowDropPicker(false);
+    setHashtagQuery('');
     setTagReplaceRange(null);
+  };
 
-    // Move cursor after the inserted tag
-    requestAnimationFrame(() => {
-      const newCursor = start + tag.length;
-      const el = textareaRef.current;
-      if (el) {
-        el.setSelectionRange(newCursor, newCursor);
-        el.focus();
-      }
-    });
+  const removeAttachment = (dropId: string) => {
+    setAttachments(prev => prev.filter(d => d.id !== dropId));
   };
 
   const handleGroupKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // Dropdown navigation takes precedence
+    // Dropdown navigation
     if (showDropPicker && filteredDrops.length > 0) {
       if (e.key === 'ArrowUp') {
         e.preventDefault();
@@ -419,7 +428,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         const selected = filteredDrops[pickerSelectedIndex];
-        if (selected) insertDropTag(selected);
+        if (selected) attachDrop(selected);
         return;
       }
       if (e.key === 'Escape') {
@@ -663,6 +672,9 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
             const showSender = !prevMsg || prevMsg.senderId !== msg.senderId;
             const initial = msg.senderName.charAt(0).toUpperCase();
             const timeStr = msg.createdAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const parts = parseMessageContent(msg.content);
+            const textParts = parts.filter(p => p.type === 'text');
+            const tagParts = parts.filter(p => p.type === 'tag');
 
             return (
               <div key={msg.id} className={`flex ${isOwn ? 'justify-end' : 'justify-start'} animate-fade-in-up`} style={{ animationDelay: `${Math.min(idx, 10) * 30}ms` }}>
@@ -685,32 +697,49 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
                     }`}
                     style={isOwn ? { borderBottomRightRadius: '3px' } : { borderBottomLeftRadius: '3px' }}
                   >
-                    <div className={`whitespace-pre-wrap break-words ${tc.fontClass}`}>
-                      {parseMessageContent(msg.content).map((part, i) => {
-                        if (part.type === 'text') {
-                          return <span key={i}>{part.value}</span>;
-                        }
-                        const dropExists = drops?.some(d => d.id === part.dropId);
-                        return (
-                          <button
-                            key={i}
-                            onClick={() => {
-                              if (dropExists && onPreviewDrop && workspaceId) {
-                                onPreviewDrop(part.dropId!, workspaceId);
-                              }
-                            }}
-                            disabled={!dropExists}
-                            className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium mx-0.5 transition-opacity ${
-                              dropExists
-                                ? `${tc.activePillBg} ${tc.activePillText} hover:opacity-80 cursor-pointer`
-                                : 'bg-gray-500/20 text-gray-500 cursor-not-allowed opacity-50'
-                            }`}
-                          >
-                            {part.name}
-                          </button>
-                        );
-                      })}
-                    </div>
+                    {/* Attachment cards */}
+                    {tagParts.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mb-1">
+                        {tagParts.map((part, i) => {
+                          const dropExists = drops?.some(d => d.id === part.dropId);
+                          return (
+                            <button
+                              key={i}
+                              onClick={() => {
+                                if (dropExists && onPreviewDrop && workspaceId) {
+                                  onPreviewDrop(part.dropId!, workspaceId);
+                                }
+                              }}
+                              disabled={!dropExists}
+                              className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-opacity ${
+                                dropExists
+                                  ? `${tc.activePillBg} ${tc.activePillText} hover:opacity-80 cursor-pointer`
+                                  : 'bg-gray-500/20 text-gray-500 cursor-not-allowed opacity-50'
+                              }`}
+                            >
+                              {dropExists && drops?.find(d => d.id === part.dropId)?.type === 'file' ? (
+                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 10.5V6.75a4.5 4.5 0 119 0v3.75M3.75 21.75h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H3.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+                                </svg>
+                              ) : (
+                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12" />
+                                </svg>
+                              )}
+                              {part.name}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {/* Text content */}
+                    {textParts.length > 0 && (
+                      <div className={`whitespace-pre-wrap break-words ${tc.fontClass}`}>
+                        {textParts.map((part, i) => (
+                          <span key={i}>{part.value}</span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   {showSender && (
                     <p className={`text-[9px] ${tc.muted} mt-0.5 ${isOwn ? 'text-right mr-1' : 'ml-1'}`}>{timeStr}</p>
@@ -734,14 +763,44 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
             {filteredDrops.map((drop, idx) => (
               <button
                 key={drop.id}
-                onClick={() => insertDropTag(drop)}
+                onClick={() => attachDrop(drop)}
                 data-drop-highlighted={idx === pickerSelectedIndex}
                 className={`w-full text-left px-4 py-2.5 text-sm truncate ${tc.fontClass} ${tc.text} ${
-                  idx === pickerSelectedIndex ? 'bg-black/10' : 'hover:bg-black/5'
+                  idx === pickerSelectedIndex ? `${tc.activePillBg} ${tc.activePillText}` : 'hover:bg-black/5'
                 }`}
               >
                 {drop.name}
               </button>
+            ))}
+          </div>
+        )}
+        {/* Attachment cards */}
+        {chatMode === 'group' && attachments.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-2 px-4">
+            {attachments.map((drop) => (
+              <div
+                key={drop.id}
+                className={`inline-flex items-center gap-1.5 px-2 py-1 rounded text-[14px] ${tc.activePillBg} ${tc.activePillText}`}
+              >
+                {drop.type === 'file' ? (
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 10.5V6.75a4.5 4.5 0 119 0v3.75M3.75 21.75h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H3.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+                  </svg>
+                ) : (
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12" />
+                  </svg>
+                )}
+                <span className="truncate max-w-[120px]">{drop.name}</span>
+                <button
+                  onClick={() => removeAttachment(drop.id)}
+                  className="opacity-60 hover:opacity-100 ml-1"
+                >
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
             ))}
           </div>
         )}
@@ -762,6 +821,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
                   setTagReplaceRange({ start: trigger.startIndex, end: cursor ?? 0 });
                 } else {
                   setShowDropPicker(false);
+                  setHashtagQuery('');
                   setTagReplaceRange(null);
                 }
               } else {
@@ -778,12 +838,12 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
             placeholder={chatMode === 'group' ? 'Message workspace...' : 'Type a message...'}
             disabled={chatMode === 'group' ? false : loading}
             rows={1}
-            className={`flex-1 px-4 py-3 text-[14px] ${tc.fontClass} ${tc.bg} ${tc.text} border ${tc.border} rounded-lg resize-none focus:outline-none focus:border-[#1a1a1a] disabled:opacity-50 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]`}
+            className={`flex-1 px-4 py-3 text-[14px] ${tc.fontClass} ${tc.bg} ${tc.text} border ${tc.border} rounded-lg resize-none focus:outline-none focus:border-[#1a1a1a] disabled:opacity-50 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] ${theme === 'dark' ? 'placeholder:text-white/30' : 'placeholder:text-[#1A1A1A]/30'}`}
             style={{ maxHeight: '120px', touchAction: 'none' }}
           />
           <button
             onClick={chatMode === 'group' ? handleGroupSend : handleSend}
-            disabled={chatMode === 'group' ? (groupSending || !groupInput.trim()) : (loading || !input.trim())}
+            disabled={chatMode === 'group' ? (groupSending || (!groupInput.trim() && attachments.length === 0)) : (loading || !input.trim())}
             className="w-10 h-10 shrink-0 flex items-center justify-center bg-[#1a1a1a] text-white rounded-lg hover:bg-[#333] disabled:opacity-30 transition-colors"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
