@@ -17,6 +17,7 @@ import { subscribeToGroupMessages, sendGroupMessage } from '@/lib/groupChat';
 import { Drop, GroupChatMessage } from '@/types';
 import { getEditorialThemeColors } from './editorialTheme';
 import { parseMessageContent, detectHashtagTrigger } from '@/lib/dropTagUtils';
+import { EditorialDropPickerRow } from './EditorialDropPickerRow';
 
 interface EditorialChatPanelProps {
   theme: 'light' | 'dark' | 'minimal';
@@ -757,20 +758,18 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
         {showDropPicker && filteredDrops.length > 0 && (
           <div
             ref={dropdownRef}
-            className={`absolute bottom-full left-4 right-14 mb-1 z-50 max-h-[200px] overflow-y-auto rounded-md border ${tc.border} ${tc.bg} shadow-lg`}
+            className={`absolute bottom-full left-4 right-14 mb-1 z-50 max-h-[320px] overflow-y-auto rounded-md border ${tc.border} ${tc.bg} shadow-lg`}
             style={{ touchAction: 'pan-y' }}
           >
             {filteredDrops.map((drop, idx) => (
-              <button
+              <EditorialDropPickerRow
                 key={drop.id}
-                onClick={() => attachDrop(drop)}
-                data-drop-highlighted={idx === pickerSelectedIndex}
-                className={`w-full text-left px-4 py-2.5 text-sm truncate ${tc.fontClass} ${tc.text} ${
-                  idx === pickerSelectedIndex ? `${tc.activePillBg} ${tc.activePillText}` : 'hover:bg-black/5'
-                }`}
-              >
-                {drop.name}
-              </button>
+                drop={drop}
+                selected={idx === pickerSelectedIndex}
+                attached={attachments.some(a => a.id === drop.id)}
+                onSelect={attachDrop}
+                theme={theme}
+              />
             ))}
           </div>
         )}

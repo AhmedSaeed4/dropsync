@@ -17,6 +17,7 @@ import {
 import { subscribeToGroupMessages, sendGroupMessage } from '@/lib/groupChat';
 import { Drop, GroupChatMessage } from '@/types';
 import { parseMessageContent, detectHashtagTrigger } from '@/lib/dropTagUtils';
+import { DropPickerRow } from './DropPickerRow';
 
 interface ChatPanelProps {
   theme: 'light' | 'dark' | 'minimal';
@@ -775,20 +776,18 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
             {showDropPicker && filteredDrops.length > 0 && (
               <div
                 ref={dropdownRef}
-                className={`absolute bottom-full left-0 right-0 mb-1 z-50 max-h-[200px] overflow-y-auto rounded-md border ${s.borderColor} ${s.panelBg} shadow-lg`}
+                className={`absolute bottom-full left-0 right-0 mb-1 z-50 max-h-[320px] overflow-y-auto rounded-md border ${s.borderColor} ${s.panelBg} shadow-lg`}
                 style={{ touchAction: 'pan-y' }}
               >
                 {filteredDrops.map((drop, idx) => (
-                  <button
+                  <DropPickerRow
                     key={drop.id}
-                    onClick={() => attachDrop(drop)}
-                    data-drop-highlighted={idx === pickerSelectedIndex}
-                    className={`w-full text-left px-3 py-2 text-xs truncate ${s.fontClass} ${s.inputText} ${
-                      idx === pickerSelectedIndex ? `${s.activeBg} ${s.inputText}` : s.hoverBg
-                    }`}
-                  >
-                    {drop.name}
-                  </button>
+                    drop={drop}
+                    selected={idx === pickerSelectedIndex}
+                    attached={attachments.some(a => a.id === drop.id)}
+                    onSelect={attachDrop}
+                    theme={theme}
+                  />
                 ))}
               </div>
             )}
