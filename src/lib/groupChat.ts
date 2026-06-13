@@ -9,11 +9,15 @@ import {
   addDoc,
   deleteDoc,
   doc,
+  getDoc,
+  getDocs,
+  setDoc,
   query,
   orderBy,
   limit,
   onSnapshot,
   serverTimestamp,
+  Timestamp,
 } from 'firebase/firestore';
 import { db } from './firebase';
 import { encryptData, decryptData } from './crypto';
@@ -152,4 +156,33 @@ export async function deleteGroupMessage(
     console.error('Error deleting group message:', error);
     return false;
   }
+}
+
+/**
+ * Read this user's last-read time for a workspace (null if never initialized).
+ * Server-side read state — replaces the old localStorage fallback that broke on cold start.
+ */
+export async function getLastRead(workspaceId: string, userId: string): Promise<Date | null> {
+  const ref = doc(db, 'workspaces', workspaceId, 'readState', userId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return null;
+  const ts = snap.data().lastReadAt as Timestamp | undefined;
+  return ts ? ts.toDate() : null;
+}
+
+/**
+ * Mark everything up to NOW as read — server timestamp. Use on chat open/close.
+ */
+export async function markWorkspaceChatRead(workspaceId: string, userId: string): Promise<void> {
+  const ref = doc(db, 'workspaces', workspaceId, 'readState', userId);
+  await setDoc(ref, { lastReadAt: serverTimestamp() }, { merge: true });
+}
+
+/**
+ * One-time init: baseline = the newest existing message's time (NOT 1970, NOT serverTimestamp).
+ * Called when no readState doc exists yet, so existing messages aren't falsely counted as unread.
+ */
+export async function initReadState(workspaceId: string, userId: string, baseline: Date): Promise<void> {
+  const ref = doc(db, 'workspaces', workspaceId, 'readState', userId);
+  await setDoc(ref, { lastReadAt: Timestamp.fromDate(baseline) }, { merge: true });
 }
