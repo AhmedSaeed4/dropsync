@@ -18,9 +18,10 @@ import { Drop, Workspace, ExpirationOption } from '@/types';
 import { initializeUserKeys, hasUserKeys, getUserKeys } from '@/lib/keys';
 import { decryptDrop, updateTextDrop, updateDropMetadata, moveDrop } from '@/lib/drops';
 import { getWorkspaceMembers, MemberInfo } from '@/lib/workspaces';
+import { getLastRead, initReadState, markWorkspaceChatRead } from '@/lib/groupChat';
 import { reauthenticateUser } from '@/lib/auth';
 import { db } from '@/lib/firebase';
-import { collection, query, orderBy, limit, onSnapshot, Timestamp } from 'firebase/firestore';
+import { collection, query, orderBy, limit, onSnapshot, getDocs, Timestamp } from 'firebase/firestore';
 
 type Theme = 'light' | 'dark' | 'minimal';
 type LayoutMode = 'classic' | 'editorial';
@@ -303,11 +304,12 @@ export default function Home() {
     const prevShowChat = prevShowChatRef.current;
     prevShowChatRef.current = showChat;
 
-    if (currentWorkspaceId && prevShowChat !== showChat) {
-      localStorage.setItem(`chat-read-${currentWorkspaceId}`, new Date().toISOString());
+    if (currentWorkspaceId && user && prevShowChat !== showChat) {
+      markWorkspaceChatRead(currentWorkspaceId, user.uid)   // Firestore write (server timestamp)
+        .catch(err => console.error('Failed to mark chat read:', err));
       setUnreadCount(0);
     }
-  }, [showChat, currentWorkspaceId]);
+  }, [showChat, currentWorkspaceId, user]);
 
   // Lightweight unread workspace chat counter — no decryption needed
   useEffect(() => {
@@ -323,36 +325,55 @@ export default function Home() {
       return;
     }
 
-    const lastRead = localStorage.getItem(`chat-read-${currentWorkspaceId}`);
-    const lastReadTime = lastRead ? new Date(lastRead) : new Date(0);
+    let cancelled = false;
+    let unsub: (() => void) | null = null;
 
-    const q = query(
-      collection(db, 'workspaces', currentWorkspaceId, 'messages'),
-      orderBy('createdAt', 'desc'),
-      limit(50)
-    );
+    (async () => {
+      // 1) Read baseline (or initialize) BEFORE subscribing
+      let lastReadTime = await getLastRead(currentWorkspaceId, user.uid);
+      if (cancelled) return;
 
-    unreadUnsubRef.current = onSnapshot(q, (snap) => {
-      let count = 0;
-      snap.forEach((doc) => {
-        const data = doc.data();
-        const ts = data.createdAt as Timestamp | undefined;
-        if (ts && ts.toDate() > lastReadTime) {
-          count++;
-        }
+      if (!lastReadTime) {
+        // No read state yet — baseline = newest existing message time (or now if empty)
+        const newestSnap = await getDocs(query(
+          collection(db, 'workspaces', currentWorkspaceId, 'messages'),
+          orderBy('createdAt', 'desc'),
+          limit(1),
+        ));
+        if (cancelled) return;
+        const newest = newestSnap.docs[0];
+        lastReadTime = newest
+          ? (newest.data().createdAt as Timestamp).toDate()
+          : new Date();
+        await initReadState(currentWorkspaceId, user.uid, lastReadTime);
+        if (cancelled) return;
+      }
+
+      // 2) Subscribe only after baseline is known — no async inside onSnapshot
+      const q = query(
+        collection(db, 'workspaces', currentWorkspaceId, 'messages'),
+        orderBy('createdAt', 'desc'),
+        limit(50),
+      );
+      unsub = onSnapshot(q, (snap) => {
+        if (cancelled) return;                       // ← stale-listener guard
+        let count = 0;
+        snap.forEach((d) => {
+          const ts = d.data().createdAt as Timestamp | undefined;
+          if (ts && ts.toDate() > lastReadTime!) count++;
+        });
+        setUnreadCount(count);
+      }, (err) => {
+        console.warn('Unread listener error:', err.message);
+        if (!cancelled) setUnreadCount(0);
       });
-      setUnreadCount(count);
-    }, (err) => {
-      // Permission denied = user not in workspace anymore, just clear
-      console.warn('Unread listener error:', err.message);
-      setUnreadCount(0);
-    });
+      unreadUnsubRef.current = unsub;
+    })();
 
     return () => {
-      if (unreadUnsubRef.current) {
-        unreadUnsubRef.current();
-        unreadUnsubRef.current = null;
-      }
+      cancelled = true;
+      unsub?.();
+      unreadUnsubRef.current = null;
     };
   }, [user, currentWorkspaceId, showChat]);
 
