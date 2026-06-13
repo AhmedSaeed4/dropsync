@@ -43,9 +43,13 @@ interface EditorialLayoutProps {
   setLayoutMode: (l: LayoutMode) => void;
   showChat: boolean;
   setShowChat: (v: boolean) => void;
+  onToggleChat?: () => void;
   chatMode?: 'ai' | 'group';
   setChatMode: (v: 'ai' | 'group') => void;
   unreadCount?: number;
+  notifPermission?: NotificationPermission;
+  notifMuted?: boolean;
+  onToggleNotifications?: () => void;
   showSettingsModal: boolean;
   setShowSettingsModal: (v: boolean) => void;
   showAuthModal: boolean;
@@ -108,8 +112,10 @@ export function EditorialLayout(props: EditorialLayoutProps) {
     theme, setTheme, themeColors,
     user, layoutMode, setLayoutMode,
     showChat, setShowChat,
+    onToggleChat,
     chatMode = 'ai', setChatMode,
     unreadCount = 0,
+    notifPermission, notifMuted, onToggleNotifications,
     showSettingsModal, setShowSettingsModal,
     showAuthModal, setShowAuthModal,
     showVerifyModal, setShowVerifyModal,
@@ -196,7 +202,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
         theme={theme}
         onThemeChange={setTheme}
         onOpenSettings={() => setShowSettingsModal(true)}
-        onToggleChat={() => { if (!showChat && unreadCount > 0) setChatMode('group'); setShowChat(!showChat); }}
+        onToggleChat={onToggleChat}
         chatOpen={showChat}
         unreadCount={unreadCount}
         user={user}
@@ -224,7 +230,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
               onCreateCategory={handleCreateCategory}
               showChat={showChat}
               editModalOpen={!!editDrop}
-              onToggleChat={() => { if (!showChat && unreadCount > 0) setChatMode('group'); setShowChat(!showChat); }}
+              onToggleChat={onToggleChat}
               unreadCount={unreadCount}
             />
 
@@ -473,6 +479,9 @@ export function EditorialLayout(props: EditorialLayoutProps) {
           onLayoutChange={setLayoutMode}
           layoutMode={layoutMode}
           theme={theme}
+          notifPermission={notifPermission}
+          notifMuted={notifMuted}
+          onToggleNotifications={onToggleNotifications}
         />
       )}
     </div>
