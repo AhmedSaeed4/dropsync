@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
@@ -19,6 +19,12 @@ import { initializeUserKeys, hasUserKeys, getUserKeys } from '@/lib/keys';
 import { decryptDrop, updateTextDrop, updateDropMetadata, moveDrop } from '@/lib/drops';
 import { getWorkspaceMembers, MemberInfo } from '@/lib/workspaces';
 import { getLastRead, initReadState, markWorkspaceChatRead } from '@/lib/groupChat';
+import {
+  isNotificationsSupported,
+  getNotificationPermission,
+  requestNotificationPermission,
+  showChatNotification,
+} from '@/lib/notifications';
 import { reauthenticateUser } from '@/lib/auth';
 import { db } from '@/lib/firebase';
 import { collection, query, orderBy, limit, onSnapshot, getDocs, Timestamp } from 'firebase/firestore';
@@ -81,6 +87,13 @@ export default function Home() {
   const [unreadCount, setUnreadCount] = useState(0);
   const unreadUnsubRef = useRef<(() => void) | null>(null);
   const prevShowChatRef = useRef(showChat);
+
+  // Browser chat notifications (foreground only) — permission + mute preference.
+  // Default: notifications ON once permission is granted (mute flag = off).
+  const [notifPermission, setNotifPermission] = useState<NotificationPermission>('default');
+  const [notifMuted, setNotifMuted] = useState(false);
+  const notifAskedOnce = useRef(false);
+  const viewingGroupChatRef = useRef(false);
   const [resolvedWorkspaceMembers, setResolvedWorkspaceMembers] = useState<MemberInfo[]>([]);
 
   // Auto-close auth modal when user successfully logs in
@@ -377,13 +390,127 @@ export default function Home() {
     };
   }, [user, currentWorkspaceId, showChat]);
 
-  // Toggle chat panel — auto-switch to workspace tab when unreads exist
-  const handleToggleChat = () => {
+  // --- Foreground desktop chat notifications (separate from the unread counter) ---
+
+  // Init permission + mute pref from browser/localStorage (SSR-safe).
+  useEffect(() => {
+    setNotifPermission(getNotificationPermission());
+    try {
+      if (localStorage.getItem('chat-notif-muted') === 'true') setNotifMuted(true);
+      if (localStorage.getItem('chat-notif-asked') === 'true') notifAskedOnce.current = true;
+    } catch {}
+  }, []);
+
+  // Re-read permission when Settings opens (can change in browser site settings).
+  useEffect(() => {
+    if (showSettingsModal) setNotifPermission(getNotificationPermission());
+  }, [showSettingsModal]);
+
+  const persistMuted = (v: boolean) => {
+    setNotifMuted(v);
+    try { localStorage.setItem('chat-notif-muted', String(v)); } catch {}
+  };
+
+  // Toggle handler for the Settings switch: requests permission if still 'default',
+  // otherwise flips the mute flag. No-op once permission is 'denied' (can't re-prompt).
+  const handleToggleNotifications = async () => {
+    const current = getNotificationPermission();
+    setNotifPermission(current);
+    if (!isNotificationsSupported()) return;
+    if (current === 'denied') return;
+    if (current === 'default') {
+      const result = await requestNotificationPermission();
+      setNotifPermission(result);
+      if (result === 'granted') persistMuted(false); // ensure ON
+      return;
+    }
+    persistMuted(!notifMuted);
+  };
+
+  // Keep a ref so the notif listener reads the latest "actively viewing?" value
+  // without re-subscribing on every showChat/chatMode change.
+  useEffect(() => {
+    viewingGroupChatRef.current = showChat && chatMode === 'group';
+  }, [showChat, chatMode]);
+
+  // Active only when supported, permitted, and not muted.
+  const notifsActive = isNotificationsSupported() && notifPermission === 'granted' && !notifMuted;
+
+  // Notif listener — fires an OS notification for new group messages when the user
+  // is NOT actively viewing the group chat. Reads plain senderName (no decryption).
+  useEffect(() => {
+    if (!user || !currentWorkspaceId || !notifsActive) return;
+
+    let cancelled = false;
+    let unsub: (() => void) | null = null;
+    let lastSeenTs: Date | null = null; // baseline; null until first snapshot
+    let lastNotifiedAt = 0;              // throttle timestamp (ms)
+
+    const q = query(
+      collection(db, 'workspaces', currentWorkspaceId, 'messages'),
+      orderBy('createdAt', 'desc'),
+      limit(20),
+    );
+
+    unsub = onSnapshot(q, (snap) => {
+      if (cancelled) return;
+      if (snap.empty) return;
+
+      // First snapshot → set baseline to the newest message, notify nothing.
+      if (lastSeenTs === null) {
+        const first = snap.docs[0]?.data()?.createdAt as Timestamp | undefined;
+        lastSeenTs = first ? first.toDate() : new Date();
+        return;
+      }
+
+      // Walk new messages (newest first). Advance baseline for each seen message so
+      // viewed/throttled ones aren't backfilled; only fire when all conditions hold.
+      for (const d of snap.docs) {
+        const data = d.data();
+        const ts = data.createdAt as Timestamp | undefined;
+        if (!ts) continue; // null createdAt (offline-pending) → skip
+        const msgDate = ts.toDate();
+        if (msgDate <= lastSeenTs) continue;
+        if (data.senderId === user.uid) { lastSeenTs = msgDate; continue; } // own msg: seen, no notify
+        lastSeenTs = msgDate; // advance baseline (seen)
+
+        // Re-check permission at fire time (can change outside the app).
+        if (getNotificationPermission() !== 'granted') continue;
+        // Only notify when NOT actively viewing the group chat OR the tab is hidden.
+        if (viewingGroupChatRef.current && !document.hidden) continue;
+        // Throttle: max one notification per 3 seconds (spam control).
+        if (Date.now() - lastNotifiedAt < 3000) continue;
+        lastNotifiedAt = Date.now();
+
+        showChatNotification(
+          data.senderName || 'Someone',
+          currentWorkspace?.name || 'workspace',
+          () => { setChatMode('group'); setShowChat(true); },
+        );
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      unsub?.();
+    };
+  }, [user, currentWorkspaceId, notifsActive, currentWorkspace?.name]);
+
+  // Toggle chat panel — auto-switch to workspace tab when unreads exist.
+  // Passed down as onToggleChat so the layout chat buttons hit this (and thus the
+  // Option B notification-permission prompt) instead of an inline handler.
+  const handleToggleChat = useCallback(() => {
+    // Ask for notification permission once on first chat open (user gesture).
+    if (!showChat && isNotificationsSupported() && !notifAskedOnce.current && getNotificationPermission() === 'default') {
+      notifAskedOnce.current = true;
+      try { localStorage.setItem('chat-notif-asked', 'true'); } catch {}
+      requestNotificationPermission().then(p => setNotifPermission(p));
+    }
     if (!showChat && unreadCount > 0) {
       setChatMode('group');
     }
     setShowChat(!showChat);
-  };
+  }, [showChat, unreadCount]);
 
   // Handle edit drop — decrypt text drops, file drops just need metadata
   const handleEditDrop = async (drop: Drop) => {
@@ -1194,6 +1321,8 @@ export default function Home() {
     showChat, setShowChat,
     chatMode, setChatMode,
     unreadCount,
+    onToggleChat: handleToggleChat,
+    notifPermission, notifMuted, onToggleNotifications: handleToggleNotifications,
     showSettingsModal, setShowSettingsModal,
     showAuthModal, setShowAuthModal,
     showVerifyModal, setShowVerifyModal,

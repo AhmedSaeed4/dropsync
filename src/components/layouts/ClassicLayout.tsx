@@ -43,9 +43,13 @@ interface ClassicLayoutProps {
   setLayoutMode: (l: LayoutMode) => void;
   showChat: boolean;
   setShowChat: (v: boolean) => void;
+  onToggleChat?: () => void;
   chatMode?: 'ai' | 'group';
   setChatMode: (v: 'ai' | 'group') => void;
   unreadCount?: number;
+  notifPermission?: NotificationPermission;
+  notifMuted?: boolean;
+  onToggleNotifications?: () => void;
   showSettingsModal: boolean;
   setShowSettingsModal: (v: boolean) => void;
   showAuthModal: boolean;
@@ -108,8 +112,10 @@ export function ClassicLayout(props: ClassicLayoutProps) {
     theme, setTheme, themeColors,
     user, layoutMode, setLayoutMode,
     showChat, setShowChat,
+    onToggleChat,
     chatMode = 'ai', setChatMode,
     unreadCount = 0,
+    notifPermission, notifMuted, onToggleNotifications,
     showSettingsModal, setShowSettingsModal,
     showAuthModal, setShowAuthModal,
     showVerifyModal, setShowVerifyModal,
@@ -190,7 +196,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
           </div>
         </div>
       )}
-      <Header theme={theme} onThemeChange={setTheme} onOpenSettings={() => setShowSettingsModal(true)} onToggleChat={() => { if (!showChat && unreadCount > 0) setChatMode('group'); setShowChat(!showChat); }} chatOpen={showChat} unreadCount={unreadCount}>
+      <Header theme={theme} onThemeChange={setTheme} onOpenSettings={() => setShowSettingsModal(true)} onToggleChat={onToggleChat} chatOpen={showChat} unreadCount={unreadCount}>
         <WorkspaceSwitcher
           workspaces={workspaces}
           currentWorkspace={currentWorkspace}
@@ -515,6 +521,9 @@ export function ClassicLayout(props: ClassicLayoutProps) {
           onLayoutChange={setLayoutMode}
           layoutMode={layoutMode}
           theme={theme}
+          notifPermission={notifPermission}
+          notifMuted={notifMuted}
+          onToggleNotifications={onToggleNotifications}
         />
       )}
     </div>

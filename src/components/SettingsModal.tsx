@@ -5,6 +5,7 @@ import { User } from '@/types';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { previewAccountDeletion, deleteAccount, DeletionPreview, SelectedOwners } from '@/lib/accountDeletion';
 import { updateUserDisplayName } from '@/lib/auth';
+import { isNotificationsSupported, isIOSSafari } from '@/lib/notifications';
 
 interface SettingsModalProps {
   user: User;
@@ -16,6 +17,9 @@ interface SettingsModalProps {
   onLayoutChange?: (layout: 'classic' | 'editorial') => void;
   layoutMode?: 'classic' | 'editorial';
   theme?: 'light' | 'dark' | 'minimal';
+  notifPermission?: NotificationPermission;
+  notifMuted?: boolean;
+  onToggleNotifications?: () => void;
 }
 
 type Step = 'main' | 'password-reset' | 'delete-preview' | 'delete-confirm' | 'deleting' | 'deleted';
@@ -30,6 +34,9 @@ export function SettingsModal({
   onLayoutChange,
   layoutMode = 'classic',
   theme = 'light',
+  notifPermission = 'default',
+  notifMuted = false,
+  onToggleNotifications,
 }: SettingsModalProps) {
   useBodyScrollLock();
   const [step, setStep] = useState<Step>('main');
@@ -54,6 +61,20 @@ export function SettingsModal({
   const isPasswordProvider = user.providerId === 'password';
   const isDark = theme === 'dark';
   const isMinimal = theme === 'minimal';
+
+  // Notifications state (foreground-only browser alerts)
+  const notifEnabled = notifPermission === 'granted' && !notifMuted;
+  const notifSupported = isNotificationsSupported() && !isIOSSafari();
+  const notifDisabled = !notifSupported || notifPermission === 'denied';
+  const notifHint = !notifSupported
+    ? 'Not supported on this device.'
+    : notifPermission === 'denied'
+      ? 'Blocked — enable notifications in your browser site settings.'
+      : notifPermission === 'default'
+        ? 'Turn on to get desktop alerts for new messages.'
+        : notifMuted
+          ? 'Muted — alerts are off.'
+          : 'Desktop alerts for new group chat messages.';
 
   // Theme styling helper
   const getThemeColors = () => {
@@ -277,6 +298,33 @@ export function SettingsModal({
               {layout.charAt(0).toUpperCase() + layout.slice(1)}
             </button>
           ))}
+        </div>
+      </div>
+
+      {/* Notifications */}
+      <div className={`pt-6 border-t ${tc.borderColor}`}>
+        <h3 className={`text-sm font-semibold mb-1 ${isMinimal ? 'font-sans tracking-wide' : 'font-mono uppercase tracking-wider'} ${tc.textColor}`}>
+          {isMinimal ? 'Notifications' : 'NOTIFICATIONS'}
+        </h3>
+        <div className="flex items-center justify-between mt-3">
+          <div className="flex-1 pr-3">
+            <p className={`text-xs font-medium ${tc.textColor}`}>
+              {isMinimal ? 'Chat notifications' : 'CHAT_NOTIFICATIONS'}
+            </p>
+            <p className={`text-xs mt-1 ${tc.textMuted}`}>{notifHint}</p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={notifEnabled}
+            disabled={notifDisabled}
+            onClick={onToggleNotifications}
+            className={`relative shrink-0 w-11 h-6 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+              notifEnabled ? 'bg-[#FF5A47]' : 'bg-gray-400'
+            }`}
+          >
+            <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${notifEnabled ? 'translate-x-5' : ''}`} />
+          </button>
         </div>
       </div>
 

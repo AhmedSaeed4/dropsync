@@ -6,6 +6,7 @@ import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { getEditorialThemeColors } from './editorialTheme';
 import { previewAccountDeletion, deleteAccount, DeletionPreview, SelectedOwners } from '@/lib/accountDeletion';
 import { updateUserDisplayName } from '@/lib/auth';
+import { isNotificationsSupported, isIOSSafari } from '@/lib/notifications';
 
 interface EditorialSettingsModalProps {
   user: User;
@@ -18,6 +19,9 @@ interface EditorialSettingsModalProps {
   onLayoutChange?: (layout: 'classic' | 'editorial') => void;
   layoutMode?: 'classic' | 'editorial';
   theme?: 'light' | 'dark' | 'minimal';
+  notifPermission?: NotificationPermission;
+  notifMuted?: boolean;
+  onToggleNotifications?: () => void;
 }
 
 type Step = 'main' | 'delete-preview' | 'delete-confirm' | 'deleting' | 'deleted';
@@ -33,6 +37,9 @@ export function EditorialSettingsModal({
   onLayoutChange,
   layoutMode = 'classic',
   theme = 'light',
+  notifPermission = 'default',
+  notifMuted = false,
+  onToggleNotifications,
 }: EditorialSettingsModalProps) {
   useBodyScrollLock();
   const [loading, setLoading] = useState(false);
@@ -54,6 +61,20 @@ export function EditorialSettingsModal({
 
   const tc = getEditorialThemeColors(theme);
   const isPasswordProvider = user.providerId === 'password';
+
+  // Notifications state (foreground-only browser alerts)
+  const notifEnabled = notifPermission === 'granted' && !notifMuted;
+  const notifSupported = isNotificationsSupported() && !isIOSSafari();
+  const notifDisabled = !notifSupported || notifPermission === 'denied';
+  const notifHint = !notifSupported
+    ? 'Not supported on this device.'
+    : notifPermission === 'denied'
+      ? 'Blocked — enable notifications in your browser site settings.'
+      : notifPermission === 'default'
+        ? 'Turn on to get desktop alerts for new messages.'
+        : notifMuted
+          ? 'Muted — alerts are off.'
+          : 'Desktop alerts for new group chat messages.';
 
   // Load deletion preview
   useEffect(() => {
@@ -409,6 +430,29 @@ export function EditorialSettingsModal({
                   </button>
                 </div>
               )}
+
+              {/* Notifications */}
+              <div>
+                <h3 className={`${tc.fontClass} ${tc.text} font-medium text-sm mb-3`}>Notifications</h3>
+                <div className={`flex items-center justify-between p-3 rounded-lg border ${tc.border} ${tc.bg}`}>
+                  <div className="flex-1 pr-3">
+                    <p className={`${tc.fontClass} text-sm ${tc.text}`}>Chat notifications</p>
+                    <p className={`text-xs mt-1 ${tc.muted} ${tc.fontClass}`}>{notifHint}</p>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={notifEnabled}
+                    disabled={notifDisabled}
+                    onClick={onToggleNotifications}
+                    className={`relative shrink-0 w-11 h-6 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                      notifEnabled ? 'bg-emerald-500' : 'bg-gray-400'
+                    }`}
+                  >
+                    <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${notifEnabled ? 'translate-x-5' : ''}`} />
+                  </button>
+                </div>
+              </div>
 
               {/* Sign Out */}
               <div className="pt-2">
