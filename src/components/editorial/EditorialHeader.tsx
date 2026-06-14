@@ -49,7 +49,7 @@ export function EditorialHeader({
       className={`${tc.bg} border-b ${tc.border} sticky top-0 z-40 transition-colors duration-500`}
     >
       {/* Main header with chat-open animations */}
-      <div className={`flex items-center justify-between transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] px-4 sm:px-6 py-4 lg:py-6 ${chatOpen ? 'lg:px-[80px]' : 'lg:px-[120px]'}`}>
+      <div className={`flex items-center justify-between transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] px-4 sm:px-6 py-4 lg:py-6 lg:pl-[var(--nav-pl)] lg:pr-[var(--nav-pr)] [--nav-pl:80px] [--nav-pr:80px] ${chatOpen ? '' : 'wide:[--nav-pl:120px] wide:[--nav-pr:140px]'}`}>
         {/* Left: Logo */}
         <div className={`flex items-center transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${chatOpen ? 'gap-2' : 'gap-2.5'}`}>
           <span className={`${tc.fontClass} ${tc.text} font-medium tracking-[-0.3px] transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${chatOpen ? 'text-[20px]' : 'text-[22px]'}`}>
