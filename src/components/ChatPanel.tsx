@@ -14,10 +14,11 @@ import {
   Conversation,
   ChatMessage,
 } from '@/lib/chat';
-import { subscribeToGroupMessages, sendGroupMessage } from '@/lib/groupChat';
+import { subscribeToGroupMessages, sendGroupMessage, deleteGroupMessage, clearGroupChat } from '@/lib/groupChat';
 import { Drop, GroupChatMessage } from '@/types';
 import { parseMessageContent, detectHashtagTrigger } from '@/lib/dropTagUtils';
 import { DropPickerRow } from './DropPickerRow';
+import { MessageContextMenu } from '@/components/MessageContextMenu';
 
 interface ChatPanelProps {
   theme: 'light' | 'dark' | 'minimal';
@@ -28,6 +29,7 @@ interface ChatPanelProps {
   chatMode?: 'ai' | 'group';
   onChatModeChange?: (mode: 'ai' | 'group') => void;
   drops?: Drop[];
+  ownerId?: string | null;
 }
 
 const AGENT_URL = process.env.NEXT_PUBLIC_AGENT_URL || 'http://localhost:8000';
@@ -126,7 +128,7 @@ function getThemeStyles(theme: 'light' | 'dark' | 'minimal') {
 
 const WELCOME = 'Hi! I can help you manage your drops. Ask me to list drops, search content, check storage stats, or manage workspaces.';
 
-export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspaceMembers, chatMode: chatModeProp, onChatModeChange, drops }: ChatPanelProps) {
+export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspaceMembers, chatMode: chatModeProp, onChatModeChange, drops, ownerId }: ChatPanelProps) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -146,7 +148,15 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
   const [groupMessagesLoading, setGroupMessagesLoading] = useState(true);
   const [groupInput, setGroupInput] = useState('');
   const [groupSending, setGroupSending] = useState(false);
+  const [clearConfirm, setClearConfirm] = useState(false);
+  const [systemNotice, setSystemNotice] = useState<string | null>(null);
+  const [clearLoading, setClearLoading] = useState(false);
+  const [menuMsg, setMenuMsg] = useState<{ msg: GroupChatMessage; x: number; y: number } | null>(null);
+  const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
   const groupUnsubRef = useRef<(() => void) | null>(null);
+  const systemNoticeRef = useRef<HTMLDivElement>(null);
+  const longPressTimer = useRef<NodeJS.Timeout | null>(null);
+  const touchStartPos = useRef<{ x: number; y: number } | null>(null);
 
   // Drop tag picker state
   const [showDropPicker, setShowDropPicker] = useState(false);
@@ -163,6 +173,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
   const unsubRef = useRef<(() => void) | null>(null);
   const s = getThemeStyles(theme);
   const userId = auth.currentUser?.uid;
+  const isOwner = !!userId && ownerId === userId;
 
   // Delay welcome message fade-in until panel animation completes
   useEffect(() => {
@@ -425,7 +436,20 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
   const handleGroupSend = async () => {
     setShowDropPicker(false);
     const text = groupInput.trim();
-    if ((!text && attachments.length === 0) || groupSending || !userId || !workspaceId) return;
+    if (groupSending || !userId || !workspaceId) return;
+
+    if (text === '/clear') {
+      setGroupInput('');
+      if (isOwner) {
+        setClearConfirm(true);
+      } else {
+        setSystemNotice('Only the workspace owner can clear the chat.');
+        setTimeout(() => setSystemNotice(null), 4000);
+      }
+      return;
+    }
+
+    if (!text && attachments.length === 0) return;
 
     // Build message with attachments at the top
     const attachmentTags = attachments.map(drop => `#[${drop.name}](${drop.id})`).join(' ');
@@ -446,6 +470,81 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
       onClose();
     }, theme === 'light' ? 200 : theme === 'dark' ? 250 : 300);
   };
+
+  const handleClearChat = async () => {
+    if (!workspaceId) return;
+    setClearLoading(true);
+    try {
+      await clearGroupChat(workspaceId);
+      setClearConfirm(false);
+    } catch (error) {
+      console.error('Error clearing group chat:', error);
+      setSystemNotice('Failed to clear chat. Please try again.');
+      setTimeout(() => setSystemNotice(null), 4000);
+    } finally {
+      setClearLoading(false);
+    }
+  };
+
+  const handleMessageContextMenu = (e: React.MouseEvent, msg: GroupChatMessage) => {
+    e.preventDefault();
+    setMenuMsg({ msg, x: e.clientX, y: e.clientY });
+  };
+
+  const handleMessageTouchStart = (e: React.TouchEvent, msg: GroupChatMessage) => {
+    const touch = e.touches[0];
+    touchStartPos.current = { x: touch.clientX, y: touch.clientY };
+    longPressTimer.current = setTimeout(() => {
+      setMenuMsg({ msg, x: touch.clientX, y: touch.clientY });
+      touchStartPos.current = null;
+    }, 700);
+  };
+
+  const handleMessageTouchMove = (e: React.TouchEvent) => {
+    if (!touchStartPos.current) return;
+    const touch = e.touches[0];
+    const dx = Math.abs(touch.clientX - touchStartPos.current.x);
+    const dy = Math.abs(touch.clientY - touchStartPos.current.y);
+    if (dx > 10 || dy > 10) {
+      if (longPressTimer.current) {
+        clearTimeout(longPressTimer.current);
+        longPressTimer.current = null;
+      }
+      touchStartPos.current = null;
+    }
+  };
+
+  const handleMessageTouchEnd = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+    touchStartPos.current = null;
+  };
+
+  const handleCopyMessage = async (msg: GroupChatMessage) => {
+    try {
+      await navigator.clipboard.writeText(msg.content);
+      setCopiedMsgId(msg.id);
+      setTimeout(() => setCopiedMsgId(null), 2000);
+    } catch (error) {
+      console.error('Failed to copy message:', error);
+    }
+  };
+
+  const handleDeleteMessage = async (msg: GroupChatMessage) => {
+    if (!workspaceId) return;
+    await deleteGroupMessage(workspaceId, msg.id);
+  };
+
+  const closeMessageMenu = () => setMenuMsg(null);
+
+  // Scroll system notice into view when shown
+  useEffect(() => {
+    if ((clearConfirm || systemNotice) && systemNoticeRef.current) {
+      systemNoticeRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, [clearConfirm, systemNotice]);
 
   const handleCopy = async (msgId: string, content: string, messageElement: HTMLElement) => {
     const codeBlock = messageElement.querySelector('pre code');
@@ -687,9 +786,15 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
                   {showSender && !isOwn && (
                     <p className={`text-[10px] ${s.muted} mb-0.5 ml-1 truncate max-w-[160px]`}>{msg.senderName}</p>
                   )}
-                  <div className={`px-3 py-2 text-xs leading-relaxed ${s.roundedClass} ${
-                    isOwn ? s.userBubble : s.assistantBubble
-                  }`}>
+                  <div
+                    className={`px-3 py-2 text-xs leading-relaxed ${s.roundedClass} ${
+                      isOwn ? s.userBubble : s.assistantBubble
+                    }`}
+                    onContextMenu={(e) => handleMessageContextMenu(e, msg)}
+                    onTouchStart={(e) => handleMessageTouchStart(e, msg)}
+                    onTouchMove={handleMessageTouchMove}
+                    onTouchEnd={handleMessageTouchEnd}
+                  >
                     {/* Attachment cards */}
                     {tagParts.length > 0 && (
                       <div className="flex flex-wrap gap-1.5 mb-1">
@@ -741,6 +846,56 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
               </div>
             );
           })}
+
+          {/* System notice — local state only, never persisted */}
+          {(clearConfirm || systemNotice) && (
+            <div ref={systemNoticeRef} className="flex justify-center py-4">
+              <div className={`max-w-[85%] px-4 py-3 rounded-lg border ${s.borderColor} ${s.panelBg} shadow-sm`}>
+                <div className={`flex items-center gap-1.5 mb-2 ${s.muted}`}>
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75a4.5 4.5 0 01-4.884 4.484c-1.076.091-2.264.071-3.816.052a.945.945 0 00-.946.826c-.05.65.09 1.347.41 1.858.302.48.803.79 1.367.79h.006c.916 0 1.728-.45 2.19-1.14l.002-.002a.75.75 0 111.272.794l-.002.002a3.457 3.457 0 01-2.46 1.086h-.006a2.807 2.807 0 01-2.569-1.55 4.557 4.557 0 01-.536-2.59 2.45 2.45 0 002.45-2.45V6.75a2.25 2.25 0 012.25-2.25h.008a.75.75 0 010 1.5h-.008a.75.75 0 00-.75.75v.75c0 .966.784 1.75 1.75 1.75h.008a.75.75 0 010 1.5h-.008zM.75 9.75a4.5 4.5 0 014.884-4.484c1.076-.091 2.264-.071 3.816-.052a.945.945 0 00.946-.826c.05-.65-.09-1.347-.41-1.858a1.875 1.875 0 00-1.367-.79h-.006a1.875 1.875 0 00-1.875 1.875v.75c0 .414-.336.75-.75.75h-.008A.75.75 0 015.25 4.5v-.75A3.375 3.375 0 018.625.375h.006c.916 0 1.728.45 2.19 1.14l.002.002a.75.75 0 11-1.272.794l-.002-.002a1.883 1.883 0 00-1.368-.684h-.006a2.807 2.807 0 00-2.569 1.55 4.557 4.557 0 00-.536 2.59 2.45 2.45 0 00-2.45 2.45v1.5A2.25 2.25 0 01.75 12h.008a.75.75 0 010-1.5h-.008a.75.75 0 01-.75-.75v-.75z" />
+                  </svg>
+                  <span className={`text-[10px] ${s.fontClass} uppercase tracking-wider ${s.muted}`}>System</span>
+                </div>
+                <p className={`text-sm ${s.fontClass} ${s.headerText} mb-3`}>
+                  {clearConfirm ? 'Clear all messages? This can\'t be undone.' : systemNotice}
+                </p>
+                {clearConfirm ? (
+                  <div className="flex justify-center gap-2">
+                    <button
+                      onClick={() => setClearConfirm(false)}
+                      disabled={clearLoading}
+                      className={`px-3 py-1.5 text-xs ${s.fontClass} ${s.headerText} border ${s.borderColor} rounded-md hover:bg-black/5 transition-colors disabled:opacity-50`}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleClearChat}
+                      disabled={clearLoading}
+                      className="px-3 py-1.5 text-xs font-medium text-white bg-red-500 rounded-md hover:bg-red-600 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                    >
+                      {clearLoading && (
+                        <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      )}
+                      Clear all
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          )}
+
+          {menuMsg && (
+            <MessageContextMenu
+              x={menuMsg.x}
+              y={menuMsg.y}
+              isOwnMessage={menuMsg.msg.senderId === userId}
+              onCopy={() => handleCopyMessage(menuMsg.msg)}
+              onDelete={() => handleDeleteMessage(menuMsg.msg)}
+              onClose={closeMessageMenu}
+              theme={theme}
+            />
+          )}
         </div>
       )}
 
@@ -886,6 +1041,13 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
           </>
         )}
       </div>
+
+      {/* Copied toast */}
+      {copiedMsgId && (
+        <div className="absolute bottom-16 left-1/2 -translate-x-1/2 z-50 px-3 py-1.5 rounded-md bg-[#1a1a1a] text-white text-xs shadow-lg animate-fade-in-up">
+          Copied
+        </div>
+      )}
     </div>
   );
 }

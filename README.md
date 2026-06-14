@@ -45,6 +45,8 @@ A secure, temporary file sharing app. Drop files on one device, pick them up on 
 - **Workspace Group Chat** - Real-time chat inside every workspace, encrypted with the shared workspace key
 - **Unread Counter** - Chat button lights up when new messages arrive
 - **#Drop Tagging** - Type `#` in chat to reference a drop; rendered as a clickable chip that opens the drop preview
+- **Clear Chat (`/clear`)** - Workspace owners type `/clear` to wipe all messages in the chat; an inline system confirmation appears before anything is deleted
+- **Message Actions** - Right-click (desktop) or long-press (mobile) any message to copy its text, or delete your own message
 - **Desktop Notifications** - Foreground-only browser notifications for new messages (sender name + workspace name, no body)
 - **Notification Controls** - One-time permission prompt on first chat open; mute/unmute toggle in Settings; iOS Safari not supported
 

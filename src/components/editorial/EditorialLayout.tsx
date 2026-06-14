@@ -292,6 +292,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
               chatMode={chatMode}
               onChatModeChange={setChatMode}
               drops={drops}
+              ownerId={currentWorkspace?.ownerId ?? null}
             />
           )}
         </div>
