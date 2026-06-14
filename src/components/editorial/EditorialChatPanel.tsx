@@ -214,9 +214,9 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
     };
   }, [chatMode, workspaceId, userId]);
 
-  // Lock body scroll on mobile
+  // Lock body scroll on mobile/tablet when chat is open as overlay
   useEffect(() => {
-    const isMobile = window.innerWidth < 1024;
+    const isMobile = window.innerWidth < 1400;
     if (!isMobile) return;
     const scrollY = window.scrollY;
     document.documentElement.style.overflow = 'hidden';

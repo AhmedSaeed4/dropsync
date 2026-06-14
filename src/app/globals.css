@@ -3,6 +3,7 @@
 @theme {
   --color-cream: #FAF7F2;
   --color-white: #FAF7F2;
+  --breakpoint-wide: 1400px;
 }
 
 :root {

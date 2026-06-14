@@ -93,7 +93,7 @@ export function EditorialHeader({
           {onOpenSettings && (
             <button
               onClick={onOpenSettings}
-              className={`text-sm ${tc.fontClass} rounded-md border ${tc.border} ${tc.btnBg} ${tc.text} hover:border-[#1a1a1a] transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] px-3 sm:px-4 lg:${chatOpen ? 'lg:px-4 lg:py-2' : 'lg:px-6 lg:py-2.5'} py-2`}
+              className={`text-sm ${tc.fontClass} rounded-md border ${tc.border} ${tc.btnBg} ${tc.text} hover:border-[#1a1a1a] transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] px-3 sm:px-4 ${chatOpen ? 'lg:px-4 lg:py-2' : 'lg:px-6 lg:py-2.5'} py-2`}
             >
               <span className="hidden sm:inline">Settings</span>
               <svg className="w-4 h-4 sm:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
