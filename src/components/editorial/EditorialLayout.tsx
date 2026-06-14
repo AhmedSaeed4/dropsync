@@ -279,8 +279,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
 
         {/* Chat panel: full screen overlay on mobile/tablet, slides in as third column on desktop */}
         <div
-          className={`${showChat ? `absolute top-0 left-0 right-0 z-40 ${tc.bg} wide:static wide:inset-auto wide:z-auto wide:h-[calc(100vh-160px)]` : 'hidden wide:block wide:w-0 wide:opacity-0 wide:translate-x-[30px]'} wide:shrink-0 wide:relative overflow-hidden transition-[width,opacity,transform,padding] duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${showChat ? 'wide:w-[420px] wide:opacity-100 wide:translate-x-0 wide:pl-0' : ''}`}
-          style={showChat && typeof window !== 'undefined' && window.innerWidth < 1400 ? { height: '100dvh' } : undefined}
+          className={`${showChat ? `absolute top-0 left-0 right-0 z-40 ${tc.bg} h-[100dvh] wide:static wide:inset-auto wide:z-auto wide:h-[calc(100vh-160px)]` : 'hidden wide:block wide:w-0 wide:opacity-0 wide:translate-x-[30px]'} wide:shrink-0 wide:relative overflow-hidden transition-[width,opacity,transform,padding] duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${showChat ? 'wide:w-[420px] wide:opacity-100 wide:translate-x-0 wide:pl-0' : ''}`}
         >
           {showChat && (
             <EditorialChatPanel

@@ -268,21 +268,39 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
 
   // Lock body scroll on mobile
   useEffect(() => {
-    const isMobile = window.innerWidth < 1024;
-    if (!isMobile) return;
-    const scrollY = window.scrollY;
-    document.documentElement.style.overflow = 'hidden';
-    document.documentElement.style.height = '100%';
-    document.body.style.overflow = 'hidden';
-    document.body.style.height = '100%';
-    document.body.style.scrollbarGutter = 'auto';
+    let scrollY = 0;
+    let locked = false;
+
+    const applyLock = () => {
+      const isMobile = window.innerWidth < 1024;
+      if (isMobile && !locked) {
+        scrollY = window.scrollY;
+        document.documentElement.style.overflow = 'hidden';
+        document.documentElement.style.height = '100%';
+        document.body.style.overflow = 'hidden';
+        document.body.style.height = '100%';
+        document.body.style.scrollbarGutter = 'auto';
+        locked = true;
+      } else if (!isMobile && locked) {
+        document.documentElement.style.overflow = '';
+        document.documentElement.style.height = '';
+        document.body.style.overflow = '';
+        document.body.style.height = '';
+        document.body.style.scrollbarGutter = '';
+        locked = false;
+      }
+    };
+
+    applyLock();
+    window.addEventListener('resize', applyLock);
     return () => {
+      window.removeEventListener('resize', applyLock);
       document.documentElement.style.overflow = '';
       document.documentElement.style.height = '';
       document.body.style.overflow = '';
       document.body.style.height = '';
       document.body.style.scrollbarGutter = '';
-      window.scrollTo(0, scrollY);
+      if (locked) window.scrollTo(0, scrollY);
     };
   }, []);
 
