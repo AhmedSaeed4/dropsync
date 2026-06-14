@@ -18,6 +18,7 @@ import {
   onSnapshot,
   serverTimestamp,
   Timestamp,
+  writeBatch,
 } from 'firebase/firestore';
 import { db } from './firebase';
 import { encryptData, decryptData } from './crypto';
@@ -143,7 +144,8 @@ export async function sendGroupMessage(
 
 /**
  * Delete a group chat message.
- * Firestore security rules enforce that only the sender can delete their own messages.
+ * Firestore security rules enforce that only the sender can delete their own messages
+ * or the workspace owner can delete any message.
  */
 export async function deleteGroupMessage(
   workspaceId: string,
@@ -155,6 +157,27 @@ export async function deleteGroupMessage(
   } catch (error) {
     console.error('Error deleting group message:', error);
     return false;
+  }
+}
+
+/**
+ * Clear all messages from a workspace group chat.
+ * Only the workspace owner can delete messages they did not send (enforced by rules).
+ * Uses batched deletes in 500-document chunks.
+ */
+export async function clearGroupChat(workspaceId: string): Promise<void> {
+  const messagesRef = collection(db, 'workspaces', workspaceId, 'messages');
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const snapshot = await getDocs(query(messagesRef, limit(500)));
+    if (snapshot.empty) break;
+
+    const batch = writeBatch(db);
+    for (const document of snapshot.docs) {
+      batch.delete(document.ref);
+    }
+    await batch.commit();
   }
 }
 
