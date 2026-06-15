@@ -151,10 +151,14 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
   const [clearConfirm, setClearConfirm] = useState(false);
   const [systemNotice, setSystemNotice] = useState<string | null>(null);
   const [clearLoading, setClearLoading] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
+  const [noticeLeaving, setNoticeLeaving] = useState(false);
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [menuMsg, setMenuMsg] = useState<{ msg: GroupChatMessage; x: number; y: number } | null>(null);
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
   const groupUnsubRef = useRef<(() => void) | null>(null);
   const systemNoticeRef = useRef<HTMLDivElement>(null);
+  const hadNoticeRef = useRef(false);
   const longPressTimer = useRef<NodeJS.Timeout | null>(null);
   const touchStartPos = useRef<{ x: number; y: number } | null>(null);
 
@@ -451,6 +455,20 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
     setAttachments(prev => prev.filter(d => d.id !== dropId));
   };
 
+  // Show a transient text notice, auto-dismissed after ms
+  const showSystemNotice = (text: string, ms = 4000) => {
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    setNoticeLeaving(false);
+    setSystemNotice(text);
+    noticeTimer.current = setTimeout(() => {
+      setNoticeLeaving(true);              // phase 1: fade opacity out, grid stays full
+      noticeTimer.current = setTimeout(() => {
+        setSystemNotice(null);             // phase 2: now collapse the grid (content already invisible)
+        setNoticeLeaving(false);
+      }, 300);                             // matches the opacity transition duration
+    }, ms);
+  };
+
   const handleGroupSend = async () => {
     setShowDropPicker(false);
     const text = groupInput.trim();
@@ -461,8 +479,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
       if (isOwner) {
         setClearConfirm(true);
       } else {
-        setSystemNotice('Only the workspace owner can clear the chat.');
-        setTimeout(() => setSystemNotice(null), 4000);
+        showSystemNotice('Only the workspace owner can clear the chat.', 4000);
       }
       return;
     }
@@ -491,14 +508,18 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
 
   const handleClearChat = async () => {
     if (!workspaceId) return;
+    setClearConfirm(false);       // collapse the card WITH the messages — unified wipe
+    setIsClearing(true);          // messages fade out
     setClearLoading(true);
     try {
+      await new Promise(r => setTimeout(r, 320));  // let the wipe play
       await clearGroupChat(workspaceId);
-      setClearConfirm(false);
+      setIsClearing(false);       // empty state fades in; card already gone → no flash
+      showSystemNotice('Chat cleared', 3000);
     } catch (error) {
       console.error('Error clearing group chat:', error);
-      setSystemNotice('Failed to clear chat. Please try again.');
-      setTimeout(() => setSystemNotice(null), 4000);
+      setIsClearing(false);
+      showSystemNotice('Failed to clear chat. Please try again.', 4000);
     } finally {
       setClearLoading(false);
     }
@@ -557,12 +578,30 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
 
   const closeMessageMenu = () => setMenuMsg(null);
 
-  // Scroll system notice into view when shown
+  // Scroll a notice into view ONLY when one appears from nothing.
+  // Skip the confirm→success/error handoff (card collapsing into a divider):
+  // the user is already viewing that spot, and a smooth scroll there chases the
+  // divider (which shifts as the card above collapses) and flickers the card.
   useEffect(() => {
-    if ((clearConfirm || systemNotice) && systemNoticeRef.current) {
-      systemNoticeRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    }
+    const hasNotice = !!(clearConfirm || systemNotice);
+    const justAppeared = hasNotice && !hadNoticeRef.current;
+    hadNoticeRef.current = hasNotice;
+    if (!justAppeared) return;
+
+    const scroll = () =>
+      systemNoticeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    const raf = requestAnimationFrame(scroll);
+    const t = setTimeout(scroll, 320); // the height transition is ~300ms
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(t);
+    };
   }, [clearConfirm, systemNotice]);
+
+  // Clear any pending notice timer on unmount so no setState fires afterward
+  useEffect(() => () => {
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+  }, []);
 
   const handleCopy = async (msgId: string, content: string, messageElement: HTMLElement) => {
     const codeBlock = messageElement.querySelector('pre code');
@@ -770,8 +809,9 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
       {/* Group Chat Messages */}
       {chatMode === 'group' && (
         <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-2 min-h-0">
+          <div className={`space-y-2 transition-opacity duration-300 ${isClearing ? 'opacity-0' : 'opacity-100'}`}>
           {!groupMessagesLoading && groupMessages.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-8">
+            <div className="flex flex-col items-center justify-center py-8 animate-fade-in-up">
               <svg className={`w-8 h-8 ${s.muted} mb-3`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
               </svg>
@@ -864,21 +904,22 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
               </div>
             );
           })}
+          </div>
 
-          {/* System notice — local state only, never persisted */}
-          {(clearConfirm || systemNotice) && (
-            <div ref={systemNoticeRef} className="flex justify-center py-4">
-              <div className={`max-w-[85%] px-4 py-3 rounded-lg border ${s.borderColor} ${s.panelBg} shadow-sm`}>
-                <div className={`flex items-center gap-1.5 mb-2 ${s.muted}`}>
-                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75a4.5 4.5 0 01-4.884 4.484c-1.076.091-2.264.071-3.816.052a.945.945 0 00-.946.826c-.05.65.09 1.347.41 1.858.302.48.803.79 1.367.79h.006c.916 0 1.728-.45 2.19-1.14l.002-.002a.75.75 0 111.272.794l-.002.002a3.457 3.457 0 01-2.46 1.086h-.006a2.807 2.807 0 01-2.569-1.55 4.557 4.557 0 01-.536-2.59 2.45 2.45 0 002.45-2.45V6.75a2.25 2.25 0 012.25-2.25h.008a.75.75 0 010 1.5h-.008a.75.75 0 00-.75.75v.75c0 .966.784 1.75 1.75 1.75h.008a.75.75 0 010 1.5h-.008zM.75 9.75a4.5 4.5 0 014.884-4.484c1.076-.091 2.264-.071 3.816-.052a.945.945 0 00.946-.826c.05-.65-.09-1.347-.41-1.858a1.875 1.875 0 00-1.367-.79h-.006a1.875 1.875 0 00-1.875 1.875v.75c0 .414-.336.75-.75.75h-.008A.75.75 0 015.25 4.5v-.75A3.375 3.375 0 018.625.375h.006c.916 0 1.728.45 2.19 1.14l.002.002a.75.75 0 11-1.272.794l-.002-.002a1.883 1.883 0 00-1.368-.684h-.006a2.807 2.807 0 00-2.569 1.55 4.557 4.557 0 00-.536 2.59 2.45 2.45 0 00-2.45 2.45v1.5A2.25 2.25 0 01.75 12h.008a.75.75 0 010-1.5h-.008a.75.75 0 01-.75-.75v-.75z" />
-                  </svg>
-                  <span className={`text-[10px] ${s.fontClass} uppercase tracking-wider ${s.muted}`}>System</span>
-                </div>
-                <p className={`text-sm ${s.fontClass} ${s.headerText} mb-3`}>
-                  {clearConfirm ? 'Clear all messages? This can\'t be undone.' : systemNotice}
-                </p>
-                {clearConfirm ? (
+          {/* Confirm card — always mounted; height + opacity animate for a smooth slide */}
+          <div className={`grid transition-[grid-template-rows] duration-[300ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${clearConfirm ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
+            <div className={`min-h-0 transition-opacity duration-[300ms] ${clearConfirm ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+              <div ref={clearConfirm ? systemNoticeRef : undefined} className="flex justify-center py-4">
+                <div className={`max-w-[85%] px-4 py-3 rounded-lg border ${s.borderColor} ${s.panelBg} shadow-sm`}>
+                  <div className={`flex items-center gap-1.5 mb-2 ${s.muted}`}>
+                    <svg className="w-3.5 h-3.5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                    </svg>
+                    <span className={`text-[10px] ${s.fontClass} uppercase tracking-wider ${s.muted}`}>System</span>
+                  </div>
+                  <p className={`text-sm ${s.fontClass} ${s.headerText} mb-3`}>
+                    Clear all messages? This can't be undone.
+                  </p>
                   <div className="flex justify-center gap-2">
                     <button
                       onClick={() => setClearConfirm(false)}
@@ -898,10 +939,23 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
                       Clear all
                     </button>
                   </div>
-                ) : null}
+                </div>
               </div>
             </div>
-          )}
+          </div>
+
+          {/* Text notice — subtle divider; always mounted; height + opacity animate */}
+          <div className={`grid transition-[grid-template-rows] duration-[300ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${(!clearConfirm && systemNotice) ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
+            <div className={`min-h-0 transition-opacity duration-[300ms] ${(!clearConfirm && systemNotice && !noticeLeaving) ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+              <div ref={!clearConfirm && systemNotice ? systemNoticeRef : undefined} className="flex items-center justify-center gap-3 py-3">
+                <div className={`h-0.5 w-8 sm:w-12 ${s.borderColor}`} />
+                <span className={`text-[11px] ${s.fontClass} ${s.muted} uppercase tracking-wider whitespace-nowrap font-medium`}>
+                  {systemNotice}
+                </span>
+                <div className={`h-0.5 w-8 sm:w-12 ${s.borderColor}`} />
+              </div>
+            </div>
+          </div>
 
           {menuMsg && (
             <MessageContextMenu
