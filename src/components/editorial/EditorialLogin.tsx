@@ -32,7 +32,7 @@ export function EditorialLogin({ signIn, onShowAuthModal, theme }: EditorialLogi
 
           {/* Subtitle */}
           <p className={`text-sm ${tc.fontClass} ${tc.muted} mb-12`}>
-            Auto-expire: 1h - Forever &middot; Max 500MB &middot; 200 drops
+            Auto-expire: 1h - Forever &middot; Max 500MB &middot; Unlimited drops
           </p>
 
           {/* Auth Buttons */}

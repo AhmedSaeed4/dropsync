@@ -20,7 +20,7 @@ export function EditorialStatusPanel({ dropsCount, encryptionInitializing, theme
       </span>
       <span className={tc.muted}>&middot;</span>
       <span>
-        {dropsCount}/200 drops
+        {dropsCount} drops
       </span>
     </div>
   );

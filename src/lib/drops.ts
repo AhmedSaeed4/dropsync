@@ -5,7 +5,6 @@ import {
   doc,
   query,
   where,
-  limit,
   onSnapshot,
   serverTimestamp,
   Timestamp,
@@ -27,7 +26,6 @@ import {
 } from './keys';
 
 const DROPS_COLLECTION = 'drops';
-const MAX_DROPS = 200;
 const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB limit
 const MAX_ENCRYPTION_SIZE = 10 * 1024 * 1024; // 10MB - files larger than this won't be encrypted
 
@@ -54,16 +52,14 @@ export function createDropListener(
     // Workspace drops - filter by workspaceId
     q = query(
       collection(db, DROPS_COLLECTION),
-      where('workspaceId', '==', workspaceId),
-      limit(MAX_DROPS)
+      where('workspaceId', '==', workspaceId)
     );
   } else {
     // Personal drops - filter by BOTH userId AND workspaceId == null
     q = query(
       collection(db, DROPS_COLLECTION),
       where('userId', '==', userId),
-      where('workspaceId', '==', null),
-      limit(MAX_DROPS)
+      where('workspaceId', '==', null)
     );
   }
 
@@ -760,61 +756,71 @@ export async function deleteDrop(drop: Drop): Promise<boolean> {
   }
 }
 
-export async function cleanupExpiredDrops(userId: string): Promise<void> {
+export async function cleanupExpiredDrops(
+  { userId, workspaceId }: { userId: string; workspaceId?: string | null }
+): Promise<void> {
   const now = new Date();
 
-  // Simple query - just filter by userId, check expiresAt client-side
-  const q = query(
-    collection(db, DROPS_COLLECTION),
-    where('userId', '==', userId),
-    limit(100)
-  );
+  // Read the ENTIRE scope once (no limit). createDropListener reads this same
+  // scope without a limit, so this is one extra one-shot read on workspace open —
+  // fine at real scale (workspaces hold hundreds of docs, not millions; large file
+  // payloads live in R2, not inline).
+  //
+  // NOTE: an earlier design used a limit(200) batched loop that terminated when a
+  // batch held no expired drops. That terminates EARLY for any scope with >200 total
+  // docs whose expired drops sit beyond the first 200 (by doc-id order) — which
+  // includes the tester's 296-drop workspace this PR exists to fix. A full-scope
+  // read is correct; the batched loop is not.
+  const q = workspaceId
+    ? query(collection(db, DROPS_COLLECTION), where('workspaceId', '==', workspaceId))
+    : query(
+        collection(db, DROPS_COLLECTION),
+        where('userId', '==', userId),
+        where('workspaceId', '==', null) // personal scope only (fixes prior imprecision)
+      );
 
   const snapshot = await getDocs(q);
-  const deletePromises: Promise<void>[] = [];
 
-  snapshot.forEach((document) => {
+  // SACROSANCT GUARD: permanent ("forever") drops must NEVER be deleted.
+  // Also skip corrupt/legacy docs whose expiresAt isn't a real Firestore Timestamp.
+  const expired = snapshot.docs.filter((document) => {
     const data = document.data();
-
-    // Skip if no expiresAt (forever drops)
-    if (!data.expiresAt) return;
-
-    const expiresAt = data.expiresAt.toDate();
-
-    // Only delete if expired
-    if (expiresAt <= now) {
-      // Create a promise for each deletion
-      const deletePromise = async () => {
-        // Delete from R2 first if file has r2Key
-        if (data.r2Key) {
-          try {
-            await deleteFromR2(data.r2Key, data.workspaceId || null);
-          } catch (error) {
-            console.error('Failed to delete R2 file:', error);
-          }
-        }
-
-        // Delete attached image from R2 if present
-        if (data.imageR2Key) {
-          try {
-            await deleteFromR2(data.imageR2Key, data.workspaceId || null);
-          } catch (error) {
-            console.error('Failed to delete image from R2:', error);
-          }
-        }
-
-        // Then delete Firestore document
-        await deleteDoc(doc(db, DROPS_COLLECTION, document.id));
-        // Delete associated share links
-        await deleteSharesForDrop(document.id);
-      };
-
-      deletePromises.push(deletePromise());
-    }
+    if (!data.expiresAt || !(data.expiresAt instanceof Timestamp)) return false;
+    return data.expiresAt.toDate() <= now;
   });
 
-  // Process all deletions
-  await Promise.allSettled(deletePromises);
+  if (expired.length === 0) return;
+
+  // Per-drop: R2 file → R2 image → Firestore doc → share links.
+  // allSettled so one failure can't abort the rest of the batch.
+  await Promise.allSettled(
+    expired.map(async (document) => {
+      const data = document.data();
+
+      // Delete file from R2 first if present
+      if (data.r2Key) {
+        try {
+          await deleteFromR2(data.r2Key, data.workspaceId || null);
+        } catch (error) {
+          console.error('Failed to delete R2 file:', error);
+        }
+      }
+
+      // Delete attached image from R2 if present
+      if (data.imageR2Key) {
+        try {
+          await deleteFromR2(data.imageR2Key, data.workspaceId || null);
+        } catch (error) {
+          console.error('Failed to delete image from R2:', error);
+        }
+      }
+
+      // Then delete the Firestore document
+      await deleteDoc(doc(db, DROPS_COLLECTION, document.id));
+      // And any associated share links
+      await deleteSharesForDrop(document.id);
+    })
+  );
 }
 
 export function getYouTubeVideoId(text: string): string | null {
