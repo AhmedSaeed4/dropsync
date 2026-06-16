@@ -17,10 +17,8 @@ export function useDrops(workspaceId: string | null = null) {
 
     setLoading(true);
 
-    // Clean up expired drops on load (only for personal drops)
-    if (!workspaceId) {
-      cleanupExpiredDrops(user.uid);
-    }
+    // Clean up expired drops on load (personal + workspace scopes)
+    cleanupExpiredDrops({ userId: user.uid, workspaceId });
 
     // Subscribe to real-time updates
     const unsubscribe = createDropListener(user.uid, workspaceId, (newDrops) => {
@@ -32,8 +30,8 @@ export function useDrops(workspaceId: string | null = null) {
   }, [user, workspaceId]);
 
   const refreshDrops = useCallback(() => {
-    if (user && !workspaceId) {
-      cleanupExpiredDrops(user.uid);
+    if (user) {
+      cleanupExpiredDrops({ userId: user.uid, workspaceId });
     }
   }, [user, workspaceId]);
 

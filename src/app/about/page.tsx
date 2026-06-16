@@ -148,7 +148,7 @@ function AboutPageInner() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {[
                 ['MAX FILE SIZE', '500 MB'],
-                ['MAX DROPS', '200 PER WORKSPACE'],
+                ['MAX DROPS', 'UNLIMITED'],
                 ['ENCRYPTION', 'AES-256-GCM'],
                 ['STORAGE', 'CLOUDFLARE R2 + FIREBASE'],
                 ['AUTO-EXPIRE', '1H, 2H, 6H, 24H, OR FOREVER'],
@@ -277,7 +277,7 @@ function AboutPageInner() {
                 ['WHAT FILE TYPES ARE SUPPORTED?', 'Any file type. Images, PDFs, documents, videos, archives — if it\'s under 500MB, you can drop it.'],
                 ['WHAT HAPPENS WHEN A DROP EXPIRES?', 'The files are permanently deleted from Cloudflare R2 storage and the metadata is removed from the database. The share link stops working. No backups are kept.'],
                 ['CAN I EXTEND THE EXPIRY TIME AFTER UPLOADING?', 'Not currently. Once a drop is created, its expiry is fixed. Delete it and re-upload with a new timer if needed.'],
-                ['IS THERE A LIMIT TO HOW MANY DROPS I CAN CREATE?', '200 active drops per workspace. Expired or deleted drops don\'t count toward the limit.'],
+                ['IS THERE A LIMIT TO HOW MANY DROPS I CAN CREATE?', 'No, there is no limit on the number of drops you can create.'],
                 ['HOW DOES VOICE-TO-TEXT WORK?', 'Click the microphone button, speak, and your audio is transcribed using Groq\'s Whisper AI. The text appears as a regular text drop you can edit before saving.'],
                 ['WHAT ARE SHARED WORKSPACES?', 'Workspaces let multiple users collaborate on the same drops. Create one, invite team members with a 6-character code, and everyone sees the same drops in real time.'],
                 ['CAN I MOVE DROPS BETWEEN WORKSPACES?', 'Yes. You can move drops between your personal space and any workspace you\'re a member of, or between workspaces. The drop is automatically re-encrypted with the new workspace key.'],
@@ -313,7 +313,7 @@ function AboutPageInner() {
         <footer className="relative z-10 flex justify-between items-center px-8 py-6 text-xs border-t font-mono uppercase tracking-widest" style={{ borderColor: classicBorder, color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(26,26,26,0.4)' }}>
           <a href="/" style={{ color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(26,26,26,0.4)' }} className="hover:opacity-70 transition-opacity">HOME</a>
           <span>EDITION 2.0</span>
-          <span className="hidden sm:inline">500MB / 200 DROPS</span>
+          <span className="hidden sm:inline">500MB / UNLIMITED</span>
         </footer>
       </div>
     );
@@ -399,7 +399,7 @@ function AboutPageInner() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
             {[
               ['Max File Size', '500 MB'],
-              ['Max Drops', '200 per workspace'],
+              ['Max Drops', 'Unlimited'],
               ['Encryption', 'AES-256-GCM'],
               ['Storage', 'Cloudflare R2 + Firebase'],
               ['Auto-Expire', '1h, 2h, 6h, 24h, or forever'],
@@ -538,7 +538,7 @@ function AboutPageInner() {
               ['What file types are supported?', 'Any file type. Images, PDFs, documents, videos, archives — if it\'s under 500MB, you can drop it.'],
               ['What happens when a drop expires?', 'The files are permanently deleted from Cloudflare R2 storage and the metadata is removed from the database. The share link stops working. No backups are kept.'],
               ['Can I extend the expiry time after uploading?', 'Not currently. Once a drop is created, its expiry is fixed. Delete it and re-upload with a new timer if needed.'],
-              ['Is there a limit to how many drops I can create?', '200 active drops per workspace. Expired or deleted drops don\'t count toward the limit.'],
+              ['Is there a limit to how many drops I can create?', 'No, there is no limit on the number of drops you can create.'],
               ['How does voice-to-text work?', 'Click the microphone button, speak, and your audio is transcribed using Groq\'s Whisper AI. The text appears as a regular text drop you can edit before saving.'],
               ['What are shared workspaces?', 'Workspaces let multiple users collaborate on the same drops. Create one, invite team members with a 6-character code, and everyone sees the same drops in real time.'],
               ['Can I move drops between workspaces?', 'Yes. You can move drops between your personal space and any workspace you\'re a member of, or between workspaces. The drop is automatically re-encrypted with the new workspace key.'],
@@ -574,7 +574,7 @@ function AboutPageInner() {
       <footer className={`relative z-10 flex justify-between items-center px-8 py-6 text-[0.75rem] tracking-[0.05em] text-[#666] border-t font-[family-name:var(--font-raleway)] ${isDark ? 'border-[#333]' : isMinimal ? 'border-[#b0b4a5]' : 'border-[#e0e0e0]'}`}>
         <Link href="/" className="text-[#666] hover:text-[#1a1a1a] transition-colors">Home</Link>
         <span>EDITION 2.0</span>
-        <span className="hidden sm:inline">Max 500MB · 200 drops</span>
+        <span className="hidden sm:inline">Max 500MB · Unlimited drops</span>
       </footer>
     </div>
   );

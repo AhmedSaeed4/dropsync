@@ -770,7 +770,7 @@ export default function Home() {
         {
           num: '02', title: 'Store', desc: 'Auto-expires from 1 hour\nto forever',
           backTitle: 'How Storage Works',
-          backList: ['Files on Cloudflare R2', 'Metadata in Firebase Firestore', 'AES-256-GCM encryption', 'Auto-expire: 1h, 2h, 6h, 24h, or forever', 'Max 200 drops per workspace', 'Expired drops auto-deleted'],
+          backList: ['Files on Cloudflare R2', 'Metadata in Firebase Firestore', 'AES-256-GCM encryption', 'Auto-expire: 1h, 2h, 6h, 24h, or forever', 'Unlimited drops per workspace', 'Expired drops auto-deleted'],
           backIcon: 'M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z',
         },
         {
@@ -1005,7 +1005,7 @@ export default function Home() {
             <footer className="flex justify-between items-center px-4 sm:px-6 lg:px-8 py-6 text-xs tracking-[0.05em] font-[family-name:var(--font-raleway)]" style={{ color: mutedColor, opacity: 0, animation: 'fadeIn 800ms ease 1000ms forwards' }}>
               <a href="/about" onClick={handleAboutClick} className="hover:opacity-70 transition-opacity cursor-pointer">About</a>
               <span style={{ marginLeft: '104px' }}>EDITION 2.0</span>
-              <span className="hidden sm:inline">Max 500MB · 200 drops</span>
+              <span className="hidden sm:inline">Max 500MB · Unlimited drops</span>
             </footer>
           </div>
 
@@ -1061,7 +1061,7 @@ export default function Home() {
               </p>
               <p className="text-[#1A1A1A]/60 text-xs tracking-wider mb-12">
                 Auto-expire: 1h - Forever
-                <span className="hidden sm:inline"> • Max 500MB • 200 drops</span>
+                <span className="hidden sm:inline"> • Max 500MB • Unlimited drops</span>
               </p>
 
               {/* Auth Button - Pill Style */}
@@ -1168,7 +1168,7 @@ export default function Home() {
                 </li>
                 <li className="flex justify-between py-1 border-b border-white/10">
                   <span className="text-white/60">CAPACITY</span>
-                  <span className="text-white">200 DROPS</span>
+                  <span className="text-white">UNLIMITED DROPS</span>
                 </li>
                 <li className="flex justify-between py-1 border-b border-white/10">
                   <span className="text-white/60">MAX_SIZE</span>
@@ -1306,7 +1306,7 @@ export default function Home() {
               EDITION 2.0
             </span>
             <span className={`hidden sm:inline text-[10px] font-mono uppercase tracking-wider ${themeColors.isDark ? 'text-white/40' : 'text-[#1A1A1A]/40'}`}>
-              500MB / 200 DROPS
+              500MB / UNLIMITED
             </span>
           </div>
         </div>
