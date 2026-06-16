@@ -15,6 +15,7 @@ import {
 import { db } from './firebase';
 import { Workspace } from '@/types';
 import { createWorkspaceKey, addMemberToWorkspaceKey, removeMemberFromWorkspaceKey } from './keys';
+import { deleteSharesForDrop } from './shares';
 
 const WORKSPACES_COLLECTION = 'workspaces';
 const USERS_COLLECTION = 'users';
@@ -238,7 +239,7 @@ export async function deleteWorkspace(userId: string, workspaceId: string): Prom
     );
     const dropsSnapshot = await getDocs(dropsQuery);
 
-    // Delete drops from R2 and Firestore
+    // Delete drops from R2 and Firestore (mirror deleteDrop)
     const { deleteFromR2 } = await import('./drops');
     for (const dropDoc of dropsSnapshot.docs) {
       const dropData = dropDoc.data();
@@ -247,10 +248,18 @@ export async function deleteWorkspace(userId: string, workspaceId: string): Prom
           await deleteFromR2(dropData.r2Key, workspaceId);
         } catch (error) {
           console.error('Failed to delete R2 file:', error);
-          // Continue deleting other files
+        }
+      }
+      if (dropData.imageR2Key) {
+        try {
+          await deleteFromR2(dropData.imageR2Key, workspaceId);
+        } catch (error) {
+          console.error('Failed to delete image from R2:', error);
         }
       }
       await deleteDoc(doc(db, 'drops', dropDoc.id));
+      // Delete associated share links (best-effort — swallows its own errors)
+      await deleteSharesForDrop(dropDoc.id);
     }
 
     // Delete the workspace
