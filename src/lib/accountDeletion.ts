@@ -1,6 +1,8 @@
 import { auth, db } from './firebase';
-import { deleteDoc, doc, collection, query, where, getDocs, updateDoc, getDoc } from 'firebase/firestore';
+import { deleteDoc, doc, collection, query, where, getDocs, updateDoc, getDoc, QueryDocumentSnapshot } from 'firebase/firestore';
 import { deleteMasterKey } from './crypto';
+import { deleteFromR2 } from './drops';
+import { deleteSharesForDrop } from './shares';
 
 const USERS_COLLECTION = 'users';
 const USER_KEYS_COLLECTION = 'userKeys';
@@ -123,6 +125,29 @@ export async function previewAccountDeletion(userId: string): Promise<DeletionPr
   };
 }
 
+// Best-effort: delete a drop's R2 file + attached image + share links, then the doc.
+// Mirrors deleteDrop (drops.ts). R2/share failures are swallowed + logged so a
+// missing object never aborts account deletion.
+async function deleteDropWithAttachments(dropDoc: QueryDocumentSnapshot) {
+  const data = dropDoc.data();
+  if (data.r2Key) {
+    try {
+      await deleteFromR2(data.r2Key, data.workspaceId || null);
+    } catch (error) {
+      console.error('Failed to delete R2 file:', error);
+    }
+  }
+  if (data.imageR2Key) {
+    try {
+      await deleteFromR2(data.imageR2Key, data.workspaceId || null);
+    } catch (error) {
+      console.error('Failed to delete image from R2:', error);
+    }
+  }
+  await deleteDoc(dropDoc.ref);
+  await deleteSharesForDrop(dropDoc.id);
+}
+
 /**
  * Delete user account and all associated data
  */
@@ -150,7 +175,7 @@ export async function deleteAccount(
     const personalDropsSnap = await getDocs(personalDropsQuery);
 
     for (const dropDoc of personalDropsSnap.docs) {
-      await deleteDoc(dropDoc.ref);
+      await deleteDropWithAttachments(dropDoc);
     }
 
     // Step 2: Handle workspaces
@@ -177,7 +202,7 @@ export async function deleteAccount(
           );
           const workspaceDropsSnap = await getDocs(workspaceDropsQuery);
           for (const dropDoc of workspaceDropsSnap.docs) {
-            await deleteDoc(dropDoc.ref);
+            await deleteDropWithAttachments(dropDoc);
           }
           // Delete workspace
           await deleteDoc(workspaceRef);
