@@ -949,7 +949,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
             <div className={`min-h-0 transition-opacity duration-[300ms] ${(!clearConfirm && systemNotice && !noticeLeaving) ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
               <div ref={!clearConfirm && systemNotice ? systemNoticeRef : undefined} className="flex items-center justify-center gap-3 py-3">
                 <div className={`h-0.5 w-8 sm:w-12 ${s.borderColor}`} />
-                <span className={`text-[11px] ${s.fontClass} ${s.muted} uppercase tracking-wider whitespace-nowrap font-medium`}>
+                <span className={`text-[11px] ${s.fontClass} ${s.muted} uppercase tracking-wider text-center min-w-0 font-medium`}>
                   {systemNotice}
                 </span>
                 <div className={`h-0.5 w-8 sm:w-12 ${s.borderColor}`} />
