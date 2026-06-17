@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { Drop, Workspace, Category } from '@/types';
 import { EditorialDropItem } from './EditorialDropItem';
 import { UndoToast } from '@/components/UndoToast';
@@ -183,6 +184,15 @@ export function EditorialDropList({
 
   // Filter out all pending deletions from displayed drops
   const visibleDrops = drops.filter(d => !pendingDeletions.has(d.id));
+
+  // Respect prefers-reduced-motion: those users get the current instant snap.
+  const prefersReducedMotion = useReducedMotion();
+
+  // Only animate add/remove in the default (unfiltered) view. Search/category/
+  // mention filtering re-renders the list on every keystroke, so animating there
+  // would jank on large lists (hundreds of drops, no virtualization).
+  const isFiltered = searchQuery.trim() !== '' || selectedCategory !== 'all' || !!mentionFilter;
+  const animateDrops = !prefersReducedMotion && !isFiltered;
 
   const handlePinDrop = useCallback(async (drop: Drop) => {
     if (drop.pinned) {
@@ -441,7 +451,7 @@ export function EditorialDropList({
                 }}
                 placeholder="Search drops..."
                 disabled={loading}
-                className="w-full bg-transparent border-none outline-none text-sm placeholder:text-[#1A1A1A]/25"
+                className={`w-full bg-transparent border-none outline-none text-sm ${theme === 'dark' ? 'placeholder:text-white/30' : 'placeholder:text-[#1A1A1A]/30'}`}
               />
             </div>
             {/* Member dropdown (portal) */}
@@ -588,6 +598,35 @@ export function EditorialDropList({
                   ? 'No drops match your search'
                   : 'No drops in this category'}
               </p>
+            </div>
+          ) : animateDrops ? (
+            <div className="relative p-3 space-y-2">
+              <AnimatePresence initial={false} mode="popLayout">
+                {filteredDrops.map((drop) => (
+                  <motion.div
+                    key={drop.id}
+                    layout
+                    initial={{ opacity: 0, scale: 0.97 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.9 }}
+                    transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+                  >
+                    <EditorialDropItem
+                      drop={drop}
+                      onDelete={handleDeleteWithUndo}
+                      onPreview={onPreview}
+                      onEdit={onEdit}
+                      selected={selectedIds.has(drop.id)}
+                      onSelect={toggleSelect}
+                      selectionMode={selectionMode}
+                      theme={theme}
+                      currentUserId={currentUserId}
+                      onPin={handlePinDrop}
+                      onUnpin={handlePinDrop}
+                    />
+                  </motion.div>
+                ))}
+              </AnimatePresence>
             </div>
           ) : (
             <div className="p-3 space-y-2">
