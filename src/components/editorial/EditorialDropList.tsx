@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { useState, useCallback, useMemo, useEffect, useLayoutEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { Drop, Workspace, Category } from '@/types';
@@ -11,6 +11,7 @@ import { deleteDrop, moveDrop, pinDrop, unpinDrop } from '@/lib/drops';
 import { EditorialMoveDropModal } from './EditorialMoveDropModal';
 import { getEditorialThemeColors } from './editorialTheme';
 import { MemberInfo } from '@/lib/workspaces';
+import { getCategoryCollapsed, setCategoryCollapsed } from '@/lib/auth';
 
 interface EditorialDropListProps {
   drops: Drop[];
@@ -39,6 +40,9 @@ const BUILT_IN_CATEGORIES = [
   { value: 'password', label: 'Password' },
   { value: 'link', label: 'Link' },
 ];
+
+// Measure layout before paint without tripping useLayoutEffect's SSR warning.
+const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
 
 export function EditorialDropList({
   drops,
@@ -230,6 +234,99 @@ export function EditorialDropList({
     return counts;
   }, [visibleDrops, categories]);
 
+  // --- Collapsible category strip (per-space, remembered across devices) ---
+  // spaceKey = workspace id, or 'personal' for the personal space. Each space
+  // keeps its own collapsed state on the user's own doc (independent per member).
+  const spaceKey = currentWorkspace?.id ?? 'personal';
+  const spaceKeyRef = useRef(spaceKey);
+  spaceKeyRef.current = spaceKey;
+
+  const pillsRef = useRef<HTMLDivElement>(null);
+  const prefsRef = useRef<Record<string, boolean>>({});
+  const [overflows, setOverflows] = useState(false);
+  const [collapsedHeight, setCollapsedHeight] = useState(0);
+  const [catCollapsed, setCatCollapsed] = useState(true); // default collapsed for brand-new users
+  const [animateCollapse, setAnimateCollapse] = useState(false); // animate only on user toggle
+
+  const totalCategoryCount =
+    BUILT_IN_CATEGORIES.length + categories.length + (!loading && dropCounts['uncategorized'] > 0 ? 1 : 0);
+  const shouldCollapsePills = overflows && catCollapsed;
+
+  // Measure whether the pills overflow a single row, and capture one row's height.
+  const measurePillsOverflow = useCallback(() => {
+    const el = pillsRef.current;
+    if (!el) return;
+    const children = Array.from(el.children) as HTMLElement[];
+    if (children.length === 0) {
+      setOverflows(false);
+      setCollapsedHeight(0);
+      return;
+    }
+    const firstTop = children[0].offsetTop;
+    let firstRowBottom = 0;
+    let hasSecondRow = false;
+    for (const child of children) {
+      const top = child.offsetTop;
+      const bottom = top + child.offsetHeight;
+      // Tolerate sub-pixel rounding so a 1px difference can't register a phantom second row.
+      if (top > firstTop + 2) hasSecondRow = true;
+      else if (bottom > firstRowBottom) firstRowBottom = bottom;
+    }
+    setOverflows(hasSecondRow);
+    setCollapsedHeight(firstRowBottom);
+  }, []);
+
+  // Initial measure + re-measure on resize (pills re-wrap when the width changes).
+  useIsomorphicLayoutEffect(() => {
+    measurePillsOverflow();
+    const el = pillsRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => measurePillsOverflow());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [measurePillsOverflow]);
+
+  // Re-measure whenever the rendered pills or their wrapping can change. The
+  // ResizeObserver above only fires on the element's own size change — which it
+  // does NOT do while the strip is collapsed (height is clipped to one row) — so
+  // without this, switching from a many-category space to a 4-category one would
+  // leave `overflows` stale and wrongly keep the toggle button showing.
+  useIsomorphicLayoutEffect(() => {
+    measurePillsOverflow();
+  }, [categories, loading, showChat, dropCounts, measurePillsOverflow]);
+
+  // Load the whole catCollapsed map once on mount; default collapsed per space.
+  useEffect(() => {
+    if (!currentUserId) return;
+    let cancelled = false;
+    getCategoryCollapsed(currentUserId)
+      .then((map) => {
+        if (cancelled) return;
+        prefsRef.current = map;
+        setAnimateCollapse(false);
+        setCatCollapsed(map[spaceKeyRef.current] ?? true);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [currentUserId]);
+
+  // Apply this space's preference instantly whenever the space changes.
+  useEffect(() => {
+    setAnimateCollapse(false);
+    setCatCollapsed(prefsRef.current[spaceKey] ?? true);
+  }, [spaceKey]);
+
+  // User toggle: optimistic local update + animate; persist in the background.
+  const toggleCollapse = useCallback(() => {
+    const next = !catCollapsed;
+    prefsRef.current = { ...prefsRef.current, [spaceKey]: next };
+    setAnimateCollapse(true);
+    setCatCollapsed(next);
+    if (currentUserId) {
+      setCategoryCollapsed(currentUserId, spaceKey, next); // background write; swallows its own errors
+    }
+  }, [catCollapsed, spaceKey, currentUserId]);
+
   // Filter drops based on category, search, and mention
   const filteredDrops = useMemo(() => {
     return visibleDrops.filter(drop => {
@@ -281,9 +378,16 @@ export function EditorialDropList({
       </div>
 
       <div className={`${tc.bg} border ${tc.border} ${tc.roundedClass} overflow-hidden`}>
-        {/* Category filter pills — always visible */}
+        {/* Category filter pills — collapse to one row when they overflow */}
         <div className={`border-b ${tc.border} ${showChat ? 'px-3 py-2' : 'px-4 py-3'}`}>
-          <div className={`flex flex-wrap ${showChat ? 'gap-1' : 'gap-2'}`}>
+          <motion.div
+            ref={pillsRef}
+            className={`relative flex flex-wrap ${showChat ? 'gap-1' : 'gap-2'}`}
+            initial={false}
+            animate={{ height: shouldCollapsePills ? collapsedHeight : 'auto' }}
+            transition={{ duration: animateCollapse ? 0.25 : 0, ease: [0.4, 0, 0.2, 1] }}
+            style={{ overflow: 'hidden' }}
+          >
             {BUILT_IN_CATEGORIES.map((cat) => (
               <button
                 key={cat.value}
@@ -378,7 +482,19 @@ export function EditorialDropList({
                 </div>
               );
             })}
-          </div>
+          </motion.div>
+          {overflows && (
+            <div className="flex justify-center mt-2">
+              <button
+                type="button"
+                onClick={toggleCollapse}
+                className={`text-[11px] ${font} ${tc.muted} hover:${tc.text} transition-colors inline-flex items-center gap-1`}
+              >
+                <span>{catCollapsed ? `Show all (${totalCategoryCount})` : 'Show less'}</span>
+                <span className="text-[9px] leading-none">{catCollapsed ? '▼' : '▲'}</span>
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Search bar — always visible */}

@@ -236,6 +236,30 @@ export async function updateUserDisplayName(userId: string, displayName: string)
   }
 }
 
+// Category-strip collapse preference, per space (personal or a workspace id).
+// Stored on the user's own doc under catCollapsed[spaceKey]. setDoc with merge
+// deep-merges the map, so one space's toggle never overwrites another's.
+// Mirrors the updateUserDisplayName pattern above.
+export async function getCategoryCollapsed(userId: string): Promise<Record<string, boolean>> {
+  try {
+    const userRef = doc(db, 'users', userId);
+    const snap = await getDoc(userRef);
+    return (snap.data()?.catCollapsed as Record<string, boolean> | undefined) ?? {};
+  } catch (error) {
+    console.error('Error loading category collapse preference:', error);
+    return {};
+  }
+}
+
+export async function setCategoryCollapsed(userId: string, spaceKey: string, collapsed: boolean): Promise<void> {
+  try {
+    const userRef = doc(db, 'users', userId);
+    await setDoc(userRef, { catCollapsed: { [spaceKey]: collapsed } }, { merge: true });
+  } catch (error) {
+    console.error('Error saving category collapse preference:', error);
+  }
+}
+
 // Get the auth provider for the current user
 export function getAuthProvider(): 'password' | 'google.com' | null {
   const user = auth.currentUser;
