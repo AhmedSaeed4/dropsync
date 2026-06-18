@@ -3,7 +3,7 @@
 import { Drop } from '@/types';
 import { formatFileSize, getTimeRemaining, decryptDrop, getYouTubeVideoId } from '@/lib/drops';
 import { createShare } from '@/lib/shares';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, memo } from 'react';
 import { useVideoThumbnail } from '@/hooks/useVideoThumbnail';
 import { getEditorialThemeColors } from './editorialTheme';
 import { DropContextMenu, useContextMenu } from '../DropContextMenu';
@@ -23,8 +23,11 @@ interface EditorialDropItemProps {
   showMoveControls?: boolean;
   canMoveUp?: boolean;
   canMoveDown?: boolean;
-  onMoveUp?: () => void;
-  onMoveDown?: () => void;
+  // Id-based so the parent can pass stable (memoized) callbacks instead of a
+  // fresh inline arrow per render, which would bust React.memo. The item
+  // supplies its own drop.id when invoking them.
+  onMoveUp?: (dropId: string) => void;
+  onMoveDown?: (dropId: string) => void;
   showDragHandle?: boolean;
   dragHandleProps?: Record<string, any>;
 }
@@ -50,7 +53,91 @@ function getFileContent(drop: Drop): string {
   return '';
 }
 
-export function EditorialDropItem({
+/**
+ * Nearest ancestor of `el` that actually scrolls vertically, or null if there
+ * isn't one. Returns the scroll box the drops live in (the max-h-[500px]
+ * overflow-y-auto container in EditorialDropList) so the IntersectionObserver
+ * can use it as its root — then rootMargin is measured against THAT box (where
+ * drops are clipped) instead of the viewport, letting the buffer genuinely
+ * pre-trigger before drops scroll into view. Only ancestors that overflow AND
+ * have more content than height qualify, so a non-scrolling overflow element is
+ * skipped. null → the observer falls back to the viewport (decrypt never blocked).
+ */
+function getScrollParent(el: Element | null): Element | null {
+  let node = el?.parentElement;
+  while (node) {
+    const overflowY = getComputedStyle(node).overflowY;
+    if (overflowY === 'auto' || overflowY === 'scroll') {
+      if (node.scrollHeight > node.clientHeight) return node;
+    }
+    node = node.parentElement;
+  }
+  return null;
+}
+
+/**
+ * Reports whether an element is in (or near) the viewport.
+ *
+ * Used by EditorialDropItem to defer the expensive per-drop decryption
+ * until the card actually scrolls into view. Without this, a workspace
+ * with hundreds of encrypted drops decrypts them all on mount → a large
+ * CPU spike that makes the app feel slow. A 1000px rootMargin buffer starts
+ * decryption well before the card is visible to minimize any pop-in.
+ *
+ * The observer's root is the nearest scrolling ancestor (see getScrollParent),
+ * i.e. the drops' overflow container — not the viewport — so the buffer is
+ * measured against the box that actually clips the drops.
+ *
+ * Once intersected it latches to true and disconnects the observer: we only
+ * need to know "has this card been seen once" so decryption runs a single
+ * time. Combined with a hasDecrypted ref guard inside the component,
+ * scrolling away and back never re-decrypts (decrypted state persists → no
+ * flicker on scroll-back). All items still mount (this is not virtualization).
+ */
+function useInView<T extends Element>(rootMargin = '1000px 0px') {
+  const ref = useRef<T | null>(null);
+  const [inView, setInView] = useState(false);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+
+    // SSR / non-browser fallback: treat as visible so decrypt is not blocked.
+    if (typeof IntersectionObserver === 'undefined') {
+      setInView(true);
+      return;
+    }
+
+    // Drops scroll inside a fixed-height overflow container, not the page.
+    // Observe against that container as root so rootMargin is measured against
+    // the scroll box (where drops are clipped) — otherwise the buffer would be
+    // measured against the viewport and ignored by the container's clip, so
+    // content would pop in on scroll. null (no scroll ancestor) → viewport.
+    const root = getScrollParent(el);
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            setInView(true);
+            observer.disconnect();
+          }
+        }
+      },
+      { root, rootMargin }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [rootMargin]);
+
+  return { ref, inView };
+}
+
+// Memoized so it skips re-render when its props are shallow-equal. During a
+// drag, dnd-kit re-renders the sortable wrappers every frame; with all props
+// stabilized (stable handlers + stable drop refs + memoized dragHandleProps),
+// only items whose props actually changed re-render — not all 300.
+export const EditorialDropItem = memo(function EditorialDropItem({
   drop,
   onDelete,
   onPreview,
@@ -80,6 +167,22 @@ export function EditorialDropItem({
   const [isSharing, setIsSharing] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
 
+  // Lazy decryption: only decrypt an encrypted drop once its card scrolls
+  // into view (kills the load-time spike for big workspaces). See useInView.
+  const { ref: cardRef, inView } = useInView<HTMLDivElement>('1000px 0px');
+  // Guard set before the await so a concurrent re-run (e.g. React StrictMode)
+  // can't kick off a second decrypt for the same payload.
+  const hasDecrypted = useRef(false);
+  // Signature of the last-decrypted encrypted payload. When the drop is edited
+  // and re-encrypted this changes → we re-decrypt; pin, manual-reorder and
+  // Firestore snapshot churn leave it identical → cached (no scroll-back flicker).
+  //   - iv: regenerated on EVERY encryption (crypto.getRandomValues), so it's a
+  //     collision-free signal that the text/file payload changed (updateTextDrop
+  //     PATH 1 writes a fresh iv + content).
+  //   - imageR2Key: covers image-ONLY edits (PATH 2 changes imageR2Key without
+  //     touching iv), which iv alone would miss.
+  const lastSigRef = useRef<string | null>(null);
+
   const tc = getEditorialThemeColors(theme);
   const font = tc.fontClass;
 
@@ -89,41 +192,62 @@ export function EditorialDropItem({
   const isVideo = drop.mimeType?.startsWith('video/');
   const hasAttachedImage = drop.type === 'text' && !!drop.imageR2Key;
 
-  // Decrypt content if encrypted
+  // Decrypt content if encrypted.
+  // - Unencrypted drops: plain text, no cost — set immediately, never defer.
+  // - Encrypted drops: defer decryptDrop(...) until the card is in view
+  //   (inView), and (re-)run it only when the encrypted payload actually
+  //   changed since the last decrypt (signature guard). Scrolling away/back,
+  //   pin, manual-reorder and Firestore churn leave the signature identical →
+  //   cached, no flicker. Editing the drop changes the signature → fresh
+  //   decrypt so the list shows new content without needing a remount.
   useEffect(() => {
     async function decrypt() {
-      if (drop.encrypted && currentUserId) {
-        try {
-          const decrypted = await decryptDrop(drop, currentUserId);
-
-          if (decrypted.type === 'text' && decrypted.content) {
-            setDecryptedContent(decrypted.content);
-            setDecryptError(false);
-          } else if (decrypted.type === 'file' && decrypted.fileData) {
-            setDecryptedFileData(decrypted.fileData);
-            setDecryptError(false);
-          } else if (decrypted.imageData) {
-            setDecryptError(false);
-          } else if (!decrypted.content && !decrypted.fileData) {
-            setDecryptError(true);
-          }
-          if (decrypted.imageData) {
-            setDecryptedImageData(decrypted.imageData);
-          }
-        } catch (error) {
-          console.error('Decryption error:', error);
-          setDecryptError(true);
-          setDecryptedContent('');
-          setDecryptedFileData('');
-        }
-      } else {
+      if (!drop.encrypted) {
         setDecryptedContent(drop.content || '');
         setDecryptedFileData(drop.fileData || '');
         setDecryptError(false);
+        return;
+      }
+
+      // Encrypted: wait until visible.
+      if (!currentUserId || !inView) return;
+
+      // (Re-)decrypt only when needed: first time, or when the encrypted
+      // payload changed since the last decrypt (drop was edited/re-encrypted).
+      // Pin, manual-reorder and Firestore churn keep the signature identical,
+      // so those stay cached → no flicker on scroll-back.
+      const sig = `${drop.iv ?? ''}|${drop.imageR2Key ?? ''}`;
+      if (hasDecrypted.current && lastSigRef.current === sig) return;
+
+      hasDecrypted.current = true;
+      lastSigRef.current = sig;
+
+      try {
+        const decrypted = await decryptDrop(drop, currentUserId);
+
+        if (decrypted.type === 'text' && decrypted.content) {
+          setDecryptedContent(decrypted.content);
+          setDecryptError(false);
+        } else if (decrypted.type === 'file' && decrypted.fileData) {
+          setDecryptedFileData(decrypted.fileData);
+          setDecryptError(false);
+        } else if (decrypted.imageData) {
+          setDecryptError(false);
+        } else if (!decrypted.content && !decrypted.fileData) {
+          setDecryptError(true);
+        }
+        if (decrypted.imageData) {
+          setDecryptedImageData(decrypted.imageData);
+        }
+      } catch (error) {
+        console.error('Decryption error:', error);
+        setDecryptError(true);
+        setDecryptedContent('');
+        setDecryptedFileData('');
       }
     }
     decrypt();
-  }, [drop, currentUserId]);
+  }, [drop, currentUserId, inView]);
 
   const displayContent = drop.encrypted
     ? (decryptError ? '[Encrypted - cannot decrypt]' : decryptedContent)
@@ -131,6 +255,16 @@ export function EditorialDropItem({
 
   const displayFileData = drop.encrypted ? decryptedFileData : (drop.fileData || '');
   const displayImageData = decryptedImageData;
+
+  // True once an encrypted drop's decryption has finished populating state
+  // (content/file/image present, or it errored). Unencrypted drops are always
+  // ready. Used so we don't show a misleading "0 chars" before decryption
+  // has filled in displayContent (which is '' for encrypted-until-viewed drops).
+  const contentReady = !drop.encrypted
+    || decryptedContent !== ''
+    || decryptedFileData !== ''
+    || decryptedImageData !== ''
+    || decryptError;
 
   // Video thumbnail
   const { thumbnailUrl: videoThumbnail, isGenerating: isGeneratingThumbnail } = useVideoThumbnail(
@@ -268,6 +402,7 @@ export function EditorialDropItem({
 
   return (
     <div
+      ref={cardRef}
       onClick={() => selectionMode ? onSelect(drop.id) : onPreview(drop)}
       {...contextMenuProps}
       className={`relative select-none ${tc.cardBg} ${tc.roundedClass} border ${tc.border} transition-all cursor-pointer group overflow-hidden ${
@@ -377,7 +512,11 @@ export function EditorialDropItem({
               <span>{formatFileSize(drop.fileSize).toLowerCase()}</span>
             )}
             {drop.type === 'text' && (
-              <span>{`${displayContent.length} chars`}</span>
+              contentReady ? (
+                <span>{`${displayContent.length} chars`}</span>
+              ) : (
+                <span className={selected ? tc.inactivePillText : tc.muted}>decrypting…</span>
+              )
             )}
             {/* Encryption indicator */}
             {drop.encrypted ? (
@@ -405,7 +544,7 @@ export function EditorialDropItem({
           <div className={`flex flex-wrap items-center justify-end sm:justify-start gap-2 sm:gap-1 flex-shrink-0 pt-2 sm:pt-0 border-t ${tc.border} sm:border-t-0 mt-2 sm:mt-0 w-full sm:w-auto`}>
             {showMoveControls && canMoveUp && (
               <button
-                onClick={(e) => { e.stopPropagation(); onMoveUp?.(); }}
+                onClick={(e) => { e.stopPropagation(); onMoveUp?.(drop.id); }}
                 title="Move up"
                 className={`p-2 sm:p-1.5 border ${tc.border} ${tc.text} rounded ${tc.btnHoverBg} ${tc.btnHoverText} ${tc.hoverBorder} transition-colors`}
               >
@@ -416,7 +555,7 @@ export function EditorialDropItem({
             )}
             {showMoveControls && canMoveDown && (
               <button
-                onClick={(e) => { e.stopPropagation(); onMoveDown?.(); }}
+                onClick={(e) => { e.stopPropagation(); onMoveDown?.(drop.id); }}
                 title="Move down"
                 className={`p-2 sm:p-1.5 border ${tc.border} ${tc.text} rounded ${tc.btnHoverBg} ${tc.btnHoverText} ${tc.hoverBorder} transition-colors`}
               >
@@ -534,4 +673,4 @@ export function EditorialDropItem({
       )}
     </div>
   );
-}
+});

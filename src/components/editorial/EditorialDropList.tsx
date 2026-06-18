@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useMemo, useEffect, useLayoutEffect, useRef, type ComponentProps } from 'react';
+import { useState, useCallback, useMemo, useEffect, useLayoutEffect, useRef, memo, type ComponentProps } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { DndContext, PointerSensor, useSensor, useSensors, closestCenter, type DragEndEvent } from '@dnd-kit/core';
@@ -115,8 +115,20 @@ function useFinePointer(): boolean {
 // Sortable wrapper for an editorial drop item (desktop Manual mode). Owns useSortable,
 // applies the dnd-kit transform to its node, and forwards the drag listeners to the
 // item's grip handle (drag starts only from the grip).
-function SortableEditorialDropItem(props: ComponentProps<typeof EditorialDropItem>) {
+// Memoized: skips parent-driven re-renders when this item's props are unchanged.
+// dnd-kit's per-frame drag state still re-renders displaced items via
+// useSortable's context subscription (context updates bypass React.memo), so
+// transform/transition visuals keep updating. memo just avoids re-rendering
+// items whose props AND transform are unchanged.
+const SortableEditorialDropItem = memo(function SortableEditorialDropItem(props: ComponentProps<typeof EditorialDropItem>) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: props.drop.id });
+  // dnd-kit keeps `attributes`/`listeners` referentially stable across drag
+  // frames (only transform/transition change), so memoizing the combined handle
+  // props on them yields a stable object. Otherwise the fresh
+  // `{...attributes, ...listeners}` would bust EditorialDropItem's memo every
+  // frame. (If a future dnd-kit version returned new refs, this just degrades to
+  // the current behavior — no breakage.)
+  const dragHandleProps = useMemo(() => ({ ...attributes, ...listeners }), [attributes, listeners]);
   return (
     <div
       ref={setNodeRef}
@@ -127,10 +139,10 @@ function SortableEditorialDropItem(props: ComponentProps<typeof EditorialDropIte
         opacity: isDragging ? 0.85 : undefined,
       }}
     >
-      <EditorialDropItem {...props} showDragHandle dragHandleProps={{ ...attributes, ...listeners }} />
+      <EditorialDropItem {...props} showDragHandle dragHandleProps={dragHandleProps} />
     </div>
   );
-}
+});
 
 export function EditorialDropList({
   drops,
@@ -189,15 +201,19 @@ export function EditorialDropList({
     setMentionDropdownOpen(true);
   };
 
-  const toggleSelect = (id: string) => {
-    const newSelected = new Set(selectedIds);
-    if (newSelected.has(id)) {
-      newSelected.delete(id);
-    } else {
-      newSelected.add(id);
-    }
-    setSelectedIds(newSelected);
-  };
+  // Stable (deps-free) via the functional updater so React.memo on the drop
+  // items holds — otherwise a fresh toggleSelect ref each render busts memo.
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
 
   const selectAll = () => {
     if (selectedIds.size === filteredDrops.length) {
@@ -519,7 +535,11 @@ export function EditorialDropList({
     commitManualOrder(arrayMove(ids, i, j));
   }, [currentManualIds, commitManualOrder]);
 
-  // Drag (desktop): reorder on drop, then commit through the same path.
+  // Stable id-based wrappers around moveDropSlot. Passed to EditorialDropItem
+  // in place of per-render inline arrows (onMoveUp={() => moveDropSlot(drop.id,
+  // 'up')}) so React.memo holds — the item supplies its own drop.id.
+  const moveUp = useCallback((id: string) => moveDropSlot(id, 'up'), [moveDropSlot]);
+  const moveDown = useCallback((id: string) => moveDropSlot(id, 'down'), [moveDropSlot]);
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
@@ -1065,8 +1085,8 @@ export function EditorialDropList({
                         showMoveControls={moveIdx !== undefined}
                         canMoveUp={moveIdx !== undefined && moveIdx > 0}
                         canMoveDown={moveIdx !== undefined && moveIdx < manualCount - 1}
-                        onMoveUp={() => moveDropSlot(drop.id, 'up')}
-                        onMoveDown={() => moveDropSlot(drop.id, 'down')}
+                        onMoveUp={moveUp}
+                        onMoveDown={moveDown}
                       />
                     </motion.div>
                   );
@@ -1094,8 +1114,8 @@ export function EditorialDropList({
                     showMoveControls={moveIdx !== undefined}
                     canMoveUp={moveIdx !== undefined && moveIdx > 0}
                     canMoveDown={moveIdx !== undefined && moveIdx < manualCount - 1}
-                    onMoveUp={() => moveDropSlot(drop.id, 'up')}
-                    onMoveDown={() => moveDropSlot(drop.id, 'down')}
+                    onMoveUp={moveUp}
+                    onMoveDown={moveDown}
                   />
                 );
               })}
