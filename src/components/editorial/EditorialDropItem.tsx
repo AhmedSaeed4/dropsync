@@ -20,6 +20,13 @@ interface EditorialDropItemProps {
   currentUserId?: string;
   onPin?: (drop: Drop) => void;
   onUnpin?: (drop: Drop) => void;
+  showMoveControls?: boolean;
+  canMoveUp?: boolean;
+  canMoveDown?: boolean;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  showDragHandle?: boolean;
+  dragHandleProps?: Record<string, any>;
 }
 
 function isTextFile(drop: Drop): boolean {
@@ -55,6 +62,13 @@ export function EditorialDropItem({
   currentUserId,
   onPin,
   onUnpin,
+  showMoveControls,
+  canMoveUp,
+  canMoveDown,
+  onMoveUp,
+  onMoveDown,
+  showDragHandle,
+  dragHandleProps,
 }: EditorialDropItemProps) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -269,6 +283,22 @@ export function EditorialDropItem({
         </div>
       )}
       <div className="flex flex-col sm:flex-row items-stretch min-w-0 overflow-hidden p-3 gap-3">
+        {/* Drag handle (desktop Manual mode) — drag starts only from here */}
+        {showDragHandle && (
+          <button
+            type="button"
+            {...dragHandleProps}
+            onClick={(e) => e.stopPropagation()}
+            title="Drag to reorder"
+            className={`flex flex-col gap-0.5 flex-shrink-0 self-center cursor-grab active:cursor-grabbing px-1 ${tc.muted} ${tc.hoverBorder} rounded transition-colors`}
+          >
+            <svg className="w-3 h-4" fill="currentColor" viewBox="0 0 6 16" aria-hidden="true">
+              <circle cx="1.5" cy="2" r="1.1" /><circle cx="4.5" cy="2" r="1.1" />
+              <circle cx="1.5" cy="8" r="1.1" /><circle cx="4.5" cy="8" r="1.1" />
+              <circle cx="1.5" cy="14" r="1.1" /><circle cx="4.5" cy="14" r="1.1" />
+            </svg>
+          </button>
+        )}
         {/* Selection checkbox or thumbnail */}
         {selectionMode ? (
           <button
@@ -372,7 +402,29 @@ export function EditorialDropItem({
 
         {/* Action buttons - icon style */}
         {!selectionMode && !confirmDelete && (
-          <div className={`flex items-center justify-end sm:justify-start gap-2 sm:gap-1 flex-shrink-0 pt-2 sm:pt-0 border-t ${tc.border} sm:border-t-0 mt-2 sm:mt-0 w-full sm:w-auto`}>
+          <div className={`flex flex-wrap items-center justify-end sm:justify-start gap-2 sm:gap-1 flex-shrink-0 pt-2 sm:pt-0 border-t ${tc.border} sm:border-t-0 mt-2 sm:mt-0 w-full sm:w-auto`}>
+            {showMoveControls && canMoveUp && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onMoveUp?.(); }}
+                title="Move up"
+                className={`p-2 sm:p-1.5 border ${tc.border} ${tc.text} rounded ${tc.btnHoverBg} ${tc.btnHoverText} ${tc.hoverBorder} transition-colors`}
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+                </svg>
+              </button>
+            )}
+            {showMoveControls && canMoveDown && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onMoveDown?.(); }}
+                title="Move down"
+                className={`p-2 sm:p-1.5 border ${tc.border} ${tc.text} rounded ${tc.btnHoverBg} ${tc.btnHoverText} ${tc.hoverBorder} transition-colors`}
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+            )}
             {canCopyContent && (
               <button
                 onClick={handleCopy}
