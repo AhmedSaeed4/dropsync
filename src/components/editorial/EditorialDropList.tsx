@@ -340,6 +340,32 @@ export function EditorialDropList({
   const [catCollapsed, setCatCollapsed] = useState(true); // default collapsed for brand-new users
   const [animateCollapse, setAnimateCollapse] = useState(false); // animate only on user toggle
 
+  // Auto-hide the "Show all/less" toggle after ~3s idle (desktop/fine pointer only;
+  // touch has no hover, so it stays always visible). Hovering the category section
+  // reveals it and resets the timer.
+  const [catToggleHidden, setCatToggleHidden] = useState(false);
+  const catHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const catToggleButtonHidden = finePointer && catToggleHidden;
+  const clearCatHideTimer = useCallback(() => {
+    if (catHideTimerRef.current) { clearTimeout(catHideTimerRef.current); catHideTimerRef.current = null; }
+  }, []);
+  const armCatHideTimer = useCallback(() => {
+    clearCatHideTimer();
+    if (!finePointer) return;
+    catHideTimerRef.current = setTimeout(() => setCatToggleHidden(true), 3000);
+  }, [finePointer, clearCatHideTimer]);
+
+  // Arm the idle-hide timer when the toggle is shown (desktop); clear otherwise.
+  useEffect(() => {
+    if (overflows && finePointer) {
+      setCatToggleHidden(false);
+      armCatHideTimer();
+    } else {
+      clearCatHideTimer();
+    }
+    return clearCatHideTimer;
+  }, [overflows, finePointer, armCatHideTimer, clearCatHideTimer]);
+
   const totalCategoryCount =
     BUILT_IN_CATEGORIES.length + categories.length + (!loading && dropCounts['uncategorized'] > 0 ? 1 : 0);
   const shouldCollapsePills = overflows && catCollapsed;
@@ -414,10 +440,12 @@ export function EditorialDropList({
     prefsRef.current = { ...prefsRef.current, [spaceKey]: next };
     setAnimateCollapse(true);
     setCatCollapsed(next);
+    setCatToggleHidden(false); // keep the toggle visible after a click
+    armCatHideTimer();         // reset the idle timer
     if (currentUserId) {
       setCategoryCollapsed(currentUserId, spaceKey, next); // background write; swallows its own errors
     }
-  }, [catCollapsed, spaceKey, currentUserId]);
+  }, [catCollapsed, spaceKey, currentUserId, armCatHideTimer]);
 
   // --- Drop sort + manual reorder (per-space, remembered across devices) ---
   const [sortMode, setSortMode] = useState<SortMode>('newest'); // default = current behavior
@@ -576,7 +604,11 @@ export function EditorialDropList({
 
       <div className={`${tc.bg} border ${tc.border} ${tc.roundedClass} overflow-hidden`}>
         {/* Category filter pills — collapse to one row when they overflow */}
-        <div className={`border-b ${tc.border} ${showChat ? 'px-3 py-2' : 'px-4 py-3'}`}>
+        <div
+          onMouseEnter={() => { setCatToggleHidden(false); clearCatHideTimer(); }}
+          onMouseLeave={() => { armCatHideTimer(); }}
+          className={`border-b ${tc.border} ${showChat ? 'px-3 py-2' : 'px-4 py-3'}`}
+        >
           <motion.div
             ref={pillsRef}
             className={`relative flex flex-wrap ${showChat ? 'gap-1' : 'gap-2'}`}
@@ -681,7 +713,7 @@ export function EditorialDropList({
             })}
           </motion.div>
           {overflows && (
-            <div className="flex justify-center mt-2">
+            <div className={`flex justify-center overflow-hidden transition-all duration-200 ease-[cubic-bezier(0.4,0,0.2,1)] ${catToggleButtonHidden ? 'opacity-0 max-h-0 mt-0 pointer-events-none' : 'opacity-100 max-h-10 mt-2'}`}>
               <button
                 type="button"
                 onClick={toggleCollapse}
