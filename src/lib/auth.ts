@@ -260,6 +260,47 @@ export async function setCategoryCollapsed(userId: string, spaceKey: string, col
   }
 }
 
+// Drop sort + manual-reorder preferences, per space (personal or a workspace id).
+// Stored on the user's own doc under dropSortMode[spaceKey] and dropOrder[spaceKey].
+// setDoc with merge deep-merges each map, so one space never overwrites another.
+// Mirrors the getCategoryCollapsed/setCategoryCollapsed pattern above.
+export type DropSortMode = 'manual' | 'newest' | 'name' | 'size' | 'expiry';
+
+export async function getDropSortPrefs(
+  userId: string
+): Promise<{ mode: Record<string, string>; order: Record<string, string[]> }> {
+  try {
+    const userRef = doc(db, 'users', userId);
+    const snap = await getDoc(userRef);
+    const data = snap.data() ?? {};
+    return {
+      mode: (data.dropSortMode as Record<string, string> | undefined) ?? {},
+      order: (data.dropOrder as Record<string, string[]> | undefined) ?? {},
+    };
+  } catch (error) {
+    console.error('Error loading drop sort preferences:', error);
+    return { mode: {}, order: {} };
+  }
+}
+
+export async function setDropSortMode(userId: string, spaceKey: string, mode: DropSortMode): Promise<void> {
+  try {
+    const userRef = doc(db, 'users', userId);
+    await setDoc(userRef, { dropSortMode: { [spaceKey]: mode } }, { merge: true });
+  } catch (error) {
+    console.error('Error saving drop sort mode:', error);
+  }
+}
+
+export async function setDropOrder(userId: string, spaceKey: string, order: string[]): Promise<void> {
+  try {
+    const userRef = doc(db, 'users', userId);
+    await setDoc(userRef, { dropOrder: { [spaceKey]: order } }, { merge: true });
+  } catch (error) {
+    console.error('Error saving drop order:', error);
+  }
+}
+
 // Get the auth provider for the current user
 export function getAuthProvider(): 'password' | 'google.com' | null {
   const user = auth.currentUser;

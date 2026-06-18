@@ -1,8 +1,10 @@
 'use client';
 
-import { useState, useCallback, useMemo, useEffect, useLayoutEffect, useRef } from 'react';
+import { useState, useCallback, useMemo, useEffect, useLayoutEffect, useRef, type ComponentProps } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import { DndContext, PointerSensor, useSensor, useSensors, closestCenter, type DragEndEvent } from '@dnd-kit/core';
+import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { Drop, Workspace, Category } from '@/types';
 import { EditorialDropItem } from './EditorialDropItem';
 import { UndoToast } from '@/components/UndoToast';
@@ -11,7 +13,7 @@ import { deleteDrop, moveDrop, pinDrop, unpinDrop } from '@/lib/drops';
 import { EditorialMoveDropModal } from './EditorialMoveDropModal';
 import { getEditorialThemeColors } from './editorialTheme';
 import { MemberInfo } from '@/lib/workspaces';
-import { getCategoryCollapsed, setCategoryCollapsed } from '@/lib/auth';
+import { getCategoryCollapsed, setCategoryCollapsed, getDropSortPrefs, setDropSortMode, setDropOrder } from '@/lib/auth';
 
 interface EditorialDropListProps {
   drops: Drop[];
@@ -43,6 +45,92 @@ const BUILT_IN_CATEGORIES = [
 
 // Measure layout before paint without tripping useLayoutEffect's SSR warning.
 const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
+
+type SortMode = 'manual' | 'newest' | 'name' | 'size' | 'expiry';
+
+const SORT_OPTIONS: { value: SortMode; label: string }[] = [
+  { value: 'newest', label: 'Newest' },
+  { value: 'manual', label: 'Manual' },
+  { value: 'name', label: 'Name (A–Z)' },
+  { value: 'size', label: 'Size' },
+  { value: 'expiry', label: 'Expiry' },
+];
+
+// Size used for the "Size" sort: files by fileSize, text by content length; -1 = neither (sorts last).
+function dropSizeValue(d: Drop): number {
+  if (d.type === 'file') return d.fileSize ?? -1;
+  if (d.type === 'text') return d.content?.length ?? -1;
+  return -1;
+}
+
+// Expiry rank for the "Expiry" sort: soonest-expiring first; permanent (null) sorts last.
+function dropExpiryRank(d: Drop): number {
+  return d.expiresAt ? d.expiresAt.getTime() : Number.MAX_SAFE_INTEGER;
+}
+
+// Sort the UNPINNED drops for a mode. Pinned drops are always kept on top (newest-first)
+// and sorted separately, so this only orders the unpinned set.
+function sortUnpinned(drops: Drop[], mode: SortMode, manualOrder: string[]): Drop[] {
+  if (mode === 'manual') {
+    // Drops not in the saved order appear first (newest-first); then the saved order.
+    // So brand-new drops land on top until the user rearranges.
+    const orderSet = new Set(manualOrder);
+    const known = manualOrder
+      .map((id) => drops.find((d) => d.id === id))
+      .filter((d): d is Drop => Boolean(d));
+    const unknown = drops
+      .filter((d) => !orderSet.has(d.id))
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    return [...unknown, ...known];
+  }
+  return [...drops].sort((a, b) => {
+    switch (mode) {
+      case 'newest':
+        return b.createdAt.getTime() - a.createdAt.getTime();
+      case 'name':
+        return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+      case 'size':
+        return dropSizeValue(b) - dropSizeValue(a); // largest first; neither → last
+      case 'expiry':
+        return dropExpiryRank(a) - dropExpiryRank(b); // soonest first; permanent → last
+      default:
+        return 0;
+    }
+  });
+}
+
+// Detect a fine pointer (mouse/trackpad) vs coarse (touch): grip+drag on fine, ↑/↓ on coarse.
+function useFinePointer(): boolean {
+  const [fine, setFine] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia('(pointer: fine)');
+    const update = () => setFine(mq.matches);
+    update();
+    mq.addEventListener('change', update);
+    return () => mq.removeEventListener('change', update);
+  }, []);
+  return fine;
+}
+
+// Sortable wrapper for an editorial drop item (desktop Manual mode). Owns useSortable,
+// applies the dnd-kit transform to its node, and forwards the drag listeners to the
+// item's grip handle (drag starts only from the grip).
+function SortableEditorialDropItem(props: ComponentProps<typeof EditorialDropItem>) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: props.drop.id });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
+        transition: transition ?? undefined,
+        zIndex: isDragging ? 50 : undefined,
+        opacity: isDragging ? 0.85 : undefined,
+      }}
+    >
+      <EditorialDropItem {...props} showDragHandle dragHandleProps={{ ...attributes, ...listeners }} />
+    </div>
+  );
+}
 
 export function EditorialDropList({
   drops,
@@ -198,6 +286,10 @@ export function EditorialDropList({
   const isFiltered = searchQuery.trim() !== '' || selectedCategory !== 'all' || !!mentionFilter;
   const animateDrops = !prefersReducedMotion && !isFiltered;
 
+  // Desktop drag-to-reorder (fine pointer); touch devices keep the ↑/↓ buttons.
+  const finePointer = useFinePointer();
+  const dndSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
   const handlePinDrop = useCallback(async (drop: Drop) => {
     if (drop.pinned) {
       await unpinDrop(drop.id);
@@ -327,9 +419,93 @@ export function EditorialDropList({
     }
   }, [catCollapsed, spaceKey, currentUserId]);
 
+  // --- Drop sort + manual reorder (per-space, remembered across devices) ---
+  const [sortMode, setSortMode] = useState<SortMode>('newest'); // default = current behavior
+  const [manualOrder, setManualOrder] = useState<string[]>([]);
+  const sortPrefsRef = useRef<{ mode: Record<string, string>; order: Record<string, string[]> }>({ mode: {}, order: {} });
+
+  // Load sort prefs once on mount (whole maps); default newest + empty order.
+  useEffect(() => {
+    if (!currentUserId) return;
+    let cancelled = false;
+    getDropSortPrefs(currentUserId)
+      .then((prefs) => {
+        if (cancelled) return;
+        sortPrefsRef.current = prefs;
+        setSortMode((sortPrefsRef.current.mode[spaceKeyRef.current] as SortMode) ?? 'newest');
+        setManualOrder(sortPrefsRef.current.order[spaceKeyRef.current] ?? []);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [currentUserId]);
+
+  // Apply this space's sort prefs instantly whenever the space changes.
+  useEffect(() => {
+    setSortMode((sortPrefsRef.current.mode[spaceKey] as SortMode) ?? 'newest');
+    setManualOrder(sortPrefsRef.current.order[spaceKey] ?? []);
+  }, [spaceKey]);
+
+  const handleSortChange = useCallback((mode: SortMode) => {
+    setSortMode(mode);
+    sortPrefsRef.current.mode = { ...sortPrefsRef.current.mode, [spaceKey]: mode };
+    if (currentUserId) setDropSortMode(currentUserId, spaceKey, mode); // background write; swallows its own errors
+  }, [spaceKey, currentUserId]);
+
+  // Custom sort dropdown: themed trigger button + portalled menu (mirrors the
+  // @-mention dropdown — fixed positioning, click-outside overlay, tc tokens).
+  const [sortMenuOpen, setSortMenuOpen] = useState(false);
+  const [sortMenuPos, setSortMenuPos] = useState<{ top: number; left: number } | null>(null);
+  const sortTriggerRef = useRef<HTMLButtonElement>(null);
+  const currentSortLabel = SORT_OPTIONS.find((o) => o.value === sortMode)?.label ?? 'Newest';
+  const openSortMenu = () => {
+    const rect = sortTriggerRef.current?.getBoundingClientRect();
+    if (rect) {
+      const MENU_WIDTH = 176;
+      // Align the menu's right edge to the trigger's so it never overflows the panel right.
+      setSortMenuPos({ top: rect.bottom + 4, left: Math.max(8, rect.right - MENU_WIDTH) });
+    }
+    setSortMenuOpen(true);
+  };
+
+  // Commit a new manual order for this space. Shared by ↑/↓ and drag-to-reorder so
+  // there's a single source of truth: optimistic local update + background write.
+  const commitManualOrder = useCallback((ids: string[]) => {
+    sortPrefsRef.current.order = { ...sortPrefsRef.current.order, [spaceKey]: ids };
+    setManualOrder(ids);
+    if (currentUserId) setDropOrder(currentUserId, spaceKey, ids);
+  }, [spaceKey, currentUserId]);
+
+  // The currently-displayed unpinned id order in Manual mode.
+  const currentManualIds = useCallback(
+    () => sortUnpinned(visibleDrops.filter((d) => !d.pinned), 'manual', manualOrder).map((d) => d.id),
+    [visibleDrops, manualOrder]
+  );
+
+  // ↑/↓ (touch): move a drop one slot, then commit.
+  const moveDropSlot = useCallback((dropId: string, direction: 'up' | 'down') => {
+    const ids = currentManualIds();
+    const i = ids.indexOf(dropId);
+    if (i < 0) return;
+    const j = direction === 'up' ? i - 1 : i + 1;
+    if (j < 0 || j >= ids.length) return;
+    commitManualOrder(arrayMove(ids, i, j));
+  }, [currentManualIds, commitManualOrder]);
+
+  // Drag (desktop): reorder on drop, then commit through the same path.
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const ids = currentManualIds();
+    const oldIndex = ids.indexOf(active.id as string);
+    const newIndex = ids.indexOf(over.id as string);
+    if (oldIndex < 0 || newIndex < 0) return;
+    commitManualOrder(arrayMove(ids, oldIndex, newIndex));
+  }, [currentManualIds, commitManualOrder]);
+
   // Filter drops based on category, search, and mention
+  // Filter drops based on category, search, and mention, then sort (pins always on top).
   const filteredDrops = useMemo(() => {
-    return visibleDrops.filter(drop => {
+    const filtered = visibleDrops.filter(drop => {
       if (searchQuery && !drop.name.toLowerCase().includes(searchQuery.toLowerCase())) {
         return false;
       }
@@ -341,7 +517,28 @@ export function EditorialDropList({
       if (selectedCategory === 'uncategorized') return drop.type === 'text' && getCategories(drop).length === 0;
       return hasCategory(drop, selectedCategory);
     });
-  }, [visibleDrops, selectedCategory, searchQuery, mentionFilter]);
+    // Pinned always on top (newest-first); unpinned follow the selected sort.
+    const pinned = filtered
+      .filter((d) => d.pinned)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    const unpinned = sortUnpinned(filtered.filter((d) => !d.pinned), sortMode, manualOrder);
+    return [...pinned, ...unpinned];
+  }, [visibleDrops, selectedCategory, searchQuery, mentionFilter, sortMode, manualOrder]);
+
+  // Manual reorder controls: only in Manual mode, not while filtered or selecting.
+  const showMoveControls = sortMode === 'manual' && !isFiltered && !selectionMode;
+  const enableDrag = showMoveControls && finePointer;
+  const manualIndexById = useMemo(() => {
+    const m = new Map<string, number>();
+    if (showMoveControls) {
+      let i = 0;
+      for (const d of filteredDrops) {
+        if (!d.pinned) m.set(d.id, i++);
+      }
+    }
+    return m;
+  }, [showMoveControls, filteredDrops]);
+  const manualCount = manualIndexById.size;
 
   // Category delete handlers
   const handleCategoryDeleteClick = (categoryId: string, e: React.MouseEvent) => {
@@ -625,6 +822,7 @@ export function EditorialDropList({
         {!loading && (
           <div className={`border-b ${tc.border} px-4 py-2 flex items-center justify-between`}>
             {!selectionMode ? (
+              <>
               <button
                 onClick={() => setSelectionMode(true)}
                 className={`text-xs ${font} ${tc.muted} ${tc.inactivePillHoverBg} px-3 py-1.5 ${tc.roundedClass} border ${tc.border} transition-colors flex items-center gap-1.5`}
@@ -634,6 +832,24 @@ export function EditorialDropList({
                 </svg>
                 Select
               </button>
+              <button
+                ref={sortTriggerRef}
+                type="button"
+                onClick={openSortMenu}
+                onKeyDown={(e) => { if (e.key === 'Escape') setSortMenuOpen(false); }}
+                aria-haspopup="menu"
+                aria-expanded={sortMenuOpen}
+                className={`text-xs ${font} ${tc.muted} ${tc.inactivePillHoverBg} px-3 py-1.5 ${tc.roundedClass} border ${tc.border} transition-colors flex items-center gap-1.5`}
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 7.5h18M6 12h12M9 16.5h6" />
+                </svg>
+                <span>{currentSortLabel}</span>
+                <svg className={`w-3 h-3 transition-transform ${sortMenuOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              </>
             ) : (
               <div className="flex items-center gap-2 w-full">
                 <button
@@ -671,6 +887,38 @@ export function EditorialDropList({
               </div>
             )}
           </div>
+        )}
+
+        {/* Sort dropdown menu (portal — mirrors the @-mention dropdown) */}
+        {sortMenuOpen && sortMenuPos && createPortal(
+          <>
+            <div
+              className={`border shadow-lg z-[100] py-1 ${tc.cardBg} ${tc.border} ${tc.roundedClass}`}
+              style={{ position: 'fixed', top: `${sortMenuPos.top}px`, left: `${sortMenuPos.left}px`, width: '176px' }}
+            >
+              {SORT_OPTIONS.map((o) => {
+                const active = o.value === sortMode;
+                return (
+                  <button
+                    key={o.value}
+                    onClick={() => { handleSortChange(o.value); setSortMenuOpen(false); }}
+                    className={`w-full px-3 py-1.5 text-left text-xs ${font} flex items-center justify-between gap-2 transition-colors ${
+                      active ? `${tc.activePillBg} ${tc.activePillText}` : `${tc.text} ${tc.inactivePillHoverBg}`
+                    }`}
+                  >
+                    <span>{o.label}</span>
+                    {active && (
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="fixed inset-0 z-[99]" onClick={() => setSortMenuOpen(false)} />
+          </>,
+          document.body
         )}
 
         {/* Drop list — skeleton while loading, real content otherwise */}
@@ -715,19 +963,31 @@ export function EditorialDropList({
                   : 'No drops in this category'}
               </p>
             </div>
-          ) : animateDrops ? (
-            <div className="relative p-3 space-y-2">
-              <AnimatePresence initial={false} mode="popLayout">
-                {filteredDrops.map((drop) => (
-                  <motion.div
+          ) : enableDrag ? (
+            <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+              <div className="p-3 space-y-2">
+                {/* Pinned drops — not draggable, stay on top */}
+                {filteredDrops.filter((d) => d.pinned).map((drop) => (
+                  <EditorialDropItem
                     key={drop.id}
-                    layout
-                    initial={{ opacity: 0, scale: 0.97 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.9 }}
-                    transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
-                  >
-                    <EditorialDropItem
+                    drop={drop}
+                    onDelete={handleDeleteWithUndo}
+                    onPreview={onPreview}
+                    onEdit={onEdit}
+                    selected={selectedIds.has(drop.id)}
+                    onSelect={toggleSelect}
+                    selectionMode={selectionMode}
+                    theme={theme}
+                    currentUserId={currentUserId}
+                    onPin={handlePinDrop}
+                    onUnpin={handlePinDrop}
+                  />
+                ))}
+                {/* Unpinned drops — sortable; drag starts from the grip handle */}
+                <SortableContext items={filteredDrops.filter((d) => !d.pinned).map((d) => d.id)} strategy={verticalListSortingStrategy}>
+                  {filteredDrops.filter((d) => !d.pinned).map((drop) => (
+                    <SortableEditorialDropItem
+                      key={drop.id}
                       drop={drop}
                       onDelete={handleDeleteWithUndo}
                       onPreview={onPreview}
@@ -740,28 +1000,73 @@ export function EditorialDropList({
                       onPin={handlePinDrop}
                       onUnpin={handlePinDrop}
                     />
-                  </motion.div>
-                ))}
+                  ))}
+                </SortableContext>
+              </div>
+            </DndContext>
+          ) : animateDrops ? (
+            <div className="relative p-3 space-y-2">
+              <AnimatePresence initial={false} mode="popLayout">
+                {filteredDrops.map((drop) => {
+                  const moveIdx = manualIndexById.get(drop.id);
+                  return (
+                    <motion.div
+                      key={drop.id}
+                      layout
+                      initial={{ opacity: 0, scale: 0.97 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.9 }}
+                      transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+                    >
+                      <EditorialDropItem
+                        drop={drop}
+                        onDelete={handleDeleteWithUndo}
+                        onPreview={onPreview}
+                        onEdit={onEdit}
+                        selected={selectedIds.has(drop.id)}
+                        onSelect={toggleSelect}
+                        selectionMode={selectionMode}
+                        theme={theme}
+                        currentUserId={currentUserId}
+                        onPin={handlePinDrop}
+                        onUnpin={handlePinDrop}
+                        showMoveControls={moveIdx !== undefined}
+                        canMoveUp={moveIdx !== undefined && moveIdx > 0}
+                        canMoveDown={moveIdx !== undefined && moveIdx < manualCount - 1}
+                        onMoveUp={() => moveDropSlot(drop.id, 'up')}
+                        onMoveDown={() => moveDropSlot(drop.id, 'down')}
+                      />
+                    </motion.div>
+                  );
+                })}
               </AnimatePresence>
             </div>
           ) : (
             <div className="p-3 space-y-2">
-              {filteredDrops.map((drop) => (
-                <EditorialDropItem
-                  key={drop.id}
-                  drop={drop}
-                  onDelete={handleDeleteWithUndo}
-                  onPreview={onPreview}
-                  onEdit={onEdit}
-                  selected={selectedIds.has(drop.id)}
-                  onSelect={toggleSelect}
-                  selectionMode={selectionMode}
-                  theme={theme}
-                  currentUserId={currentUserId}
-                  onPin={handlePinDrop}
-                  onUnpin={handlePinDrop}
-                />
-              ))}
+              {filteredDrops.map((drop) => {
+                const moveIdx = manualIndexById.get(drop.id);
+                return (
+                  <EditorialDropItem
+                    key={drop.id}
+                    drop={drop}
+                    onDelete={handleDeleteWithUndo}
+                    onPreview={onPreview}
+                    onEdit={onEdit}
+                    selected={selectedIds.has(drop.id)}
+                    onSelect={toggleSelect}
+                    selectionMode={selectionMode}
+                    theme={theme}
+                    currentUserId={currentUserId}
+                    onPin={handlePinDrop}
+                    onUnpin={handlePinDrop}
+                    showMoveControls={moveIdx !== undefined}
+                    canMoveUp={moveIdx !== undefined && moveIdx > 0}
+                    canMoveDown={moveIdx !== undefined && moveIdx < manualCount - 1}
+                    onMoveUp={() => moveDropSlot(drop.id, 'up')}
+                    onMoveDown={() => moveDropSlot(drop.id, 'down')}
+                  />
+                );
+              })}
             </div>
           )}
         </div>
