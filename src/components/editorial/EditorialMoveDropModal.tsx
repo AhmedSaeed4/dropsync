@@ -44,9 +44,9 @@ export function EditorialMoveDropModal({ drops: dropsProp, workspaces, currentWo
       className="fixed inset-0 bg-[#1a1a1a]/60 flex items-center justify-center z-50 p-4"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div className={`${tc.bg} border ${tc.border} rounded-xl w-full max-w-md overflow-hidden shadow-xl`}>
+      <div className={`${tc.bg} border ${tc.border} rounded-xl w-full max-w-md max-h-[90vh] flex flex-col overflow-hidden shadow-xl`}>
         {/* Header */}
-        <div className={`border-b ${tc.border} px-5 py-4 flex items-center justify-between`}>
+        <div className={`border-b ${tc.border} px-5 py-4 flex items-center justify-between shrink-0`}>
           <div>
             <h2 className={`${tc.fontClass} ${tc.text} font-medium text-[15px]`}>
               {isBulk ? `Move ${dropList.length} drops` : 'Move drop'}
@@ -65,7 +65,7 @@ export function EditorialMoveDropModal({ drops: dropsProp, workspaces, currentWo
         </div>
 
         {/* Content */}
-        <div className="p-5 space-y-4">
+        <div className="p-5 space-y-4 flex-1 min-h-0 overflow-y-auto thin-scrollbar">
           {/* Current location */}
           <div>
             <label className={`text-xs ${tc.muted} ${tc.fontClass} mb-1.5 block`}>From</label>
@@ -137,7 +137,7 @@ export function EditorialMoveDropModal({ drops: dropsProp, workspaces, currentWo
         </div>
 
         {/* Footer */}
-        <div className={`border-t ${tc.border} px-5 py-4 flex items-center justify-end gap-3`}>
+        <div className={`border-t ${tc.border} px-5 py-4 flex items-center justify-end gap-3 shrink-0`}>
           <button
             onClick={onClose}
             disabled={loading}

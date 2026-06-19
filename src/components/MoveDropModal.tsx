@@ -80,9 +80,9 @@ export function MoveDropModal({ drops: dropsProp, workspaces, currentWorkspaceId
       className={`fixed inset-0 ${tc.overlayBg} flex items-center justify-center z-50 p-4 transition-colors duration-300 overscroll-contain`}
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div className={`${tc.bgColor} border ${tc.borderColor} ${tc.roundedClass} w-full max-w-md transition-colors duration-300`}>
+      <div className={`${tc.bgColor} border ${tc.borderColor} ${tc.roundedClass} w-full max-w-md max-h-[90vh] flex flex-col overflow-hidden transition-colors duration-300`}>
         {/* Header */}
-        <div className={`border-b ${tc.borderColor} px-6 py-4 flex items-center justify-between ${tc.headerBg} ${tc.roundedClass} ${isMinimal ? 'rounded-bl-none rounded-br-none' : ''}`}>
+        <div className={`border-b ${tc.borderColor} px-6 py-4 flex items-center justify-between ${tc.headerBg} ${tc.roundedClass} ${isMinimal ? 'rounded-bl-none rounded-br-none' : ''} shrink-0`}>
           <div>
             <h2 className={`${isMinimal ? 'text-sm font-medium' : 'text-sm font-bold uppercase tracking-wider'} text-white`}>
               {isBulk
@@ -106,7 +106,7 @@ export function MoveDropModal({ drops: dropsProp, workspaces, currentWorkspaceId
         </div>
 
         {/* Content */}
-        <div className="p-6 space-y-4">
+        <div className="p-6 space-y-4 flex-1 min-h-0 overflow-y-auto thin-scrollbar">
           {/* Current location */}
           <div>
             <label className={`${tc.fontClass} ${tc.textMuted} block mb-2`}>
@@ -188,7 +188,7 @@ export function MoveDropModal({ drops: dropsProp, workspaces, currentWorkspaceId
         </div>
 
         {/* Footer */}
-        <div className={`border-t ${tc.borderColor} px-6 py-4 flex items-center justify-end gap-3 ${tc.bgColor}`}>
+        <div className={`border-t ${tc.borderColor} px-6 py-4 flex items-center justify-end gap-3 ${tc.bgColor} shrink-0`}>
           <button
             onClick={onClose}
             disabled={loading}

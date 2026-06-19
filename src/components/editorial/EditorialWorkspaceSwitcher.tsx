@@ -65,6 +65,12 @@ export function EditorialWorkspaceSwitcher({
     return () => { cancelled = true; };
   }, [isOpen, workspaces]);
 
+  // Reset the expanded-members view whenever the dropdown closes, so each open starts fresh.
+  // Covers every close path (click-outside overlay, switching workspace, Create, Join — all set isOpen false).
+  useEffect(() => {
+    if (!isOpen) setExpandedWorkspaceId(null);
+  }, [isOpen]);
+
   const copyInviteCode = async (code: string, workspaceId: string) => {
     try {
       await navigator.clipboard.writeText(code);
@@ -315,8 +321,9 @@ export function EditorialWorkspaceSwitcher({
                     </div>
                   </div>
 
-                  {/* Expanded member list */}
-                  {isExpanded && (
+                  {/* Expanded member list — grid 0fr↔1fr height trick animates the expand/collapse */}
+                  <div className={`grid transition-[grid-template-rows] duration-200 ease-[cubic-bezier(0.4,0,0.2,1)] ${isExpanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
+                    <div className="overflow-hidden">
                     <div
                       className={`px-3 py-2 border-t ${tc.border} ${
                         isActive ? (theme === 'dark' ? 'bg-white/5' : 'bg-[#1a1a1a]/5') : (theme === 'dark' ? 'bg-white/5' : 'bg-[#f5f5f5]')
@@ -359,7 +366,8 @@ export function EditorialWorkspaceSwitcher({
                         </div>
                       )}
                     </div>
-                  )}
+                    </div>
+                  </div>
                 </div>
               );
             })}
