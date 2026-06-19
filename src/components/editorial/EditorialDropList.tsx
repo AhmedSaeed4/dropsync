@@ -43,6 +43,13 @@ const BUILT_IN_CATEGORIES = [
   { value: 'link', label: 'Link' },
 ];
 
+// One renderable category pill, unifying built-in / uncategorized / custom so we can
+// measure the full set in a hidden container and trim to "first row + pill" when collapsed.
+type PillItem =
+  | { kind: 'builtin'; key: string; value: string; label: string; count: number | undefined }
+  | { kind: 'uncategorized'; key: string; value: string; label: string; count: number }
+  | { kind: 'custom'; key: string; value: string; label: string; count: number; cat: Category };
+
 // Measure layout before paint without tripping useLayoutEffect's SSR warning.
 const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
 
@@ -349,82 +356,77 @@ export function EditorialDropList({
   const spaceKeyRef = useRef(spaceKey);
   spaceKeyRef.current = spaceKey;
 
-  const pillsRef = useRef<HTMLDivElement>(null);
+  const measureRef = useRef<HTMLDivElement>(null); // hidden full-set container used to measure overflow + the row-1 boundary
   const prefsRef = useRef<Record<string, boolean>>({});
   const [overflows, setOverflows] = useState(false);
   const [collapsedHeight, setCollapsedHeight] = useState(0);
+  const [expandedHeight, setExpandedHeight] = useState(0);
+  const [firstRowCount, setFirstRowCount] = useState(Infinity); // pills that fit on row 1 alongside the toggle pill
   const [catCollapsed, setCatCollapsed] = useState(true); // default collapsed for brand-new users
   const [animateCollapse, setAnimateCollapse] = useState(false); // animate only on user toggle
+  const [animating, setAnimating] = useState(false); // true mid-toggle so we can defer the trimmed render until the slide settles
 
-  // Auto-hide the "Show all/less" toggle after ~3s idle (desktop/fine pointer only;
-  // touch has no hover, so it stays always visible). Hovering the category section
-  // reveals it and resets the timer.
-  const [catToggleHidden, setCatToggleHidden] = useState(false);
-  const catHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const catToggleButtonHidden = finePointer && catToggleHidden;
-  const clearCatHideTimer = useCallback(() => {
-    if (catHideTimerRef.current) { clearTimeout(catHideTimerRef.current); catHideTimerRef.current = null; }
-  }, []);
-  const armCatHideTimer = useCallback(() => {
-    clearCatHideTimer();
-    if (!finePointer) return;
-    catHideTimerRef.current = setTimeout(() => setCatToggleHidden(true), 3000);
-  }, [finePointer, clearCatHideTimer]);
-
-  // Arm the idle-hide timer when the toggle is shown (desktop); clear otherwise.
-  useEffect(() => {
-    if (overflows && finePointer) {
-      setCatToggleHidden(false);
-      armCatHideTimer();
-    } else {
-      clearCatHideTimer();
-    }
-    return clearCatHideTimer;
-  }, [overflows, finePointer, armCatHideTimer, clearCatHideTimer]);
-
-  const totalCategoryCount =
-    BUILT_IN_CATEGORIES.length + categories.length + (!loading && dropCounts['uncategorized'] > 0 ? 1 : 0);
-  const shouldCollapsePills = overflows && catCollapsed;
-
-  // Measure whether the pills overflow a single row, and capture one row's height.
+  // Measure against the hidden full-set container (every pill + a sentinel ">>" pill), so
+  // the result is stable whether or not the visible strip is collapsed. We compute: does it
+  // overflow one row, that row's height, and how many pills fit on row 1 *with* the ">>" pill
+  // — so collapsed mode renders exactly the first row + ">>" and never pushes the pill off-row.
   const measurePillsOverflow = useCallback(() => {
-    const el = pillsRef.current;
+    const el = measureRef.current;
     if (!el) return;
     const children = Array.from(el.children) as HTMLElement[];
     if (children.length === 0) {
       setOverflows(false);
       setCollapsedHeight(0);
+      setExpandedHeight(0);
+      setFirstRowCount(Infinity);
       return;
     }
+    const pillCount = children.length - 1; // last child is the sentinel ">>" toggle
     const firstTop = children[0].offsetTop;
     let firstRowBottom = 0;
-    let hasSecondRow = false;
-    for (const child of children) {
+    let contentBottom = 0; // bottom of the last row = full expanded height
+    let wrapIndex = pillCount; // index of the first pill that wrapped to row 2 (== pillCount ⇒ none)
+    let sentinelTop = firstTop;
+    for (let i = 0; i < children.length; i++) {
+      const child = children[i];
       const top = child.offsetTop;
       const bottom = top + child.offsetHeight;
-      // Tolerate sub-pixel rounding so a 1px difference can't register a phantom second row.
-      if (top > firstTop + 2) hasSecondRow = true;
-      else if (bottom > firstRowBottom) firstRowBottom = bottom;
+      if (i === pillCount) {
+        sentinelTop = top; // the sentinel toggle pill (always last)
+      } else if (top > firstTop + 2 && wrapIndex === pillCount) {
+        wrapIndex = i; // +2px slack tolerates sub-pixel rounding so a phantom row 2 can't register
+      }
+      if (top <= firstTop + 2 && bottom > firstRowBottom) firstRowBottom = bottom;
+      if (bottom > contentBottom) contentBottom = bottom;
     }
-    setOverflows(hasSecondRow);
-    setCollapsedHeight(firstRowBottom);
+    const overflowPills = wrapIndex < pillCount;
+    // Row-1 pill count leaving room for ">>": if the sentinel already sits on row 1, keep every
+    // row-1 pill; otherwise drop one pill (always wider than ">>") to make room for it.
+    const count = !overflowPills
+      ? Infinity
+      : sentinelTop <= firstTop + 2
+        ? wrapIndex
+        : Math.max(1, wrapIndex - 1);
+    setOverflows(overflowPills);
+    setCollapsedHeight(firstRowBottom - firstTop);
+    setExpandedHeight(contentBottom - firstTop);
+    setFirstRowCount(count);
   }, []);
 
-  // Initial measure + re-measure on resize (pills re-wrap when the width changes).
+  // Initial measure + re-measure on resize (pills re-wrap when the width changes). The
+  // hidden container always lays out the full set, so its size only changes on real width
+  // or pill-set changes — never on collapse/expand — which keeps measurement flip-flop-free.
   useIsomorphicLayoutEffect(() => {
     measurePillsOverflow();
-    const el = pillsRef.current;
+    const el = measureRef.current;
     if (!el) return;
     const ro = new ResizeObserver(() => measurePillsOverflow());
     ro.observe(el);
     return () => ro.disconnect();
   }, [measurePillsOverflow]);
 
-  // Re-measure whenever the rendered pills or their wrapping can change. The
-  // ResizeObserver above only fires on the element's own size change — which it
-  // does NOT do while the strip is collapsed (height is clipped to one row) — so
-  // without this, switching from a many-category space to a 4-category one would
-  // leave `overflows` stale and wrongly keep the toggle button showing.
+  // Re-measure whenever the rendered pills can change (e.g. switching to a space with fewer
+  // categories), so `overflows` / `firstRowCount` never go stale and wrongly hide the toggle.
   useIsomorphicLayoutEffect(() => {
     measurePillsOverflow();
   }, [categories, loading, showChat, dropCounts, measurePillsOverflow]);
@@ -455,13 +457,12 @@ export function EditorialDropList({
     const next = !catCollapsed;
     prefsRef.current = { ...prefsRef.current, [spaceKey]: next };
     setAnimateCollapse(true);
+    setAnimating(true);
     setCatCollapsed(next);
-    setCatToggleHidden(false); // keep the toggle visible after a click
-    armCatHideTimer();         // reset the idle timer
     if (currentUserId) {
       setCategoryCollapsed(currentUserId, spaceKey, next); // background write; swallows its own errors
     }
-  }, [catCollapsed, spaceKey, currentUserId, armCatHideTimer]);
+  }, [catCollapsed, spaceKey, currentUserId]);
 
   // --- Drop sort + manual reorder (per-space, remembered across devices) ---
   const [sortMode, setSortMode] = useState<SortMode>('newest'); // default = current behavior
@@ -609,6 +610,129 @@ export function EditorialDropList({
 
   const shimmerClass = theme === 'dark' ? 'skeleton-shimmer-dark' : theme === 'minimal' ? 'skeleton-shimmer-minimal' : 'skeleton-shimmer-light';
 
+  // Unify built-in / uncategorized / custom categories into one ordered list of pills so we
+  // can render the full set in a hidden measurement container and slice to "first row + pill"
+  // when collapsed. Order/contents mirror the old three-block render exactly.
+  const pillItems = useMemo<PillItem[]>(() => {
+    const items: PillItem[] = BUILT_IN_CATEGORIES.map((cat) => ({
+      kind: 'builtin' as const,
+      key: cat.value,
+      value: cat.value,
+      label: cat.label,
+      count: dropCounts[cat.value],
+    }));
+    if (!loading && (dropCounts['uncategorized'] ?? 0) > 0) {
+      items.push({ kind: 'uncategorized', key: 'uncategorized', value: 'uncategorized', label: 'Uncategorized', count: dropCounts['uncategorized'] });
+    }
+    if (!loading) {
+      categories.forEach((cat) => {
+        items.push({ kind: 'custom', key: cat.id, value: cat.name, label: cat.name, count: dropCounts[cat.name] || 0, cat });
+      });
+    }
+    return items;
+  }, [categories, dropCounts, loading]);
+
+  // The ">> / <<" toggle pill — styled like an inactive category pill so it reads as part of the row.
+  const togglePillClasses = `flex items-center gap-1 px-2.5 py-1 text-xs ${font} ${tc.roundedClass} transition-colors ${tc.inactivePillBg} ${tc.inactivePillText} ${tc.inactivePillHoverBg}`;
+
+  // Collapsed + overflowing → show only the pills that fit on row 1 (the toggle sits after them);
+  // otherwise show every pill. firstRowCount is measured from the hidden full-set container.
+  // Decouple the rendered content from the collapse target so CLOSE plays smoothly (open already
+  // does). While a toggle animation runs we keep the full list mounted — rows 2+ clip out via
+  // overflow:hidden as the height shrinks — and only swap to the trimmed "first row + >>" view
+  // once the slide settles. The toggle is hidden mid-close (it would otherwise sit on a row
+  // that's clipping out) and reappears at the end of row 1 when settled.
+  const showTrimmed = catCollapsed && !animating && overflows;
+  const showToggle = overflows && (!catCollapsed || !animating);
+  const visibleItems = showTrimmed ? pillItems.slice(0, firstRowCount) : pillItems;
+
+  // Render a single category pill. Identical for both the hidden measurer and the visible strip,
+  // so widths line up and the row-1 boundary the measurer reports is accurate.
+  const renderPill = (item: PillItem) => {
+    const isActive = selectedCategory === item.value;
+    const stateCls = isActive
+      ? `${tc.activePillBg} ${tc.activePillText}`
+      : `${tc.inactivePillBg} ${tc.inactivePillText} ${tc.inactivePillHoverBg}`;
+
+    if (item.kind === 'builtin') {
+      const sizeCls = showChat ? 'gap-1 px-2.5 py-1 text-xs' : 'gap-1.5 px-3 py-1.5 text-xs';
+      return (
+        <button
+          key={item.key}
+          onClick={() => setSelectedCategory(item.value)}
+          className={`flex items-center ${font} ${tc.roundedClass} transition-colors ${stateCls} ${sizeCls}`}
+        >
+          <span>{item.label}</span>
+          {!loading && item.count !== undefined && (
+            <span className={`text-[10px] ${isActive ? tc.inactivePillText : tc.muted}`}>{item.count}</span>
+          )}
+        </button>
+      );
+    }
+
+    if (item.kind === 'uncategorized') {
+      return (
+        <button
+          key={item.key}
+          onClick={() => setSelectedCategory(item.value)}
+          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs ${font} ${tc.roundedClass} transition-colors ${stateCls}`}
+        >
+          <span>Uncategorized</span>
+          <span className={`text-[10px] ${isActive ? tc.inactivePillText : tc.muted}`}>{item.count}</span>
+        </button>
+      );
+    }
+
+    // custom category (with inline delete affordances)
+    const showDelete = item.count === 0 && confirmDeleteCategory !== item.cat.id;
+    return (
+      <div key={item.key} className="relative flex items-center">
+        <button
+          onClick={() => setSelectedCategory(item.value)}
+          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs ${font} ${tc.roundedClass} transition-colors ${stateCls} ${showDelete ? 'pr-1' : ''}`}
+        >
+          <span>{item.cat.name}</span>
+          <span className={`text-[10px] ${isActive ? tc.inactivePillText : tc.muted}`}>{item.count}</span>
+        </button>
+
+        {item.count === 0 && confirmDeleteCategory !== item.cat.id && (
+          <button
+            onClick={(e) => handleCategoryDeleteClick(item.cat.id, e)}
+            className={`ml-1 w-4 h-4 flex items-center justify-center ${tc.muted} hover:text-red-500 transition-colors`}
+            title="Delete category"
+          >
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        )}
+
+        {confirmDeleteCategory === item.cat.id && (
+          <div className="flex items-center ml-1 gap-1">
+            <button
+              onClick={(e) => handleCategoryConfirmDelete(item.cat.id, item.cat.name, e)}
+              className="px-2 py-1 text-xs bg-red-500 text-white hover:bg-red-600 transition-colors rounded"
+              title="Confirm delete"
+            >
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+            </button>
+            <button
+              onClick={handleCategoryCancelDelete}
+              className="px-2 py-1 text-xs border border-[#1A1A1A]/20 hover:bg-[#1A1A1A]/10 transition-colors rounded"
+              title="Cancel"
+            >
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-3">
       {/* Section title — always visible */}
@@ -623,127 +747,43 @@ export function EditorialDropList({
       </div>
 
       <div className={`${tc.bg} border ${tc.border} ${tc.roundedClass} overflow-hidden`}>
-        {/* Category filter pills — collapse to one row when they overflow */}
-        <div
-          onMouseEnter={() => { setCatToggleHidden(false); clearCatHideTimer(); }}
-          onMouseLeave={() => { armCatHideTimer(); }}
-          className={`border-b ${tc.border} ${showChat ? 'px-3 py-2' : 'px-4 py-3'}`}
-        >
+        {/* Category filter pills — collapse to "first row + >>" when they overflow.
+            The toggle is an inline pill at the end of the row (no separate button, no auto-hide). */}
+        <div className={`border-b ${tc.border} ${showChat ? 'px-3 py-2' : 'px-4 py-3'}`}>
+          {/* Hidden full-set measurer: always lays out every pill + a sentinel ">>" so we can
+              detect overflow, capture one row's height, and compute how many pills fit on row 1
+              alongside the toggle. Clipped to 0 height so it never affects layout. */}
+          <div
+            ref={measureRef}
+            aria-hidden="true"
+            className={`flex flex-wrap ${showChat ? 'gap-1' : 'gap-2'}`}
+            style={{ height: 0, overflow: 'hidden' }}
+          >
+            {pillItems.map(renderPill)}
+            <span className={togglePillClasses} aria-hidden="true">{'>>'}</span>
+          </div>
+
           <motion.div
-            ref={pillsRef}
             className={`relative flex flex-wrap ${showChat ? 'gap-1' : 'gap-2'}`}
             initial={false}
-            animate={{ height: shouldCollapsePills ? collapsedHeight : 'auto' }}
+            animate={{ height: catCollapsed ? collapsedHeight : expandedHeight }}
             transition={{ duration: animateCollapse ? 0.25 : 0, ease: [0.4, 0, 0.2, 1] }}
             style={{ overflow: 'hidden' }}
+            onAnimationComplete={() => setAnimating(false)}
           >
-            {BUILT_IN_CATEGORIES.map((cat) => (
-              <button
-                key={cat.value}
-                onClick={() => setSelectedCategory(cat.value)}
-                className={`flex items-center ${font} ${tc.roundedClass} transition-colors ${
-                  selectedCategory === cat.value
-                    ? `${tc.activePillBg} ${tc.activePillText}`
-                    : `${tc.inactivePillBg} ${tc.inactivePillText} ${tc.inactivePillHoverBg}`
-                } ${showChat ? 'gap-1 px-2.5 py-1 text-xs' : 'gap-1.5 px-3 py-1.5 text-xs'}`}
-              >
-                <span>{cat.label}</span>
-                {!loading && dropCounts[cat.value] !== undefined && (
-                  <span className={`text-[10px] ${selectedCategory === cat.value ? tc.inactivePillText : tc.muted}`}>
-                    {dropCounts[cat.value]}
-                  </span>
-                )}
-              </button>
-            ))}
-
-            {/* Uncategorized (only if there are uncategorized drops) */}
-            {!loading && dropCounts['uncategorized'] > 0 && (
-              <button
-                onClick={() => setSelectedCategory('uncategorized')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs ${font} ${tc.roundedClass} transition-colors ${
-                  selectedCategory === 'uncategorized'
-                    ? `${tc.activePillBg} ${tc.activePillText}`
-                    : `${tc.inactivePillBg} ${tc.inactivePillText} ${tc.inactivePillHoverBg}`
-                }`}
-              >
-                <span>Uncategorized</span>
-                <span className={`text-[10px] ${selectedCategory === 'uncategorized' ? tc.inactivePillText : tc.muted}`}>
-                  {dropCounts['uncategorized']}
-                </span>
-              </button>
-            )}
-
-            {/* Custom categories */}
-            {!loading && categories.map((cat) => {
-              const count = dropCounts[cat.name] || 0;
-              const showDelete = count === 0 && confirmDeleteCategory !== cat.id;
-
-              return (
-                <div key={cat.id} className="relative flex items-center">
-                  <button
-                    onClick={() => setSelectedCategory(cat.name)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 text-xs ${font} ${tc.roundedClass} transition-colors ${
-                      selectedCategory === cat.name
-                        ? `${tc.activePillBg} ${tc.activePillText}`
-                        : `${tc.inactivePillBg} ${tc.inactivePillText} ${tc.inactivePillHoverBg}`
-                    } ${showDelete ? 'pr-1' : ''}`}
-                  >
-                    <span>{cat.name}</span>
-                    <span className={`text-[10px] ${selectedCategory === cat.name ? tc.inactivePillText : tc.muted}`}>
-                      {count}
-                    </span>
-                  </button>
-
-                  {count === 0 && confirmDeleteCategory !== cat.id && (
-                    <button
-                      onClick={(e) => handleCategoryDeleteClick(cat.id, e)}
-                      className={`ml-1 w-4 h-4 flex items-center justify-center ${tc.muted} hover:text-red-500 transition-colors`}
-                      title="Delete category"
-                    >
-                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  )}
-
-                  {confirmDeleteCategory === cat.id && (
-                    <div className="flex items-center ml-1 gap-1">
-                      <button
-                        onClick={(e) => handleCategoryConfirmDelete(cat.id, cat.name, e)}
-                        className="px-2 py-1 text-xs bg-red-500 text-white hover:bg-red-600 transition-colors rounded"
-                        title="Confirm delete"
-                      >
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                        </svg>
-                      </button>
-                      <button
-                        onClick={handleCategoryCancelDelete}
-                        className="px-2 py-1 text-xs border border-[#1A1A1A]/20 hover:bg-[#1A1A1A]/10 transition-colors rounded"
-                        title="Cancel"
-                      >
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      </button>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </motion.div>
-          {overflows && (
-            <div className={`flex justify-center overflow-hidden transition-all duration-200 ease-[cubic-bezier(0.4,0,0.2,1)] ${catToggleButtonHidden ? 'opacity-0 max-h-0 mt-0 pointer-events-none' : 'opacity-100 max-h-10 mt-2'}`}>
+            {visibleItems.map(renderPill)}
+            {showToggle && (
               <button
                 type="button"
                 onClick={toggleCollapse}
-                className={`text-[11px] ${font} ${tc.muted} hover:${tc.text} transition-colors inline-flex items-center gap-1`}
+                className={togglePillClasses}
+                aria-label={catCollapsed ? 'Show all categories' : 'Show fewer categories'}
+                title={catCollapsed ? 'Show all' : 'Show less'}
               >
-                <span>{catCollapsed ? `Show all (${totalCategoryCount})` : 'Show less'}</span>
-                <span className="text-[9px] leading-none">{catCollapsed ? '▼' : '▲'}</span>
+                <span>{catCollapsed ? '>>' : '<<'}</span>
               </button>
-            </div>
-          )}
+            )}
+          </motion.div>
         </div>
 
         {/* Search bar — always visible */}
