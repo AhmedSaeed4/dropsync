@@ -6,6 +6,8 @@ import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { getEditorialThemeColors } from './editorialTheme';
 import { decryptDrop } from '@/lib/drops';
 import { DrawingCanvas, BG_COLORS } from '../DrawingCanvas';
+import { EditorialDropPickerRow } from './EditorialDropPickerRow';
+import { useMentionEditor } from '@/hooks/useMentionEditor';
 
 interface EditorialTextModalProps {
   onSubmit: (name: string, content: string, expiration: ExpirationOption, category?: string, imageFile?: File, categories?: string[], isDrawing?: boolean) => Promise<void>;
@@ -16,6 +18,8 @@ interface EditorialTextModalProps {
   editDrop?: Drop | null;
   onEdit?: (drop: Drop, updates: { name?: string; content?: string; category?: string | null; categories?: string[]; expirationOption?: ExpirationOption; imageFile?: File | null; imageRemoved?: boolean }) => Promise<boolean>;
   currentUserId?: string;
+  // Drops in the current space, used for the #-mention autocomplete in the content field.
+  mentionableDrops?: Drop[];
 }
 
 const EXPIRATION_OPTIONS: { value: ExpirationOption; label: string }[] = [
@@ -31,7 +35,7 @@ const BUILT_IN_CATEGORIES = [
   { value: 'link', label: 'Link' },
 ];
 
-export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customCategories = [], onCreateCategory, editDrop, onEdit, currentUserId }: EditorialTextModalProps) {
+export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customCategories = [], onCreateCategory, editDrop, onEdit, currentUserId, mentionableDrops = [] }: EditorialTextModalProps) {
   useBodyScrollLock();
   const isEditMode = !!editDrop;
   const isFileDrop = isEditMode && editDrop?.type === 'file';
@@ -116,6 +120,25 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
   }, [isEditMode, editDrop?.isDrawing, existingImageUrl]);
 
   const tc = getEditorialThemeColors(theme);
+
+  // contentEditable mention editor — renders #[Name](id) tokens as inline chips while typing,
+  // but keeps `content` as the plain token string (encrypt/save round-trip unchanged).
+  const mentionChipBase = `inline-flex items-center mx-0.5 px-1.5 py-0.5 align-middle rounded text-[13px] ${tc.fontClass}`;
+  const mention = useMentionEditor({
+    content,
+    setContent,
+    allDrops: mentionableDrops,
+    excludeDropId: editDrop?.id,
+    foundClassName: `${mentionChipBase} ${tc.activePillBg} ${tc.activePillText}`,
+    deletedClassName: `${mentionChipBase} ${tc.inactivePillBg} ${tc.muted} line-through cursor-not-allowed`,
+  });
+
+  // Reproduce the old textarea's autoFocus on the contentEditable editor.
+  useEffect(() => {
+    mention.editorRef.current?.focus();
+    // editorRef is a stable ref object; we only want this to run once on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const toggleCategory = (cat: string) => {
     setSelectedCategories(prev => {
@@ -560,7 +583,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
 
           {/* Content textarea — show in text mode or edit mode (not for drawing edits) */}
           {(mode === 'text' || isEditMode) && (
-            <div>
+            <div className="relative">
               <div className="flex items-center justify-between mb-2">
                 <label className={`block text-xs ${tc.muted} ${tc.fontClass}`}>
                   Content
@@ -597,15 +620,44 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
                   )}
                 </button>
               </div>
-              <textarea
-                value={content}
-                onChange={(e) => setContent(e.target.value)}
-                placeholder="Enter your text here..."
-                rows={6}
-                required={!drawingFile && (mode === 'text' || isEditMode)}
-                autoFocus
-                className={`w-full border ${tc.border} ${tc.bg} ${tc.text} px-4 py-3 text-sm rounded-lg focus:outline-none focus:border-[#1a1a1a] resize-none transition-colors ${tc.fontClass}`}
-              />
+              {/* contentEditable mention editor: chips render live while typing, but the saved
+                  value stays the plain #[Name](id) token string (see useMentionEditor). */}
+              <div className="relative">
+                {/* #-mention dropdown — floats just above the editor */}
+                {mention.showMention && mention.filteredMentionDrops.length > 0 && (
+                  <div
+                    ref={mention.dropdownRef}
+                    className={`absolute bottom-full left-0 right-0 z-50 mb-1 max-h-[240px] overflow-y-auto rounded-md border ${tc.border} ${tc.bg} shadow-lg`}
+                  >
+                    {mention.filteredMentionDrops.map((drop, idx) => (
+                      <EditorialDropPickerRow
+                        key={drop.id}
+                        drop={drop}
+                        selected={idx === mention.mentionIndex}
+                        attached={false}
+                        onSelect={mention.insertMention}
+                        theme={theme}
+                      />
+                    ))}
+                  </div>
+                )}
+                {content === '' && !mention.showMention && (
+                  <span className={`pointer-events-none absolute left-4 top-3 text-sm ${tc.fontClass} ${theme === 'dark' ? 'text-white/30' : 'text-[#1A1A1A]/30'}`}>
+                    Enter your text here...
+                  </span>
+                )}
+                <div
+                  ref={mention.editorRef}
+                  contentEditable
+                  suppressContentEditableWarning
+                  onInput={mention.handleInput}
+                  onKeyDown={mention.handleKeyDown}
+                  onBlur={mention.handleBlur}
+                  role="textbox"
+                  aria-multiline="true"
+                  className={`w-full border ${tc.border} ${tc.bg} ${tc.text} px-4 py-3 text-sm rounded-lg focus:outline-none focus:border-[#1a1a1a] transition-colors ${tc.fontClass} min-h-[140px] max-h-[300px] overflow-y-auto whitespace-pre-wrap break-words`}
+                />
+              </div>
             </div>
           )}
 

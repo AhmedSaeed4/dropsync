@@ -5,6 +5,8 @@ import { Drop } from '@/types';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { formatFileSize, getYouTubeVideoId } from '@/lib/drops';
 import { createShare } from '@/lib/shares';
+import { contentToPlainText } from '@/lib/dropTagUtils';
+import { DropMentionContent } from './DropMentionContent';
 
 interface PreviewModalProps {
   drop: Drop;
@@ -13,6 +15,9 @@ interface PreviewModalProps {
   isLoading?: boolean;
   onEdit?: (drop: Drop) => void;
   onMove?: (drop: Drop) => void;
+  // Current space's drops — resolve #[Name](id) chips inline; clicking swaps the preview.
+  allDrops?: Drop[];
+  onPreview?: (drop: Drop) => void;
 }
 
 function isTextFile(drop: Drop): boolean {
@@ -23,7 +28,7 @@ function isTextFile(drop: Drop): boolean {
          textExtensions.some(ext => drop.name.toLowerCase().endsWith(ext));
 }
 
-export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false, onEdit, onMove }: PreviewModalProps) {
+export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false, onEdit, onMove, allDrops = [], onPreview }: PreviewModalProps) {
   useBodyScrollLock();
   const [copied, setCopied] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
@@ -116,7 +121,7 @@ export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false
   const handleCopy = async () => {
     const content = getTextContent();
     if (content) {
-      await navigator.clipboard.writeText(content);
+      await navigator.clipboard.writeText(contentToPlainText(content));
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }
@@ -264,7 +269,13 @@ export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false
               {drop.content && (
                 <div className={`border ${tc.borderColor} ${tc.bgColor} p-4 ${tc.roundedClass}`}>
                   <pre className={`${isMinimal ? 'text-sm font-sans' : 'text-sm font-mono'} ${tc.textColor} whitespace-pre-wrap break-all`}>
-                    {drop.content}
+                    <DropMentionContent
+                      content={drop.content}
+                      allDrops={allDrops}
+                      onPreview={onPreview}
+                      foundClassName={`inline-flex items-center mx-0.5 px-1.5 py-0.5 align-middle text-[13px] ${isMinimal ? 'rounded-full font-sans' : 'font-mono'} ${isMinimal ? 'bg-[#1A1A1A]' : 'bg-[#FF5A47]'} text-white hover:opacity-80`}
+                      deletedClassName={`inline-flex items-center mx-0.5 px-1.5 py-0.5 align-middle text-[13px] ${isMinimal ? 'rounded-full font-sans' : 'font-mono'} bg-[#1A1A1A]/10 ${tc.textMuted2} line-through cursor-not-allowed`}
+                    />
                   </pre>
                 </div>
               )}

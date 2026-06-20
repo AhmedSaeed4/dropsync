@@ -24,6 +24,8 @@ interface DropListProps {
   onDeleteCategory?: (categoryId: string, categoryName: string) => void;
   currentWorkspace?: Workspace | null;
   workspaceMembers?: MemberInfo[];
+  // Current space's drops — forwarded to DropItem for inline mention chips.
+  allDrops?: Drop[];
 }
 
 interface PendingDeletion {
@@ -31,7 +33,7 @@ interface PendingDeletion {
   timeoutId: NodeJS.Timeout;
 }
 
-export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspaces = [], theme = 'light', currentUserId, categories = [], onDeleteCategory, currentWorkspace, workspaceMembers }: DropListProps) {
+export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspaces = [], theme = 'light', currentUserId, categories = [], onDeleteCategory, currentWorkspace, workspaceMembers, allDrops = [] }: DropListProps) {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
@@ -506,6 +508,7 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
                   currentUserId={currentUserId}
                   onPin={handlePinDrop}
                   onUnpin={handlePinDrop}
+                  allDrops={allDrops}
                 />
               </div>
             ))

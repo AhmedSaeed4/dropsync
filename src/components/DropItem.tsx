@@ -3,6 +3,8 @@
 import { Drop } from '@/types';
 import { formatFileSize, getTimeRemaining, decryptDrop, getYouTubeVideoId } from '@/lib/drops';
 import { createShare } from '@/lib/shares';
+import { contentToPlainText } from '@/lib/dropTagUtils';
+import { DropMentionContent } from './DropMentionContent';
 import { useState, useEffect } from 'react';
 import { useVideoThumbnail } from '@/hooks/useVideoThumbnail';
 import { DropContextMenu, useContextMenu } from './DropContextMenu';
@@ -19,6 +21,8 @@ interface DropItemProps {
   currentUserId?: string;
   onPin?: (drop: Drop) => void;
   onUnpin?: (drop: Drop) => void;
+  // Current space's drops — used to resolve #[Name](id) mention chips inline.
+  allDrops?: Drop[];
 }
 
 function isTextFile(drop: Drop): boolean {
@@ -42,7 +46,7 @@ function getFileContent(drop: Drop): string {
   return '';
 }
 
-export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect, selectionMode, theme = 'light', currentUserId, onPin, onUnpin }: DropItemProps) {
+export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect, selectionMode, theme = 'light', currentUserId, onPin, onUnpin, allDrops = [] }: DropItemProps) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [copied, setCopied] = useState(false);
   const [decryptedContent, setDecryptedContent] = useState<string>('');
@@ -197,7 +201,7 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
       }
     })() : '');
     if (content) {
-      await navigator.clipboard.writeText(content);
+      await navigator.clipboard.writeText(contentToPlainText(content));
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }
@@ -261,6 +265,11 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
   };
 
   const tc = getThemeColors();
+
+  // Inline mention-chip class strings — the shared DropMentionContent does the parse+render.
+  const chipBase = `inline-flex items-center mx-0.5 px-1.5 py-0.5 align-middle text-[11px] ${isMinimal ? 'rounded-full font-sans' : 'font-mono'}`;
+  const mentionFoundClass = `${chipBase} ${tc.selectedBg} text-white hover:opacity-80`;
+  const mentionDeletedClass = `${chipBase} bg-[#1A1A1A]/10 ${tc.textMuted} line-through cursor-not-allowed`;
 
   return (
     <div
@@ -475,7 +484,13 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
       {!selectionMode && drop.type === 'text' && displayContent && (
         <div className={`border-t ${tc.borderColor} px-4 py-3 ${tc.textPreviewBg} overflow-hidden`}>
           <p className={`${isMinimal ? 'text-sm font-sans tracking-wide' : 'text-xs font-mono'} ${tc.textPreviewColor} line-clamp-3 break-all`}>
-            {displayContent}
+            <DropMentionContent
+              content={displayContent}
+              allDrops={allDrops}
+              onPreview={onPreview}
+              foundClassName={mentionFoundClass}
+              deletedClassName={mentionDeletedClass}
+            />
           </p>
         </div>
       )}

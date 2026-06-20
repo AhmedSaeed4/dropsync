@@ -4,7 +4,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { createFileDrop, createTextDrop } from '@/lib/drops';
 import { useAuth } from '@/hooks/useAuth';
 import { TextModal } from './TextModal';
-import { ExpirationOption } from '@/types';
+import { ExpirationOption, Drop } from '@/types';
 
 interface DropZoneProps {
   theme?: 'light' | 'dark' | 'minimal';
@@ -13,6 +13,7 @@ interface DropZoneProps {
   customCategories?: string[];
   onCreateCategory?: (name: string) => Promise<string | null>;
   editModalOpen?: boolean;
+  mentionableDrops?: Drop[];
 }
 
 const EXPIRATION_OPTIONS: { value: ExpirationOption; label: string }[] = [
@@ -30,6 +31,7 @@ export function DropZone({
   customCategories = [],
   onCreateCategory,
   editModalOpen = false,
+  mentionableDrops = [],
 }: DropZoneProps) {
   const { user } = useAuth();
   const [isDragging, setIsDragging] = useState(false);
@@ -335,6 +337,7 @@ export function DropZone({
           theme={theme}
           customCategories={customCategories}
           onCreateCategory={onCreateCategory}
+          mentionableDrops={mentionableDrops}
         />
       )}
     </>

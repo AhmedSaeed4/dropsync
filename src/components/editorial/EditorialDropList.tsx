@@ -29,6 +29,8 @@ interface EditorialDropListProps {
   showChat?: boolean;
   currentWorkspace?: Workspace | null;
   workspaceMembers?: MemberInfo[];
+  // Current space's drops — forwarded to EditorialDropItem for inline mention chips.
+  allDrops?: Drop[];
 }
 
 interface PendingDeletion {
@@ -165,6 +167,7 @@ export function EditorialDropList({
   showChat = false,
   currentWorkspace,
   workspaceMembers,
+  allDrops = [],
 }: EditorialDropListProps) {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -1073,6 +1076,7 @@ export function EditorialDropList({
                     currentUserId={currentUserId}
                     onPin={handlePinDrop}
                     onUnpin={handlePinDrop}
+                    allDrops={allDrops}
                   />
                 ))}
                 {/* Unpinned drops — sortable; drag starts from the grip handle */}
@@ -1091,6 +1095,7 @@ export function EditorialDropList({
                       currentUserId={currentUserId}
                       onPin={handlePinDrop}
                       onUnpin={handlePinDrop}
+                      allDrops={allDrops}
                     />
                   ))}
                 </SortableContext>
@@ -1122,6 +1127,7 @@ export function EditorialDropList({
                         currentUserId={currentUserId}
                         onPin={handlePinDrop}
                         onUnpin={handlePinDrop}
+                        allDrops={allDrops}
                         showMoveControls={moveIdx !== undefined}
                         canMoveUp={moveIdx !== undefined && moveIdx > 0}
                         canMoveDown={moveIdx !== undefined && moveIdx < manualCount - 1}
@@ -1151,6 +1157,7 @@ export function EditorialDropList({
                     currentUserId={currentUserId}
                     onPin={handlePinDrop}
                     onUnpin={handlePinDrop}
+                    allDrops={allDrops}
                     showMoveControls={moveIdx !== undefined}
                     canMoveUp={moveIdx !== undefined && moveIdx > 0}
                     canMoveDown={moveIdx !== undefined && moveIdx < manualCount - 1}

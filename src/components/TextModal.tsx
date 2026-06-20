@@ -5,6 +5,8 @@ import { Drop, ExpirationOption } from '@/types';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { decryptDrop } from '@/lib/drops';
 import { DrawingCanvas, BG_COLORS } from './DrawingCanvas';
+import { DropPickerRow } from './DropPickerRow';
+import { useMentionEditor } from '@/hooks/useMentionEditor';
 
 interface TextModalProps {
   onSubmit: (name: string, content: string, expiration: ExpirationOption, category?: string, imageFile?: File, categories?: string[], isDrawing?: boolean) => Promise<void>;
@@ -15,6 +17,8 @@ interface TextModalProps {
   editDrop?: Drop | null;
   onEdit?: (drop: Drop, updates: { name?: string; content?: string; category?: string | null; categories?: string[]; expirationOption?: ExpirationOption; imageFile?: File | null; imageRemoved?: boolean }) => Promise<boolean>;
   currentUserId?: string;
+  // Drops in the current space, used for the #-mention autocomplete in the content field.
+  mentionableDrops?: Drop[];
 }
 
 const EXPIRATION_OPTIONS: { value: ExpirationOption; label: string }[] = [
@@ -30,7 +34,7 @@ const BUILT_IN_CATEGORIES = [
   { value: 'link', label: 'Link' },
 ];
 
-export function TextModal({ onSubmit, onClose, theme = 'light', customCategories = [], onCreateCategory, editDrop, onEdit, currentUserId }: TextModalProps) {
+export function TextModal({ onSubmit, onClose, theme = 'light', customCategories = [], onCreateCategory, editDrop, onEdit, currentUserId, mentionableDrops = [] }: TextModalProps) {
   useBodyScrollLock();
   const isEditMode = !!editDrop;
   const [name, setName] = useState(editDrop?.name || '');
@@ -65,6 +69,20 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
   const [drawingFile, setDrawingFile] = useState<File | null>(null);
   const [initialScene, setInitialScene] = useState<{ elements: any[]; appState: any; files?: any } | null>(null);
   const [extractingScene, setExtractingScene] = useState(isEditMode && !!editDrop?.isDrawing);
+
+  // contentEditable mention editor — renders #[Name](id) tokens as inline chips while typing,
+  // but keeps `content` as the plain token string (encrypt/save round-trip unchanged).
+  const mentionChipBase = `inline-flex items-center mx-0.5 px-1.5 py-0.5 align-middle text-[13px] ${isMinimal ? 'rounded-full font-sans' : 'font-mono'}`;
+  const mentionFoundClass = `${mentionChipBase} ${isMinimal ? 'bg-[#1A1A1A]' : 'bg-[#FF5A47]'} text-white`;
+  const mentionDeletedClass = `${mentionChipBase} bg-[#1A1A1A]/10 ${isMinimal ? 'text-[#1A1A1A]/50' : isDark ? 'text-white/50' : 'text-[#1A1A1A]/50'} line-through cursor-not-allowed`;
+  const mention = useMentionEditor({
+    content,
+    setContent,
+    allDrops: mentionableDrops,
+    excludeDropId: editDrop?.id,
+    foundClassName: mentionFoundClass,
+    deletedClassName: mentionDeletedClass,
+  });
 
   // Load existing image for edit mode
   useEffect(() => {
@@ -600,7 +618,7 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
 
           {/* Content textarea — show in text mode or edit mode (not for drawing edits) */}
           {(mode === 'text' || isEditMode) && (
-          <div>
+          <div className="relative">
             <div className="flex items-center justify-between mb-2">
               <label className={`block ${tc.fontClass} ${tc.textMuted}`}>
                 {isMinimal ? 'Content' : 'CONTENT/DATA'}
@@ -637,14 +655,44 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
                 )}
               </button>
             </div>
-            <textarea
-              value={content}
-              onChange={(e) => setContent(e.target.value)}
-              placeholder={isMinimal ? 'Enter your text here...' : 'ENTER_CONTENT_HERE...'}
-              rows={8}
-              required={!drawingFile && (mode === 'text' || isEditMode)}
-              className={`w-full border ${tc.borderColor} ${tc.inputBg} ${tc.textColor} px-4 py-3 text-sm ${isMinimal ? 'font-sans' : 'font-mono'} ${tc.placeholderColor} focus:outline-none focus:ring-2 focus:ring-[#1A1A1A] focus:border-transparent resize-none transition-colors duration-300 ${tc.roundedClass}`}
-            />
+            {/* contentEditable mention editor: chips render live while typing, but the saved
+                value stays the plain #[Name](id) token string (see useMentionEditor). */}
+            <div className="relative">
+              {/* #-mention dropdown — floats just above the editor */}
+              {mention.showMention && mention.filteredMentionDrops.length > 0 && (
+                <div
+                  ref={mention.dropdownRef}
+                  className={`absolute bottom-full left-0 right-0 z-50 mb-1 max-h-[240px] overflow-y-auto border ${tc.borderColor} ${tc.bgColor} ${isMinimal ? 'rounded-lg' : ''} shadow-lg`}
+                >
+                  {mention.filteredMentionDrops.map((drop, idx) => (
+                    <DropPickerRow
+                      key={drop.id}
+                      drop={drop}
+                      selected={idx === mention.mentionIndex}
+                      attached={false}
+                      onSelect={mention.insertMention}
+                      theme={theme}
+                    />
+                  ))}
+                </div>
+              )}
+              {content === '' && !mention.showMention && (
+                <span className={`pointer-events-none absolute left-4 top-3 text-sm ${isMinimal ? 'font-sans' : 'font-mono'} ${tc.placeholderColor}`}>
+                  {isMinimal ? 'Enter your text here...' : 'ENTER_CONTENT_HERE...'}
+                </span>
+              )}
+              <div
+                ref={mention.editorRef}
+                contentEditable
+                suppressContentEditableWarning
+                onInput={mention.handleInput}
+                onKeyDown={mention.handleKeyDown}
+                onBlur={mention.handleBlur}
+                role="textbox"
+                aria-multiline="true"
+                className={`w-full border ${tc.borderColor} ${tc.inputBg} ${tc.textColor} px-4 py-3 text-sm ${isMinimal ? 'font-sans' : 'font-mono'} focus:outline-none focus:ring-2 focus:ring-[#1A1A1A] focus:border-transparent transition-colors duration-300 ${tc.roundedClass} min-h-[160px] max-h-[320px] overflow-y-auto whitespace-pre-wrap break-words`}
+              />
+            </div>
           </div>
           )}
 

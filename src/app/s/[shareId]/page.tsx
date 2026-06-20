@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
+import { contentToPlainText } from '@/lib/dropTagUtils';
 
 interface ShareData {
   type: 'text' | 'file';
@@ -77,7 +78,8 @@ export default function SharePage() {
 
   const handleCopy = async () => {
     if (share?.content) {
-      await navigator.clipboard.writeText(share.content);
+      // Copy the same clean text the viewer sees (mentions as plain names), not the raw tokens.
+      await navigator.clipboard.writeText(contentToPlainText(share.content));
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }
@@ -200,7 +202,7 @@ export default function SharePage() {
           {share.type === 'text' && share.content && (
             <div className="rounded-lg border border-[#e0e0e0] bg-white p-6 mb-6">
               <pre className="text-sm text-[#1a1a1a] whitespace-pre-wrap break-all leading-relaxed">
-                {share.content}
+                {contentToPlainText(share.content)}
               </pre>
             </div>
           )}

@@ -246,6 +246,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
               editModalOpen={!!editDrop}
               onToggleChat={onToggleChat}
               unreadCount={unreadCount}
+              mentionableDrops={drops}
             />
 
             <EditorialStatusPanel
@@ -282,6 +283,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
               showChat={showChat}
               currentWorkspace={currentWorkspace}
               workspaceMembers={resolvedWorkspaceMembers}
+              allDrops={drops}
             />
           </div>
         </div>
@@ -327,6 +329,8 @@ export function EditorialLayout(props: EditorialLayoutProps) {
             const originalDrop = drops.find(d => d.id === drop.id) || drop;
             setMoveDrops([originalDrop]);
           }}
+          allDrops={drops}
+          onPreview={handlePreview}
         />
       )}
 
@@ -354,6 +358,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
           editDrop={editDrop}
           onEdit={handleEditSubmit}
           currentUserId={user?.uid}
+          mentionableDrops={drops}
         />
       )}
 

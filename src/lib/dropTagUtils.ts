@@ -42,3 +42,13 @@ export function detectHashtagTrigger(textBeforeCursor: string): { query: string;
     startIndex: hashIndex,
   };
 }
+
+// Flatten parsed content to a plain string: text parts keep their text, #[Name](id) tags
+// become just the name. Used for clipboard copy (drop card + preview modal, both themes)
+// and the public share page so mention tokens read as the bare name. File drops and
+// token-free text have no tags → harmless pass-through (identical string out).
+export function contentToPlainText(content: string): string {
+  return parseMessageContent(content)
+    .map(p => (p.type === 'text' ? p.value : p.name) ?? '')
+    .join('');
+}
