@@ -3,6 +3,8 @@
 import { Drop } from '@/types';
 import { formatFileSize, getTimeRemaining, decryptDrop, getYouTubeVideoId } from '@/lib/drops';
 import { createShare } from '@/lib/shares';
+import { contentToPlainText } from '@/lib/dropTagUtils';
+import { DropMentionContent } from '../DropMentionContent';
 import { useState, useEffect, useRef, memo } from 'react';
 import { useVideoThumbnail } from '@/hooks/useVideoThumbnail';
 import { getEditorialThemeColors } from './editorialTheme';
@@ -30,6 +32,8 @@ interface EditorialDropItemProps {
   onMoveDown?: (dropId: string) => void;
   showDragHandle?: boolean;
   dragHandleProps?: Record<string, any>;
+  // Current space's drops — used to resolve #[Name](id) mention chips inline.
+  allDrops?: Drop[];
 }
 
 function isTextFile(drop: Drop): boolean {
@@ -156,6 +160,7 @@ export const EditorialDropItem = memo(function EditorialDropItem({
   onMoveDown,
   showDragHandle,
   dragHandleProps,
+  allDrops = [],
 }: EditorialDropItemProps) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -185,6 +190,11 @@ export const EditorialDropItem = memo(function EditorialDropItem({
 
   const tc = getEditorialThemeColors(theme);
   const font = tc.fontClass;
+
+  // Inline mention-chip class strings — the shared DropMentionContent does the parse+render.
+  const chipBase = `inline-flex items-center mx-0.5 px-1.5 py-0.5 align-middle rounded text-[11px] ${font}`;
+  const mentionFoundClass = `${chipBase} ${tc.activePillBg} ${tc.activePillText} hover:opacity-80`;
+  const mentionDeletedClass = `${chipBase} ${tc.inactivePillBg} ${tc.muted} line-through cursor-not-allowed`;
 
   const { menuState, closeMenu, contextMenuProps } = useContextMenu();
 
@@ -356,7 +366,7 @@ export const EditorialDropItem = memo(function EditorialDropItem({
       }
     })() : '');
     if (content) {
-      await navigator.clipboard.writeText(content);
+      await navigator.clipboard.writeText(contentToPlainText(content));
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }
@@ -534,7 +544,13 @@ export const EditorialDropItem = memo(function EditorialDropItem({
           {/* Text preview - single line truncated */}
           {!selectionMode && drop.type === 'text' && displayContent && !thumbnailSrc && (
             <p className={`text-xs mt-1 ${font} ${selected ? tc.inactivePillText : tc.muted} line-clamp-1`}>
-              {displayContent}
+              <DropMentionContent
+                content={displayContent}
+                allDrops={allDrops}
+                onPreview={onPreview}
+                foundClassName={mentionFoundClass}
+                deletedClassName={mentionDeletedClass}
+              />
             </p>
           )}
         </div>
@@ -653,7 +669,13 @@ export const EditorialDropItem = memo(function EditorialDropItem({
       {!selectionMode && drop.type === 'text' && displayContent && thumbnailSrc && (
         <div className={`px-3 pb-3 pt-0`}>
           <p className={`text-xs ${font} ${selected ? tc.inactivePillText : tc.muted} line-clamp-2`}>
-            {displayContent}
+            <DropMentionContent
+              content={displayContent}
+              allDrops={allDrops}
+              onPreview={onPreview}
+              foundClassName={mentionFoundClass}
+              deletedClassName={mentionDeletedClass}
+            />
           </p>
         </div>
       )}

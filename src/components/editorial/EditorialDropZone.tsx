@@ -4,7 +4,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { createFileDrop, createTextDrop } from '@/lib/drops';
 import { useAuth } from '@/hooks/useAuth';
 import { EditorialTextModal } from './EditorialTextModal';
-import { ExpirationOption } from '@/types';
+import { ExpirationOption, Drop } from '@/types';
 import { getEditorialThemeColors } from './editorialTheme';
 
 interface EditorialDropZoneProps {
@@ -17,6 +17,7 @@ interface EditorialDropZoneProps {
   editModalOpen?: boolean;
   onToggleChat?: () => void;
   unreadCount?: number;
+  mentionableDrops?: Drop[];
 }
 
 const EXPIRATION_OPTIONS: { value: ExpirationOption; label: string }[] = [
@@ -37,6 +38,7 @@ export function EditorialDropZone({
   editModalOpen = false,
   onToggleChat,
   unreadCount = 0,
+  mentionableDrops = [],
 }: EditorialDropZoneProps) {
   const { user } = useAuth();
   const [isDragging, setIsDragging] = useState(false);
@@ -356,6 +358,7 @@ export function EditorialDropZone({
           theme={theme}
           customCategories={customCategories}
           onCreateCategory={onCreateCategory}
+          mentionableDrops={mentionableDrops}
         />
       )}
     </>

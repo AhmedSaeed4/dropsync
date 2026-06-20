@@ -234,6 +234,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
                 customCategories={categories.map(c => c.name)}
                 onCreateCategory={handleCreateCategory}
                 editModalOpen={!!editDrop}
+                mentionableDrops={drops}
               />
             </section>
             <section>
@@ -250,6 +251,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
                 onDeleteCategory={handleDeleteCategory}
                 currentWorkspace={currentWorkspace}
                 workspaceMembers={resolvedWorkspaceMembers}
+                allDrops={drops}
               />
             </section>
           </div>
@@ -349,6 +351,8 @@ export function ClassicLayout(props: ClassicLayoutProps) {
             const originalDrop = drops.find(d => d.id === drop.id) || drop;
             setMoveDrops([originalDrop]);
           }}
+          allDrops={drops}
+          onPreview={handlePreview}
         />
       )}
 
@@ -376,6 +380,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
           editDrop={editDrop}
           onEdit={handleEditSubmit}
           currentUserId={user?.uid}
+          mentionableDrops={drops}
         />
       )}
 
