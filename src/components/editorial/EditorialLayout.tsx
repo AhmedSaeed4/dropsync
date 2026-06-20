@@ -18,7 +18,7 @@ import { EditorialSavedPaths } from './EditorialSavedPaths';
 import { getEditorialThemeColors } from './editorialTheme';
 import { EditorialTextModal } from './EditorialTextModal';
 import { EditorialMoveDropModal } from './EditorialMoveDropModal';
-import { moveDrop } from '@/lib/drops';
+import { moveDrop, copyDrop } from '@/lib/drops';
 
 type Theme = 'light' | 'dark' | 'minimal';
 type LayoutMode = 'classic' | 'editorial';
@@ -159,6 +159,20 @@ export function EditorialLayout(props: EditorialLayoutProps) {
       refreshDrops();
     } else {
       alert(`${failures.length}/${drops.length} drops failed to move: ${failures[0].error}`);
+    }
+  };
+
+  const handleCopyDrop = async (drops: Drop[], targetWorkspaceId: string | null) => {
+    if (!user || !drops.length) return;
+    setMoveLoading(true);
+    const results = await Promise.all(drops.map(d => copyDrop(d, targetWorkspaceId, user.uid)));
+    setMoveLoading(false);
+    const failures = results.filter(r => !r.success);
+    if (failures.length === 0) {
+      setMoveDrops(null);
+      refreshDrops();
+    } else {
+      alert(`${failures.length}/${drops.length} drops failed to copy: ${failures[0].error}`);
     }
   };
 
@@ -323,6 +337,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
           workspaces={workspaces}
           currentWorkspaceId={currentWorkspaceId}
           onMove={handleMoveDrop}
+          onCopy={handleCopyDrop}
           onClose={() => setMoveDrops(null)}
           theme={theme}
         />

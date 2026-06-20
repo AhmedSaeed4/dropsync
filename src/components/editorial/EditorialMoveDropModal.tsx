@@ -10,17 +10,19 @@ interface EditorialMoveDropModalProps {
   workspaces: Workspace[];
   currentWorkspaceId: string | null;
   onMove: (drops: Drop[], targetWorkspaceId: string | null) => Promise<void>;
+  onCopy: (drops: Drop[], targetWorkspaceId: string | null) => Promise<void>;
   onClose: () => void;
   theme?: 'light' | 'dark' | 'minimal';
 }
 
-export function EditorialMoveDropModal({ drops: dropsProp, workspaces, currentWorkspaceId, onMove, onClose, theme = 'light' }: EditorialMoveDropModalProps) {
+export function EditorialMoveDropModal({ drops: dropsProp, workspaces, currentWorkspaceId, onMove, onCopy, onClose, theme = 'light' }: EditorialMoveDropModalProps) {
   useBodyScrollLock();
   const dropList = Array.isArray(dropsProp) ? dropsProp : [dropsProp];
   const isBulk = dropList.length > 1;
   const firstDrop = dropList[0];
 
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(firstDrop.workspaceId);
+  const [mode, setMode] = useState<'move' | 'copy'>('move');
   const [loading, setLoading] = useState(false);
 
   const tc = getEditorialThemeColors(theme);
@@ -28,14 +30,18 @@ export function EditorialMoveDropModal({ drops: dropsProp, workspaces, currentWo
   const currentName = firstDrop.workspaceId
     ? workspaces.find(w => w.id === firstDrop.workspaceId)?.name || 'Unknown'
     : 'Personal';
+  const targetName = selectedWorkspaceId === null
+    ? 'Personal'
+    : workspaces.find(w => w.id === selectedWorkspaceId)?.name || 'Unknown';
 
   const allSameWorkspace = dropList.every(d => d.workspaceId === firstDrop.workspaceId);
   const isSameLocation = selectedWorkspaceId === firstDrop.workspaceId;
 
-  const handleMove = async () => {
+  const handleSubmit = async () => {
     if (isSameLocation) return;
     setLoading(true);
-    await onMove(dropList, selectedWorkspaceId);
+    if (mode === 'copy') await onCopy(dropList, selectedWorkspaceId);
+    else await onMove(dropList, selectedWorkspaceId);
     setLoading(false);
   };
 
@@ -49,7 +55,7 @@ export function EditorialMoveDropModal({ drops: dropsProp, workspaces, currentWo
         <div className={`border-b ${tc.border} px-5 py-4 flex items-center justify-between shrink-0`}>
           <div>
             <h2 className={`${tc.fontClass} ${tc.text} font-medium text-[15px]`}>
-              {isBulk ? `Move ${dropList.length} drops` : 'Move drop'}
+              {isBulk ? `${mode === 'copy' ? 'Copy' : 'Move'} ${dropList.length} drops` : (mode === 'copy' ? 'Copy drop' : 'Move drop')}
             </h2>
             {!isBulk && (
               <p className={`text-[11px] ${tc.muted} mt-0.5 truncate max-w-[250px] ${tc.fontClass}`}>
@@ -66,6 +72,30 @@ export function EditorialMoveDropModal({ drops: dropsProp, workspaces, currentWo
 
         {/* Content */}
         <div className="p-5 space-y-4 flex-1 min-h-0 overflow-y-auto thin-scrollbar">
+          {/* Mode toggle: Move / Copy */}
+          <div className={`flex p-0.5 border ${tc.border} ${tc.bg} rounded-lg`}>
+            <button
+              type="button"
+              onClick={() => setMode('move')}
+              className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs ${tc.fontClass} rounded-md transition-colors ${mode === 'move' ? `${tc.activePillBg} ${tc.activePillText}` : `${tc.muted} hover:${tc.text}`}`}
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4M16 17H4m0 0l4-4m-4 4l4 4" />
+              </svg>
+              <span>Move</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode('copy')}
+              className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs ${tc.fontClass} rounded-md transition-colors ${mode === 'copy' ? `${tc.activePillBg} ${tc.activePillText}` : `${tc.muted} hover:${tc.text}`}`}
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+              <span>Copy</span>
+            </button>
+          </div>
+
           {/* Current location */}
           <div>
             <label className={`text-xs ${tc.muted} ${tc.fontClass} mb-1.5 block`}>From</label>
@@ -126,11 +156,30 @@ export function EditorialMoveDropModal({ drops: dropsProp, workspaces, currentWo
           {/* Warnings */}
           {!isSameLocation && (
             <div className={`border ${tc.border} ${tc.bg} rounded-lg px-3 py-2.5 ${tc.fontClass} space-y-1`}>
-              {firstDrop.workspaceId === null && selectedWorkspaceId !== null && (
-                <p className={`text-xs ${tc.muted}`}>All workspace members will gain access to these drops.</p>
-              )}
-              {firstDrop.workspaceId !== null && selectedWorkspaceId === null && (
-                <p className={`text-xs ${tc.muted}`}>Other workspace members will lose access to these drops.</p>
+              {mode === 'copy' ? (
+                <>
+                  <p className={`text-xs ${tc.muted}`}>A copy will be created in {targetName}. The original stays in {currentName}.</p>
+                  {selectedWorkspaceId !== null && (
+                    <p className={`text-xs ${tc.muted}`}>Workspace members of {targetName} will gain access to the copy.</p>
+                  )}
+                </>
+              ) : (
+                <>
+                  <p className={`text-xs ${tc.muted}`}>
+                    {isBulk
+                      ? `These ${dropList.length} drops will be moved to ${targetName} and removed from ${currentName}.`
+                      : `This drop will be moved to ${targetName} and removed from ${currentName}.`}
+                  </p>
+                  {firstDrop.workspaceId === null && selectedWorkspaceId !== null && (
+                    <p className={`text-xs ${tc.muted}`}>All workspace members will gain access to these drops.</p>
+                  )}
+                  {firstDrop.workspaceId !== null && selectedWorkspaceId === null && (
+                    <p className={`text-xs ${tc.muted}`}>Other workspace members will lose access to these drops.</p>
+                  )}
+                  {firstDrop.workspaceId !== null && selectedWorkspaceId !== null && (
+                    <p className={`text-xs ${tc.muted}`}>Members of {currentName} will lose access, and members of {targetName} will gain access.</p>
+                  )}
+                </>
               )}
             </div>
           )}
@@ -146,21 +195,27 @@ export function EditorialMoveDropModal({ drops: dropsProp, workspaces, currentWo
             Cancel
           </button>
           <button
-            onClick={handleMove}
+            onClick={handleSubmit}
             disabled={isSameLocation || loading}
             className={`px-4 py-2 text-sm rounded-lg disabled:opacity-50 flex items-center gap-2 ${tc.activePillBg} ${tc.activePillText} hover:opacity-90 transition-opacity ${tc.fontClass}`}
           >
             {loading ? (
               <>
                 <div className={`w-4 h-4 border border-white/30 border-t-white animate-spin rounded-full`} />
-                Moving...
+                {mode === 'copy' ? 'Copying...' : 'Moving...'}
               </>
             ) : (
               <>
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 7.5L7.5 3m0 0L12 7.5M7.5 3v13.5M12 16.5l4.5-4.5m0 0L21 16.5M16.5 12V3" />
-                </svg>
-                Move
+                {mode === 'copy' ? (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  </svg>
+                ) : (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 7.5L7.5 3m0 0L12 7.5M7.5 3v13.5M12 16.5l4.5-4.5m0 0L21 16.5M16.5 12V3" />
+                  </svg>
+                )}
+                {mode === 'copy' ? 'Copy' : 'Move'}
               </>
             )}
           </button>

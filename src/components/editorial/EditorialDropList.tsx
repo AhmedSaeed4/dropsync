@@ -9,7 +9,7 @@ import { Drop, Workspace, Category } from '@/types';
 import { EditorialDropItem } from './EditorialDropItem';
 import { UndoToast } from '@/components/UndoToast';
 import { Toast } from '@/components/Toast';
-import { deleteDrop, moveDrop, pinDrop, unpinDrop } from '@/lib/drops';
+import { deleteDrop, moveDrop, copyDrop, pinDrop, unpinDrop } from '@/lib/drops';
 import { EditorialMoveDropModal } from './EditorialMoveDropModal';
 import { getEditorialThemeColors } from './editorialTheme';
 import { MemberInfo } from '@/lib/workspaces';
@@ -1209,6 +1209,21 @@ export function EditorialDropList({
               onDelete();
             } else {
               alert(`${failures.length}/${selectedDrops.length} drops failed to move: ${failures[0].error}`);
+            }
+          }}
+          onCopy={async (selectedDrops, targetWorkspaceId) => {
+            if (!currentUserId) return;
+            setMoveLoading(true);
+            const results = await Promise.all(selectedDrops.map(d => copyDrop(d, targetWorkspaceId, currentUserId!)));
+            setMoveLoading(false);
+            const failures = results.filter(r => !r.success);
+            if (failures.length === 0) {
+              setBulkMoveDrops(null);
+              setSelectedIds(new Set());
+              setSelectionMode(false);
+              onDelete();
+            } else {
+              alert(`${failures.length}/${selectedDrops.length} drops failed to copy: ${failures[0].error}`);
             }
           }}
           onClose={() => setBulkMoveDrops(null)}

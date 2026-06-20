@@ -1186,6 +1186,318 @@ export async function moveDrop(
   }
 }
 
+// Copy a drop into another space as a brand-new, fully-independent duplicate. Mirrors
+// moveDrop's decrypt → re-encrypt-for-target flow, with four deliberate differences:
+//   1. Creates a NEW doc via addDoc (the original doc is never mutated).
+//   2. Large unencrypted files (>10MB) are re-uploaded to a NEW R2 key. moveDrop reuses
+//      drop.r2Key there, which is safe only because the doc moves in place — two docs must
+//      never share one R2 object or deleting one corrupts the other.
+//   3. Fresh createdAt + expiresAt computed from the original's expirationOption; the copy
+//      is owned by the copier (userId) and starts unpinned.
+//   4. Never deletes any R2 object — the original owns its objects and keeps them.
+export async function copyDrop(
+  drop: Drop,
+  targetWorkspaceId: string | null,
+  currentUserId: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    // Step 1: Decrypt the drop to get plaintext.
+    const decrypted = await decryptDrop(drop, currentUserId);
+    if (drop.encrypted && !decrypted.content && drop.type === 'text' && !drop.isDrawing) {
+      return { success: false, error: 'Failed to decrypt drop content' };
+    }
+    // A file copy always needs the bytes (it cannot reuse the original's R2 key), so a failed
+    // fetch/decrypt is fatal — never write a half-broken copy.
+    if (drop.type === 'file' && !decrypted.fileData) {
+      return { success: false, error: 'Failed to read file content for copy' };
+    }
+
+    // Step 2: Re-encrypt with the target key (identical to moveDrop), except the large
+    // unencrypted-file branch re-uploads to a new R2 key instead of reusing drop.r2Key.
+    let newContent: string | undefined;
+    let newFileData: string | undefined;
+    let newR2Key: string | undefined;
+    let newFileUrl: string | undefined;
+    let newIv: string | undefined;
+    let newEncryptedDEK: string | undefined;
+    let newEncrypted = false;
+
+    const isTargetWorkspace = targetWorkspaceId !== null;
+
+    if (drop.type === 'text') {
+      const plaintext = decrypted.content ?? '';
+      if (isTargetWorkspace) {
+        const workspaceKey = await getWorkspaceKey(targetWorkspaceId, currentUserId);
+        if (!workspaceKey) {
+          return { success: false, error: 'Could not get target workspace key' };
+        }
+        const enc = await encryptData(plaintext, workspaceKey);
+        newContent = enc.encrypted;
+        newIv = enc.iv;
+        newEncrypted = true;
+      } else {
+        const keys = await getUserKeys(currentUserId);
+        if (!keys) {
+          return { success: false, error: 'User has no encryption keys' };
+        }
+        const dek = await generateAESKey();
+        const enc = await encryptData(plaintext, dek);
+        newContent = enc.encrypted;
+        newIv = enc.iv;
+        newEncrypted = true;
+
+        const publicKey = await getUserPublicKey(currentUserId);
+        if (publicKey) {
+          const { encryptedDEK: encDEK, iv: dekIv } = await encryptDEKForUser(
+            dek, publicKey, keys.privateKey
+          );
+          newEncryptedDEK = JSON.stringify({ encryptedDEK: encDEK, iv: dekIv });
+        }
+      }
+    } else if (drop.type === 'file') {
+      const plaintext = decrypted.fileData ?? '';
+      const wasEncrypted = drop.encrypted && !!drop.r2Key;
+
+      if (!wasEncrypted) {
+        // Large unencrypted file — give the copy its own R2 object (NEVER reuse drop.r2Key).
+        const uploadResult = await uploadToR2(plaintext);
+        newFileUrl = uploadResult.url;
+        newR2Key = uploadResult.key;
+        // stays unencrypted (newEncrypted remains false)
+      } else if (isTargetWorkspace) {
+        const workspaceKey = await getWorkspaceKey(targetWorkspaceId, currentUserId);
+        if (!workspaceKey) {
+          return { success: false, error: 'Could not get target workspace key' };
+        }
+        const enc = await encryptData(plaintext, workspaceKey);
+        newFileData = enc.encrypted;
+        newIv = enc.iv;
+        newEncrypted = true;
+
+        const uploadResult = await uploadToR2(newFileData);
+        newFileUrl = uploadResult.url;
+        newR2Key = uploadResult.key;
+      } else {
+        const keys = await getUserKeys(currentUserId);
+        if (!keys) {
+          return { success: false, error: 'User has no encryption keys' };
+        }
+        const dek = await generateAESKey();
+        const enc = await encryptData(plaintext, dek);
+        newFileData = enc.encrypted;
+        newIv = enc.iv;
+        newEncrypted = true;
+
+        const publicKey = await getUserPublicKey(currentUserId);
+        if (publicKey) {
+          const { encryptedDEK: encDEK, iv: dekIv } = await encryptDEKForUser(
+            dek, publicKey, keys.privateKey
+          );
+          newEncryptedDEK = JSON.stringify({ encryptedDEK: encDEK, iv: dekIv });
+        }
+
+        const uploadResult = await uploadToR2(newFileData);
+        newFileUrl = uploadResult.url;
+        newR2Key = uploadResult.key;
+      }
+    }
+
+    // Step 3: Handle an attached image (text drops with image) — identical to moveDrop:
+    // decrypt with the old key, re-encrypt with the target key, upload to a NEW R2 object.
+    let newImageUrl: string | undefined;
+    let newImageR2Key: string | undefined;
+    let newImageIv: string | undefined;
+    let newImageSize: number | undefined;
+    let newImageMimeType: string | undefined;
+    const oldImageR2Key: string | null = drop.imageR2Key || null;
+
+    if (drop.type === 'text' && drop.imageUrl && drop.imageIv) {
+      const imgResponse = await fetch(drop.imageUrl);
+      if (imgResponse.ok) {
+        const encryptedImageData = await imgResponse.text();
+
+        let oldDek: CryptoKey | null = null;
+        if (drop.workspaceId) {
+          oldDek = await getWorkspaceKey(drop.workspaceId, currentUserId);
+        } else {
+          const keys = await getUserKeys(currentUserId);
+          if (keys && drop.encryptedDEK) {
+            const parsed = JSON.parse(drop.encryptedDEK);
+            const creatorPublicKey = await getUserPublicKey(drop.userId);
+            if (creatorPublicKey) {
+              oldDek = await decryptDEKForUser(
+                parsed.encryptedDEK, parsed.iv, creatorPublicKey, keys.privateKey
+              );
+            }
+          }
+        }
+
+        if (oldDek) {
+          const decryptedImage = await decryptData(encryptedImageData, oldDek, drop.imageIv);
+
+          let encryptionKey: CryptoKey | null = null;
+          if (isTargetWorkspace) {
+            encryptionKey = await getWorkspaceKey(targetWorkspaceId, currentUserId);
+          } else {
+            const keys = await getUserKeys(currentUserId);
+            if (keys && newEncryptedDEK) {
+              const parsed = JSON.parse(newEncryptedDEK);
+              const creatorPublicKey = await getUserPublicKey(currentUserId);
+              if (creatorPublicKey) {
+                encryptionKey = await decryptDEKForUser(
+                  parsed.encryptedDEK, parsed.iv, creatorPublicKey, keys.privateKey
+                );
+              }
+            }
+          }
+
+          if (encryptionKey) {
+            const encImg = await encryptData(decryptedImage, encryptionKey);
+            const uploadResult = await uploadToR2(encImg.encrypted);
+            newImageUrl = uploadResult.url;
+            newImageR2Key = uploadResult.key;
+            newImageIv = encImg.iv;
+            newImageSize = drop.imageSize;
+            newImageMimeType = drop.imageMimeType;
+          }
+        }
+      }
+    }
+
+    // Step 4: Build the NEW document (addDoc — the original doc is never touched).
+    const expiresAt = getExpirationDate(drop.expirationOption ?? '2h');
+    const docData: Record<string, unknown> = {
+      userId: currentUserId, // the copier owns the copy
+      type: drop.type,
+      name: drop.name,
+      createdAt: serverTimestamp(),
+      expiresAt: expiresAt ? Timestamp.fromDate(expiresAt) : null,
+      expirationOption: drop.expirationOption ?? '2h',
+      workspaceId: targetWorkspaceId,
+      pinned: false,
+      category: null,
+      categories: [],
+    };
+
+    if (drop.type === 'file') {
+      docData.fileSize = drop.fileSize;
+      docData.mimeType = drop.mimeType;
+    }
+
+    if (newContent !== undefined) {
+      docData.content = newContent;
+    }
+    if (newIv !== undefined) {
+      docData.iv = newIv;
+    }
+    if (newEncrypted) {
+      docData.encrypted = true;
+      if (newEncryptedDEK) {
+        docData.encryptedDEK = newEncryptedDEK;
+      } else if (isTargetWorkspace) {
+        docData.encryptedDEK = null;
+      } else {
+        // Personal target but no encryptedDEK — fatal, never write a broken drop.
+        return { success: false, error: 'Failed to encrypt drop for personal space. Please try again.' };
+      }
+    } else {
+      docData.encrypted = false;
+    }
+
+    if (newR2Key !== undefined) {
+      docData.r2Key = newR2Key;
+      docData.fileUrl = newFileUrl;
+    }
+
+    if (newImageUrl !== undefined) {
+      docData.imageUrl = newImageUrl;
+      docData.imageR2Key = newImageR2Key;
+      docData.imageIv = newImageIv;
+      docData.imageSize = newImageSize;
+      docData.imageMimeType = newImageMimeType;
+    } else if (oldImageR2Key) {
+      // Image couldn't be re-encrypted — the copy simply has no image (the original keeps its own).
+      docData.imageUrl = null;
+      docData.imageR2Key = null;
+      docData.imageIv = null;
+      docData.imageSize = null;
+      docData.imageMimeType = null;
+    }
+
+    // creatorName: set for workspace targets, null for personal.
+    if (isTargetWorkspace) {
+      const userDisplayName = await getUserDisplayName(currentUserId);
+      docData.creatorName = userDisplayName || undefined;
+    } else {
+      docData.creatorName = null;
+    }
+
+    if (drop.isDrawing) {
+      docData.isDrawing = true;
+    }
+
+    // Category matching: resolve the source categories into the target space (same as moveDrop).
+    const BUILT_IN_CATEGORIES = new Set(['password', 'link']);
+    const sourceCategories = drop.categories || (drop.category ? [drop.category] : []);
+    if (sourceCategories.length > 0) {
+      const resolvedCategories: string[] = [];
+      const customCategories: string[] = [];
+      for (const catName of sourceCategories) {
+        if (BUILT_IN_CATEGORIES.has(catName.toLowerCase().trim())) {
+          resolvedCategories.push(catName.trim());
+        } else {
+          customCategories.push(catName);
+        }
+      }
+
+      if (customCategories.length > 0) {
+        let catQuery;
+        if (isTargetWorkspace) {
+          catQuery = query(collection(db, 'categories'), where('workspaceId', '==', targetWorkspaceId));
+        } else {
+          catQuery = query(collection(db, 'categories'), where('createdBy', '==', currentUserId), where('workspaceId', '==', null));
+        }
+        const catSnapshot = await getDocs(catQuery);
+        const existingCategories = new Map<string, string>();
+        catSnapshot.forEach(d => {
+          const data = d.data();
+          existingCategories.set(data.name.toLowerCase().trim(), data.name);
+        });
+
+        for (const catName of customCategories) {
+          const nameLower = catName.toLowerCase().trim();
+          if (existingCategories.has(nameLower)) {
+            resolvedCategories.push(existingCategories.get(nameLower)!);
+          } else {
+            const trimmedName = catName.trim();
+            await addDoc(collection(db, 'categories'), {
+              name: trimmedName,
+              workspaceId: targetWorkspaceId,
+              createdBy: currentUserId,
+              createdAt: serverTimestamp(),
+            });
+            existingCategories.set(nameLower, trimmedName);
+            resolvedCategories.push(trimmedName);
+          }
+        }
+      }
+
+      docData.categories = resolvedCategories;
+    }
+
+    // Step 5: Create the copy with a single addDoc. The original doc + all its R2 objects
+    // are never mutated or deleted.
+    await addDoc(collection(db, DROPS_COLLECTION), docData);
+
+    // Step 6: NO R2 cleanup — the original owns its objects and must keep them.
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error copying drop:', error);
+    return { success: false, error: 'Failed to copy drop. Please try again.' };
+  }
+}
+
 async function getUserDisplayName(userId: string): Promise<string | null> {
   // Try to get display name from auth user first
   const currentUser = auth.currentUser;
