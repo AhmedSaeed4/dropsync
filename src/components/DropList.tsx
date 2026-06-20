@@ -7,7 +7,7 @@ import { DropItem } from './DropItem';
 import { UndoToast } from './UndoToast';
 import { Toast } from './Toast';
 import { CategoryFilter } from './CategoryFilter';
-import { deleteDrop, moveDrop, pinDrop, unpinDrop } from '@/lib/drops';
+import { deleteDrop, moveDrop, copyDrop, pinDrop, unpinDrop } from '@/lib/drops';
 import { MoveDropModal } from '@/components/MoveDropModal';
 import { MemberInfo } from '@/lib/workspaces';
 
@@ -556,6 +556,21 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
               onDelete();
             } else {
               alert(`${failures.length}/${selectedDrops.length} drops failed to move: ${failures[0].error}`);
+            }
+          }}
+          onCopy={async (selectedDrops, targetWorkspaceId) => {
+            if (!currentUserId) return;
+            setMoveLoading(true);
+            const results = await Promise.all(selectedDrops.map(d => copyDrop(d, targetWorkspaceId, currentUserId!)));
+            setMoveLoading(false);
+            const failures = results.filter(r => !r.success);
+            if (failures.length === 0) {
+              setBulkMoveDrops(null);
+              setSelectedIds(new Set());
+              setSelectionMode(false);
+              onDelete();
+            } else {
+              alert(`${failures.length}/${selectedDrops.length} drops failed to copy: ${failures[0].error}`);
             }
           }}
           onClose={() => setBulkMoveDrops(null)}

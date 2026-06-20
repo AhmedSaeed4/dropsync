@@ -16,7 +16,7 @@ import { ChatPanel } from '@/components/ChatPanel';
 import { SavedPaths } from '@/components/SavedPaths';
 import { TextModal } from '@/components/TextModal';
 import { MoveDropModal } from '@/components/MoveDropModal';
-import { moveDrop } from '@/lib/drops';
+import { moveDrop, copyDrop } from '@/lib/drops';
 
 type Theme = 'light' | 'dark' | 'minimal';
 type LayoutMode = 'classic' | 'editorial';
@@ -160,6 +160,20 @@ export function ClassicLayout(props: ClassicLayoutProps) {
       refreshDrops();
     } else {
       alert(`${failures.length}/${drops.length} drops failed to move: ${failures[0].error}`);
+    }
+  };
+
+  const handleCopyDrop = async (drops: Drop[], targetWorkspaceId: string | null) => {
+    if (!user || !drops.length) return;
+    setMoveLoading(true);
+    const results = await Promise.all(drops.map(d => copyDrop(d, targetWorkspaceId, user.uid)));
+    setMoveLoading(false);
+    const failures = results.filter(r => !r.success);
+    if (failures.length === 0) {
+      setMoveDrops(null);
+      refreshDrops();
+    } else {
+      alert(`${failures.length}/${drops.length} drops failed to copy: ${failures[0].error}`);
     }
   };
 
@@ -345,6 +359,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
           workspaces={workspaces}
           currentWorkspaceId={currentWorkspaceId}
           onMove={handleMoveDrop}
+          onCopy={handleCopyDrop}
           onClose={() => setMoveDrops(null)}
           theme={theme}
         />
