@@ -123,7 +123,7 @@ export default function ShareContentPane({ share, copied, videoSrc, onCopy, onDo
               style={{ animationDelay: '560ms' }}
             >
               <div className="ds-scan-beam" />
-              <pre className="whitespace-pre-wrap break-words font-[family-name:var(--font-raleway)] text-[14px] leading-[1.75] text-[var(--ds-ink)]">
+              <pre className="max-h-[40vh] overflow-y-auto whitespace-pre-wrap break-words pr-1 font-[family-name:var(--font-raleway)] text-[14px] leading-[1.75] text-[var(--ds-ink)]">
                 {contentToPlainText(share.content)}
               </pre>
             </div>
