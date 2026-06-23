@@ -14,7 +14,7 @@ import {
 import { db, auth } from './firebase';
 import { Drop, ExpirationOption } from '@/types';
 import { generateAESKey, encryptData, decryptData, importAESKey, exportKey } from './crypto';
-import { deleteSharesForDrop } from './shares';
+import { deleteSharesForDrop, syncSharesExpiryForDrop } from './shares';
 import {
   getUserKeys,
   getUserPublicKey,
@@ -469,13 +469,23 @@ export async function updateDropMetadata(
     } else if (updates.category !== undefined) {
       updateData.category = updates.category || null;
     }
+    // Hoisted so it stays in scope for the best-effort share-expiry sync below. getExpirationDate
+    // only runs when the expiry is actually changing, so this is behavior-identical to before.
+    const expiresAt =
+      updates.expirationOption !== undefined ? getExpirationDate(updates.expirationOption) : undefined;
     if (updates.expirationOption !== undefined) {
       updateData.expirationOption = updates.expirationOption;
-      const expiresAt = getExpirationDate(updates.expirationOption);
       updateData.expiresAt = expiresAt ? Timestamp.fromDate(expiresAt) : null;
     }
 
     await updateDoc(docRef, updateData);
+
+    // Keep every share link for this drop in sync with the drop's new expiry (shorter, longer,
+    // or forever). Best-effort: the helper never throws, so a failed sync can't change this
+    // function's return value or fail the edit above.
+    if (expiresAt !== undefined) {
+      await syncSharesExpiryForDrop(dropId, expiresAt);
+    }
     return true;
   } catch (error) {
     console.error('Error updating drop metadata:', error);
@@ -511,9 +521,12 @@ export async function updateTextDrop(
     } else if (updates.category !== undefined) {
       updateData.category = updates.category || null;
     }
+    // Hoisted so it stays in scope for the best-effort share-expiry sync after updateDoc.
+    // getExpirationDate only runs when the expiry is actually changing.
+    const expiresAt =
+      updates.expirationOption !== undefined ? getExpirationDate(updates.expirationOption) : undefined;
     if (updates.expirationOption !== undefined) {
       updateData.expirationOption = updates.expirationOption;
-      const expiresAt = getExpirationDate(updates.expirationOption);
       updateData.expiresAt = expiresAt ? Timestamp.fromDate(expiresAt) : null;
     }
 
@@ -686,6 +699,12 @@ export async function updateTextDrop(
     // Only clean up old R2 objects after Firestore succeeds
     for (const { key, workspaceId } of r2KeysToDelete) {
       try { await deleteFromR2(key, workspaceId); } catch {}
+    }
+
+    // Keep every share link for this drop in sync with the drop's new expiry. Best-effort: the
+    // helper never throws, so this can't change the return value or fail the edit above.
+    if (expiresAt !== undefined) {
+      await syncSharesExpiryForDrop(drop.id, expiresAt);
     }
 
     return true;
