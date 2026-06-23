@@ -138,3 +138,33 @@ export async function deleteSharesForDrop(dropId: string): Promise<void> {
     console.error('Error deleting shares for drop:', error);
   }
 }
+
+// Re-sync EVERY share link for a drop to the drop's latest expiry ("always match"). Called
+// best-effort from updateDropMetadata/updateTextDrop after a drop's expiry edit succeeds, so
+// existing share links never show a stale expiry. Mirrors deleteSharesForDrop exactly:
+// fire-and-forget, never throws to the caller, never affects the edit's return value.
+export async function syncSharesExpiryForDrop(
+  dropId: string,
+  expiresAt: Date | null
+): Promise<void> {
+  try {
+    const currentUser = auth.currentUser;
+    if (!currentUser) return;
+
+    const idToken = await currentUser.getIdToken();
+
+    await fetch('/api/share/sync-expiry', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${idToken}`,
+      },
+      body: JSON.stringify({
+        dropId,
+        expiresAt: expiresAt ? expiresAt.toISOString() : null,
+      }),
+    });
+  } catch (error) {
+    console.error('Error syncing shares expiry for drop:', error);
+  }
+}
