@@ -79,6 +79,10 @@ export async function GET(request: NextRequest) {
       fileUrl: data.fileUrl || null,
       youtubeVideoId: data.youtubeVideoId || null,
       expiresAt: data.expiresAt ? data.expiresAt.toDate().toISOString() : null,
+      // Exposed so the public share page can render an accurate expiry-ring fraction
+      // (remaining / total). Total = expiresAt - createdAt. Additive field only — the
+      // fetch mechanism, encryption, and expiry-cleanup logic are untouched.
+      createdAt: data.createdAt ? data.createdAt.toDate().toISOString() : null,
     });
   } catch (error) {
     console.error('Share GET error:', error);

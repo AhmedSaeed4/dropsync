@@ -1,0 +1,73 @@
+/* ============================================================
+   DropSync · share-page redesign — animations + helpers.
+   Scoped class names (ds-*) to avoid colliding with the app.
+   Imported once by the share components; global, intentionally.
+   Easings mirror the standalone mockups (ease / ease-out).
+   ============================================================ */
+
+/* Smooth theme cross-fade, scoped to the share wrapper. Placed in @layer base so it acts as
+   a TRUE fallback: elements with their own transition utility (buttons → transition-transform
+   / transition-colors, which live in @layer utilities) keep theirs and stay snappy; everything
+   else (page bg, content bg, text, borders, svg fill/stroke) cross-fades these color props
+   over 400ms on toggle. :where() = zero specificity, defense in depth. NB: must be layered —
+   an unlayered rule would outrank @layer utilities (cascade layers beat specificity here) and
+   clobber the buttons' hover lift. */
+@layer base {
+  [data-ds-share] :where(*, *::before, *::after) {
+    transition: background-color 400ms cubic-bezier(0.4, 0, 0.2, 1),
+                color 400ms cubic-bezier(0.4, 0, 0.2, 1),
+                border-color 400ms cubic-bezier(0.4, 0, 0.2, 1),
+                fill 400ms cubic-bezier(0.4, 0, 0.2, 1),
+                stroke 400ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+}
+
+@keyframes ds-fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ds-fadeInUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes ds-growRule { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes ds-scan {
+  0% { transform: translateY(-120%); opacity: 0; }
+  20% { opacity: 1; }
+  80% { opacity: 1; }
+  100% { transform: translateY(320%); opacity: 0; }
+}
+@keyframes ds-drawTick { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+@keyframes ds-livePulse { 0% { transform: scale(0.5); opacity: 0.55; } 100% { transform: scale(2); opacity: 0; } }
+@keyframes ds-spin { to { transform: rotate(360deg); } }
+
+/* fade-in / fade-up utilities. opacity:0 + fill-mode:both keeps elements hidden until
+   their animation-delay elapses. Per-element delay is set inline (animationDelay). */
+.ds-fade { opacity: 0; animation: ds-fadeIn 700ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+.ds-fade-up { opacity: 0; animation: ds-fadeInUp 800ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+.ds-grow-rule { transform-origin: left center; transform: scaleX(0); animation: ds-growRule 700ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+/* scan-beam sweep inside a freshly-mounted content card */
+.ds-scan-beam {
+  position: absolute; left: 0; right: 0; top: 0; height: 38%;
+  background: linear-gradient(to bottom, transparent, rgba(128, 128, 128, 0.10), transparent);
+  pointer-events: none; transform: translateY(-120%); opacity: 0;
+  animation: ds-scan 1.2s cubic-bezier(0.16, 1, 0.3, 1) 160ms forwards;
+}
+
+/* live "private link" dot pulse */
+.ds-live-dot { position: relative; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.ds-live-dot::after {
+  content: ""; position: absolute; inset: -4px; border-radius: 50%;
+  border: 1px solid currentColor; opacity: 0; animation: ds-livePulse 2.1s ease-out infinite;
+}
+
+/* copy → tick morph */
+.ds-tick { stroke-dasharray: 1; stroke-dashoffset: 1; }
+.ds-copied .ds-tick { animation: ds-drawTick 360ms cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+
+/* prefers-reduced-motion: kill motion, force final state so nothing stays invisible. */
+@media (prefers-reduced-motion: reduce) {
+  .ds-fade, .ds-fade-up, .ds-grow-rule, .ds-scan-beam {
+    animation-duration: 0.001ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  .ds-live-dot::after { animation: none !important; }
+}
