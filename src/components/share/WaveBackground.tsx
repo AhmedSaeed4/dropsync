@@ -107,10 +107,19 @@ export default function WaveBackground() {
     }
 
     function resize() {
-      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const newDpr = Math.min(window.devicePixelRatio || 1, 2);
       const rect = canvas!.getBoundingClientRect();
-      W = canvas!.width = Math.max(1, Math.floor(rect.width * dpr));
-      H = canvas!.height = Math.max(1, Math.floor(rect.height * dpr));
+      const newW = Math.max(1, Math.floor(rect.width * newDpr));
+      const newH = Math.max(1, Math.floor(rect.height * newDpr));
+      // No-op when nothing actually changed: mobile's address bar fires `resize` on scroll
+      // without changing this element's size, and re-initializing here clears the canvas and
+      // redraws from phase 0 (a visible hiccup). Real size changes (rotate, actual resize)
+      // still fall through because newW/newH differ. W/H start at 0, so the first mount call
+      // still initializes normally.
+      if (newW === W && newH === H) return;
+      dpr = newDpr;
+      W = canvas!.width = newW;
+      H = canvas!.height = newH;
       drawWaves(0);
     }
 

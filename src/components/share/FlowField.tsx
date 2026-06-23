@@ -156,10 +156,19 @@ export default function FlowField({ ink, paper }: { ink: string; paper: string }
     }
 
     function resize() {
-      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const newDpr = Math.min(window.devicePixelRatio || 1, 2);
       const r = canvas!.getBoundingClientRect();
-      SW = canvas!.width = Math.max(1, Math.floor(r.width * dpr));
-      SH = canvas!.height = Math.max(1, Math.floor(r.height * dpr));
+      const newSW = Math.max(1, Math.floor(r.width * newDpr));
+      const newSH = Math.max(1, Math.floor(r.height * newDpr));
+      // No-op when nothing actually changed: mobile's address bar fires `resize` on scroll
+      // without changing this element's size, and re-initializing here wipes the fading trails
+      // and re-seeds particles at new random positions (looks like the animation restarting).
+      // Real size changes (rotate, actual resize) still fall through because newSW/newSH differ.
+      // SW/SH start at 0, so the first mount call still initializes normally.
+      if (newSW === SW && newSH === SH) return;
+      dpr = newDpr;
+      SW = canvas!.width = newSW;
+      SH = canvas!.height = newSH;
       fillPaper();
       seed();
     }
