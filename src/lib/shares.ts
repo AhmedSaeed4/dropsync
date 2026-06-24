@@ -78,6 +78,7 @@ export async function createShare(options: {
   imageData?: string;
   fileData?: string;
   fileUrl?: string;
+  fileFormat?: 'binary';
   youtubeVideoId?: string;
   expiresAt: Date | null;
 }): Promise<{ shareId: string; url: string } | null> {
@@ -174,6 +175,7 @@ export async function createShare(options: {
         imageR2Key,
         fileUrl,
         fileR2Key,
+        fileFormat: options.fileFormat,
         youtubeVideoId: options.youtubeVideoId,
         expiresAt: options.expiresAt?.toISOString() || null,
       }),

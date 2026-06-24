@@ -3,6 +3,7 @@
 import { Drop } from '@/types';
 import { formatFileSize, getTimeRemaining, decryptDrop, getYouTubeVideoId } from '@/lib/drops';
 import { createShare } from '@/lib/shares';
+import { downloadBinaryFromUrl } from '@/lib/download';
 import { contentToPlainText } from '@/lib/dropTagUtils';
 import { DropMentionContent } from './DropMentionContent';
 import { useState, useEffect } from 'react';
@@ -135,6 +136,7 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
         imageData: displayImageData || (isImage ? displayFileData : undefined),
         fileData: !isImage && drop.type === 'file' ? displayFileData : undefined,
         fileUrl: !isImage && drop.type === 'file' && !displayFileData ? drop.fileUrl : undefined,
+        fileFormat: drop.fileFormat,
         mimeType: drop.mimeType || undefined,
         fileSize: drop.fileSize || undefined,
         youtubeVideoId: youtubeVideoId || undefined,
@@ -154,6 +156,21 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
 
   const handleDownload = async (e: React.MouseEvent) => {
     e.stopPropagation();
+
+    // Binary (unencrypted large) file — fetch the public R2 URL as a Blob and download via a
+    // same-origin blob: URL (filename honored). The legacy data-URI/decrypt path below corrupts
+    // real binary bytes, so it must not run for binary drops.
+    if (drop.fileFormat === 'binary' && drop.fileUrl) {
+      setIsDownloading(true);
+      try {
+        await downloadBinaryFromUrl(drop.fileUrl, drop.name);
+      } catch (error) {
+        console.error('Download failed:', error);
+      } finally {
+        setIsDownloading(false);
+      }
+      return;
+    }
 
     // If already decrypted, download immediately
     if (displayFileData) {
