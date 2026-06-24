@@ -41,13 +41,15 @@ interface Props {
   share: ShareData;
   copied: boolean;
   videoSrc: string | null;
+  videoReady: boolean;
+  onVideoReady: () => void;
   onCopy: () => void;
   onDownload: () => void;
   theme: ShareTheme;
   design: ShareDesign | null;
 }
 
-export default function ShareContentPane({ share, copied, videoSrc, onCopy, onDownload, theme, design }: Props) {
+export default function ShareContentPane({ share, copied, videoSrc, videoReady, onVideoReady, onCopy, onDownload, theme, design }: Props) {
   const isVideo = !!share.mimeType?.startsWith('video/');
   const label = typeLabel(share, isVideo);
   // Wave + dark gets the blue-tinted dark content side + navy→black fade (matches the wave).
@@ -183,9 +185,30 @@ export default function ShareContentPane({ share, copied, videoSrc, onCopy, onDo
             >
               <div className="ds-scan-beam" />
               {videoSrc ? (
-                <video src={videoSrc} controls className="max-h-[60vh] w-full">
-                  Your browser does not support video playback.
-                </video>
+                <>
+                  <video
+                    src={videoSrc}
+                    controls
+                    onCanPlay={onVideoReady}
+                    onError={onVideoReady}
+                    className={`max-h-[60vh] w-full ${videoReady ? '' : 'opacity-0'}`}
+                  >
+                    Your browser does not support video playback.
+                  </video>
+                  {!videoReady && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-[#111]">
+                      <div className="flex h-8 w-8 animate-pulse text-[var(--ds-faint)]">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z"
+                          />
+                        </svg>
+                      </div>
+                    </div>
+                  )}
+                </>
               ) : (
                 <div className="flex h-8 w-8 animate-pulse text-[var(--ds-faint)]">
                   <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">

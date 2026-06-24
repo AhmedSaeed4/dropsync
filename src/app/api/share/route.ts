@@ -77,6 +77,7 @@ export async function GET(request: NextRequest) {
       fileSize: data.fileSize || null,
       imageUrl: data.imageUrl || null,
       fileUrl: data.fileUrl || null,
+      fileFormat: data.fileFormat || null,
       youtubeVideoId: data.youtubeVideoId || null,
       expiresAt: data.expiresAt ? data.expiresAt.toDate().toISOString() : null,
       // Exposed so the public share page can render an accurate expiry-ring fraction
@@ -179,7 +180,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { shareId, dropId, type, name, content, mimeType, fileSize, imageUrl, imageR2Key, fileUrl, fileR2Key, youtubeVideoId, expiresAt } = body;
+    const { shareId, dropId, type, name, content, mimeType, fileSize, imageUrl, imageR2Key, fileUrl, fileR2Key, fileFormat, youtubeVideoId, expiresAt } = body;
 
     if (!shareId || !dropId || !type || !name) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -202,6 +203,7 @@ export async function POST(request: NextRequest) {
     if (imageR2Key) docData.imageR2Key = imageR2Key;
     if (fileUrl) docData.fileUrl = fileUrl;
     if (fileR2Key) docData.fileR2Key = fileR2Key;
+    if (fileFormat) docData.fileFormat = fileFormat;
     if (youtubeVideoId) docData.youtubeVideoId = youtubeVideoId;
 
     await adminDb.collection('shares').add(docData);

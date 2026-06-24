@@ -102,6 +102,7 @@ export function createDropListener(
           creatorName: data.creatorName || undefined,
           pinned: data.pinned || false,
           isDrawing: data.isDrawing || false,
+          fileFormat: data.fileFormat,
         });
       }
     });
@@ -306,20 +307,23 @@ export async function createFileDrop(
     const now = new Date();
     const expiresAt = getExpirationDate(expirationOption);
 
-    // Convert file to base64
-    const fileData = await fileToBase64(file);
-
-    let encryptedFileData = fileData;
     let encrypted = false;
     let iv: string | undefined;
     let encryptedDEK: string | undefined;
     let fileUrl: string | undefined;
     let r2Key: string | undefined;
+    let fileFormat: 'binary' | undefined;
 
     // Only encrypt files smaller than MAX_ENCRYPTION_SIZE (10MB)
     const shouldEncrypt = file.size < MAX_ENCRYPTION_SIZE;
 
     if (shouldEncrypt) {
+      // Convert file to base64 — ONLY needed for the ENCRYPTED path (encryption operates on the
+      // base64 string). The unencrypted large-file branch below uploads the raw File as binary,
+      // so fileToBase64 is intentionally skipped there.
+      const fileData = await fileToBase64(file);
+      let encryptedFileData = fileData;
+
       // For workspace drops, use workspace key (no personal keys needed)
       if (workspaceId) {
         const workspaceKey = await getWorkspaceKey(workspaceId, userId);
@@ -376,13 +380,18 @@ export async function createFileDrop(
         }
       }
     } else {
-      // Large file - upload directly without encryption
+      // Large unencrypted file — upload as REAL BINARY so the browser can stream it (no base64
+      // inflate, ~33% smaller) and flag it so players stream the URL directly instead of fetching
+      // + decoding text. Applies to any unencrypted large file (mostly videos); large non-video
+      // files become binary too — harmless: /api/share/download already sniffs bytes, and this
+      // never touches drop.fileData population, so preview/download behavior is unchanged.
       try {
-        const uploadResult = await uploadToR2(fileData);
+        const uploadResult = await uploadBinaryFileToR2(file);
         fileUrl = uploadResult.url;
         r2Key = uploadResult.key;
+        fileFormat = 'binary';
       } catch (uploadError) {
-        console.error('R2 upload failed:', uploadError);
+        console.error('R2 binary upload failed:', uploadError);
         return { drop: null, error: 'Failed to upload file to storage. Please try again.' };
       }
     }
@@ -404,6 +413,11 @@ export async function createFileDrop(
     if (fileUrl) {
       docData.fileUrl = fileUrl;
       docData.r2Key = r2Key;
+    }
+
+    // Add the storage-format flag so players know to stream the URL directly (binary).
+    if (fileFormat) {
+      docData.fileFormat = fileFormat;
     }
 
     // Add encryption fields
@@ -438,6 +452,7 @@ export async function createFileDrop(
         encrypted,
         iv,
         encryptedDEK,
+        fileFormat,
         creatorName: workspaceId ? creatorName : undefined,
       }
     };
@@ -1226,8 +1241,9 @@ export async function copyDrop(
       return { success: false, error: 'Failed to decrypt drop content' };
     }
     // A file copy always needs the bytes (it cannot reuse the original's R2 key), so a failed
-    // fetch/decrypt is fatal — never write a half-broken copy.
-    if (drop.type === 'file' && !decrypted.fileData) {
+    // fetch/decrypt is fatal — never write a half-broken copy. Binary files carry no fileData
+    // (decryptDrop returns them as-is) but fetch their own bytes in the binary branch below.
+    if (drop.type === 'file' && !decrypted.fileData && drop.fileFormat !== 'binary') {
       return { success: false, error: 'Failed to read file content for copy' };
     }
 
@@ -1237,6 +1253,7 @@ export async function copyDrop(
     let newFileData: string | undefined;
     let newR2Key: string | undefined;
     let newFileUrl: string | undefined;
+    let newFileFormat: 'binary' | undefined;
     let newIv: string | undefined;
     let newEncryptedDEK: string | undefined;
     let newEncrypted = false;
@@ -1278,11 +1295,25 @@ export async function copyDrop(
       const wasEncrypted = drop.encrypted && !!drop.r2Key;
 
       if (!wasEncrypted) {
-        // Large unencrypted file — give the copy its own R2 object (NEVER reuse drop.r2Key).
-        const uploadResult = await uploadToR2(plaintext);
-        newFileUrl = uploadResult.url;
-        newR2Key = uploadResult.key;
-        // stays unencrypted (newEncrypted remains false)
+        if (drop.fileFormat === 'binary' && drop.fileUrl) {
+          // Binary file — fetch as a Blob and re-upload to a NEW R2 key (a copy must own its own
+          // object; never reuse drop.r2Key). Marked binary so the copy streams too.
+          const res = await fetch(drop.fileUrl);
+          if (!res.ok) {
+            return { success: false, error: 'Failed to read file content for copy' };
+          }
+          const blob = await res.blob();
+          const uploadResult = await uploadBinaryFileToR2(blob);
+          newFileUrl = uploadResult.url;
+          newR2Key = uploadResult.key;
+          newFileFormat = 'binary';
+        } else {
+          // Legacy data-URI text copy — give the copy its own R2 object (NEVER reuse drop.r2Key).
+          const uploadResult = await uploadToR2(plaintext);
+          newFileUrl = uploadResult.url;
+          newR2Key = uploadResult.key;
+          // stays unencrypted (newEncrypted remains false)
+        }
       } else if (isTargetWorkspace) {
         const workspaceKey = await getWorkspaceKey(targetWorkspaceId, currentUserId);
         if (!workspaceKey) {
@@ -1428,6 +1459,11 @@ export async function copyDrop(
       docData.fileUrl = newFileUrl;
     }
 
+    // Mark the copy binary when it was copied from a binary file (streams the URL directly).
+    if (newFileFormat) {
+      docData.fileFormat = newFileFormat;
+    }
+
     if (newImageUrl !== undefined) {
       docData.imageUrl = newImageUrl;
       docData.imageR2Key = newImageR2Key;
@@ -1531,6 +1567,13 @@ async function getUserDisplayName(userId: string): Promise<string | null> {
 export async function decryptDrop(drop: Drop, currentUserId: string): Promise<Drop> {
   // If not encrypted, still need to fetch R2 files
   if (!drop.encrypted) {
+    // Binary files live in R2 as real binary. Fetching them as TEXT (below) corrupts the bytes,
+    // and no caller needs fileData for a binary drop — playback streams the URL directly, and
+    // download/copy fetch the bytes themselves. Skip the wasteful + corrupting whole-file fetch
+    // and return the drop as-is. (Legacy data-URI text path + encrypted path are untouched.)
+    if (drop.fileFormat === 'binary') {
+      return drop;
+    }
     // For non-encrypted files with R2 URL, fetch the data
     if (drop.type === 'file' && drop.fileUrl && !drop.fileData) {
       try {
@@ -1689,6 +1732,58 @@ async function uploadToR2(fileData: string): Promise<{ url: string; key: string 
 
   if (!uploadResponse.ok) {
     throw new Error(`R2 upload failed: ${uploadResponse.status}`);
+  }
+
+  return { url: fileUrl, key };
+}
+
+// Upload a RAW File/Blob directly to R2 as real binary (not base64), so the browser can stream it.
+// Accepts a Blob so both createFileDrop (a File, which IS a Blob) and copyDrop (a fetched Blob)
+// can use it. Mirrors uploadToR2's flow (idToken -> /api/presign -> presigned PUT) but sends the
+// Blob body and its real Content-Type. The Content-Type sent on the PUT MUST match the one presign
+// signed (R2 rejects mismatched types with SignatureDoesNotMatch), so we pass blob.type to both.
+// uploadToR2 (which uploads ciphertext / data-URI strings) is intentionally left untouched.
+async function uploadBinaryFileToR2(blob: Blob): Promise<{ url: string; key: string }> {
+  // Get Firebase ID token from current user
+  const currentUser = auth.currentUser;
+  if (!currentUser) {
+    throw new Error('Not authenticated');
+  }
+
+  const idToken = await currentUser.getIdToken();
+
+  // Must match the value presign signs into the URL. Fall back to a generic binary type when the
+  // blob didn't carry one.
+  const contentType = blob.type || 'application/octet-stream';
+
+  // Step 1: Get presigned URL from our API (signed with contentType)
+  const presignResponse = await fetch('/api/presign', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${idToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ contentType }),
+  });
+
+  if (!presignResponse.ok) {
+    const error = await presignResponse.json();
+    throw new Error(error.error || 'Failed to get upload URL');
+  }
+
+  const { presignedUrl, key, fileUrl } = await presignResponse.json();
+
+  // Step 2: Upload the RAW blob directly to R2 (binary stream, no base64 inflate)
+  const uploadResponse = await fetch(presignedUrl, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': contentType,
+    },
+    body: blob,
+  });
+
+  if (!uploadResponse.ok) {
+    throw new Error(`R2 binary upload failed: ${uploadResponse.status}`);
   }
 
   return { url: fileUrl, key };

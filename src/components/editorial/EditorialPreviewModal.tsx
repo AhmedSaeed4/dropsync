@@ -5,6 +5,7 @@ import { Drop } from '@/types';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { formatFileSize, getYouTubeVideoId } from '@/lib/drops';
 import { createShare } from '@/lib/shares';
+import { downloadBinaryFromUrl } from '@/lib/download';
 import { contentToPlainText } from '@/lib/dropTagUtils';
 import { getEditorialThemeColors } from './editorialTheme';
 import { DropMentionContent } from '../DropMentionContent';
@@ -47,9 +48,20 @@ export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoadin
 
   // Video blob URL: fetch data URL → Blob → blob URL (handles binary data correctly)
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
+  // Whether the <video> has buffered enough to play (onCanPlay). False while buffering → the app's
+  // "Loading video..." overlay covers the browser's native loading spinner. Reset whenever the src
+  // actually changes (binary OR legacy) so the overlay re-shows for a new video.
+  const [videoReady, setVideoReady] = useState(false);
 
   useEffect(() => {
     if (!isVideo) return;
+
+    // Binary (unencrypted large) video: stream the R2 URL directly — no fetch/decode. The object
+    // is served with its real Content-Type, so the browser range-requests + streams it.
+    if (drop.fileFormat === 'binary' && drop.fileUrl) {
+      setVideoSrc(drop.fileUrl);
+      return;
+    }
 
     let url: string | null = null;
     let cancelled = false;
@@ -101,7 +113,14 @@ export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoadin
         URL.revokeObjectURL(url);
       }
     };
-  }, [isVideo, drop.fileData, drop.fileUrl]);
+  }, [isVideo, drop.fileData, drop.fileUrl, drop.fileFormat]);
+
+  // Reset the ready flag only when the source actually changes (not on every effect re-run), so
+  // the overlay shows for a new video and hides once onCanPlay fires for it. onError also clears
+  // it so a failed load never leaves the overlay permanently covering the video.
+  useEffect(() => {
+    setVideoReady(false);
+  }, [videoSrc]);
 
   const tc = getEditorialThemeColors(theme);
 
@@ -116,7 +135,18 @@ export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoadin
     }
   };
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
+    // Binary (unencrypted large) file — fetch the public R2 URL as a Blob and download via a
+    // same-origin blob: URL (filename honored). The legacy data-URI path below corrupts real
+    // binary bytes, so it must not run for binary drops.
+    if (drop.fileFormat === 'binary' && drop.fileUrl) {
+      try {
+        await downloadBinaryFromUrl(drop.fileUrl, drop.name);
+      } catch (error) {
+        console.error('Download failed:', error);
+      }
+      return;
+    }
     if (drop.fileData) {
       const link = document.createElement('a');
       link.href = drop.fileData;
@@ -161,6 +191,7 @@ export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoadin
         imageData: drop.imageData || (isImage ? drop.fileData : undefined),
         fileData: !isImage && drop.type === 'file' ? drop.fileData : undefined,
         fileUrl: !isImage && drop.type === 'file' && !drop.fileData ? drop.fileUrl : undefined,
+        fileFormat: drop.fileFormat,
         mimeType: drop.mimeType || undefined,
         fileSize: drop.fileSize || undefined,
         youtubeVideoId: youtubeVideoId || undefined,
@@ -318,13 +349,22 @@ export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoadin
           {!isLoading && drop.type === 'file' && isVideo && (
             <div className="flex items-center justify-center p-5 min-h-[300px]">
               {isSupportedVideo && videoSrc ? (
-                <video
-                  src={videoSrc}
-                  controls
-                  className="max-w-full max-h-[50vh] rounded-lg border ${tc.border}"
-                >
-                  Your browser does not support video playback.
-                </video>
+                <div className={`relative aspect-video max-h-[50vh] w-full overflow-hidden rounded-lg border ${tc.border} bg-black`}>
+                  <video
+                    src={videoSrc}
+                    controls
+                    onCanPlay={() => setVideoReady(true)}
+                    onError={() => setVideoReady(true)}
+                    className={`h-full w-full object-contain ${videoReady ? '' : 'opacity-0'}`}
+                  >
+                    Your browser does not support video playback.
+                  </video>
+                  {!videoReady && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+                      <div className={`animate-pulse ${tc.muted} ${tc.fontClass}`}>Loading video...</div>
+                    </div>
+                  )}
+                </div>
               ) : !isSupportedVideo ? (
                 <div className="flex flex-col items-center justify-center">
                   <div className={`w-16 h-16 border ${tc.border} rounded-lg flex items-center justify-center mb-4`}>

@@ -54,6 +54,9 @@ export interface Drop {
   pinned?: boolean;
   // Drawing state
   isDrawing?: boolean;
+  // Storage format flag. 'binary' = the R2 object is real binary (streamable); absence (legacy)
+  // = data-URI text the player must fetch + decode. Only set on NEW unencrypted large files.
+  fileFormat?: 'binary';
 }
 
 export interface Category {

@@ -41,16 +41,32 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized - invalid token' }, { status: 401 });
     }
 
+    // Optional Content-Type to sign into the presigned PUT. Default keeps existing string
+    // (data-URI) upload callers working — they POST with no body. GOTCHA: when a ContentType IS
+    // signed, the client PUT MUST send the exact same Content-Type header or R2 rejects with
+    // SignatureDoesNotMatch. The binary-upload caller asks presign to sign file.type and PUTs
+    // with that same value, so R2 stores+serves the object with the real type (e.g. video/mp4),
+    // which is what lets the browser range-request + stream it.
+    let contentType = 'application/octet-stream';
+    try {
+      const body = await request.json();
+      if (body && typeof body.contentType === 'string' && body.contentType) {
+        contentType = body.contentType;
+      }
+    } catch {
+      // No JSON body (existing callers POST with no body) — keep the default.
+    }
+
     // Generate unique R2 key
     const timestamp = Date.now();
     const randomId = crypto.randomUUID();
     const key = `drops/${timestamp}-${randomId}`;
 
-    // Create presigned PUT URL (expires in 5 minutes)
+    // Create presigned PUT URL (expires in 5 minutes), signed with the resolved Content-Type
     const command = new PutObjectCommand({
       Bucket: process.env.R2_BUCKET_NAME!,
       Key: key,
-      ContentType: 'application/octet-stream',
+      ContentType: contentType,
     });
 
     const presignedUrl = await getSignedUrl(r2, command, { expiresIn: 300 });

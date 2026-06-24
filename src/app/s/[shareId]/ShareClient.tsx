@@ -17,6 +17,7 @@ export interface ShareData {
   imageUrl: string | null;
   fileUrl: string | null;
   youtubeVideoId: string | null;
+  fileFormat?: string | null;
   expiresAt: string | null;
   createdAt?: string | null;
 }
@@ -39,6 +40,10 @@ export default function ShareClient({ initialTheme }: { initialTheme: ShareTheme
   // effect (data-safety: untouched) keeps its existing shape.
   const [, setLoading] = useState(true);
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
+  // Whether the share <video> has buffered enough to play (onCanPlay). False while buffering →
+  // the content-pane spinner overlay covers the browser's native loading. Reset when the src
+  // actually changes (binary streams fileUrl immediately; legacy sets a blob URL once loaded).
+  const [videoReady, setVideoReady] = useState(false);
   // Theme is provided by the SERVER entry (page.tsx) from the `share-theme` cookie, so SSR
   // already paints the user's real theme — no light-first-paint flash for dark users. The
   // toggle below keeps both the cookie (next server render) and localStorage in sync.
@@ -111,6 +116,14 @@ export default function ShareClient({ initialTheme }: { initialTheme: ShareTheme
 
   useEffect(() => {
     if (!share?.fileUrl || !share.mimeType?.startsWith('video/')) return;
+
+    // Binary (unencrypted large) video: stream the R2 URL directly — no fetch/decode. The object
+    // is served with its real Content-Type, so the browser range-requests + streams it.
+    if (share.fileFormat === 'binary') {
+      setVideoSrc(share.fileUrl);
+      return;
+    }
+
     let cancelled = false;
     let blobUrl: string | null = null;
 
@@ -135,7 +148,14 @@ export default function ShareClient({ initialTheme }: { initialTheme: ShareTheme
       cancelled = true;
       if (blobUrl) URL.revokeObjectURL(blobUrl);
     };
-  }, [share?.fileUrl, share?.mimeType]);
+  }, [share?.fileUrl, share?.mimeType, share?.fileFormat]);
+
+  // Reset the ready flag only when the source actually changes (not on every effect re-run), so
+  // the overlay shows for a new video and hides once onCanPlay fires for it. onError also clears
+  // it so a failed load never leaves the overlay permanently covering the video.
+  useEffect(() => {
+    setVideoReady(false);
+  }, [videoSrc]);
 
   // Light/dark toggle. Persists to BOTH the `share-theme` cookie (so the SERVER renders the
   // right theme next load → no flash) and the app's `dropsync_theme` localStorage key.
@@ -201,6 +221,8 @@ export default function ShareClient({ initialTheme }: { initialTheme: ShareTheme
             share={share}
             copied={copied}
             videoSrc={videoSrc}
+            videoReady={videoReady}
+            onVideoReady={() => setVideoReady(true)}
             onCopy={handleCopy}
             onDownload={handleDownload}
             theme={theme}
