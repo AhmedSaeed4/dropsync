@@ -67,9 +67,9 @@ export function useWorkspaces(userId: string | null) {
   }, [userId]);
 
   // Leave a workspace
-  const leave = useCallback(async (workspaceId: string) => {
+  const leave = useCallback(async (workspaceId: string, newOwnerId?: string) => {
     if (!userId) return false;
-    const result = await leaveWorkspace(userId, workspaceId);
+    const result = await leaveWorkspace(userId, workspaceId, newOwnerId);
     if (result && currentWorkspaceId === workspaceId) {
       switchWorkspace(null);
     }

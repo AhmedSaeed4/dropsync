@@ -18,6 +18,7 @@ import { EditorialSavedPaths } from './EditorialSavedPaths';
 import { getEditorialThemeColors } from './editorialTheme';
 import { EditorialTextModal } from './EditorialTextModal';
 import { EditorialMoveDropModal } from './EditorialMoveDropModal';
+import WorkspaceOptionsModal from '@/components/WorkspaceOptionsModal';
 import { moveDrop, copyDrop } from '@/lib/drops';
 import { ensureCategoriesForTarget } from '@/lib/categories';
 
@@ -91,6 +92,7 @@ interface EditorialLayoutProps {
   handleJoinWorkspace: (code: string) => Promise<{ success: boolean; error?: string }>;
   handleDeleteWorkspace: () => void;
   handleLeaveWorkspace: () => void;
+  handleLeaveAndTransfer: (newOwnerId: string) => void;
   handlePreview: (drop: Drop) => void;
   handleShowVerifyModal: (email: string) => void;
   handleCheckVerification: () => Promise<boolean>;
@@ -135,7 +137,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
     drops, dropsLoading, refreshDrops,
     categories, handleCreateCategory, handleDeleteCategory,
     handleCreateWorkspace, handleJoinWorkspace,
-    handleDeleteWorkspace, handleLeaveWorkspace,
+    handleDeleteWorkspace, handleLeaveWorkspace, handleLeaveAndTransfer,
     handlePreview, handleShowVerifyModal, handleCheckVerification,
     signIn, emailSignIn, signUp, resetPassword, resendVerification,
     signOutUser, updateDisplayName, reauthenticateUser,
@@ -408,46 +410,18 @@ export function EditorialLayout(props: EditorialLayoutProps) {
         />
       )}
 
-      {/* Delete Workspace Confirmation Modal */}
+      {/* Workspace Options Modal (owner: delete or leave & transfer) */}
       {workspaceToDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center overscroll-contain">
-          <div className="fixed inset-0 bg-black/50" onClick={() => !isDeletingWorkspace && setWorkspaceToDelete(null)} />
-          <div className={`relative z-10 w-96 border ${tc.border} ${tc.cardBg} rounded-lg overflow-hidden`}>
-            <div className={`px-5 py-4 border-b ${tc.border}`}>
-              <h3 className={`text-sm font-medium ${tc.fontClass} ${tc.text}`}>
-                Delete workspace
-              </h3>
-            </div>
-            <div className="p-5">
-              <p className={`text-sm mb-5 ${tc.fontClass} ${tc.muted}`}>
-                Are you sure you want to delete &ldquo;{workspaceToDelete.name}&rdquo;? This cannot be undone.
-              </p>
-              <div className="flex gap-3">
-                <button
-                  onClick={() => setWorkspaceToDelete(null)}
-                  disabled={isDeletingWorkspace}
-                  className={`flex-1 px-4 py-2.5 text-sm ${tc.fontClass} border ${tc.border} rounded-lg ${tc.text} hover:bg-[#1a1a1a] hover:text-white transition-colors disabled:opacity-50`}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleDeleteWorkspace}
-                  disabled={isDeletingWorkspace}
-                  className={`flex-1 px-4 py-2.5 text-sm ${tc.fontClass} bg-red-500 hover:bg-red-600 text-white rounded-lg transition-colors flex items-center justify-center gap-2 disabled:opacity-50`}
-                >
-                  {isDeletingWorkspace ? (
-                    <>
-                      <div className="w-4 h-4 border-2 border-white border-t-transparent animate-spin rounded-full" />
-                      Deleting...
-                    </>
-                  ) : (
-                    'Delete'
-                  )}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <WorkspaceOptionsModal
+          workspace={workspaceToDelete}
+          theme={theme}
+          variant="editorial"
+          isDeleting={isDeletingWorkspace}
+          isLeaving={isLeavingWorkspace}
+          onDelete={handleDeleteWorkspace}
+          onLeaveAndTransfer={handleLeaveAndTransfer}
+          onClose={() => setWorkspaceToDelete(null)}
+        />
       )}
 
       {/* Leave Workspace Confirmation Modal */}
