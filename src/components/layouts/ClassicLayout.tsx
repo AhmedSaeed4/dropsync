@@ -16,6 +16,7 @@ import { ChatPanel } from '@/components/ChatPanel';
 import { SavedPaths } from '@/components/SavedPaths';
 import { TextModal } from '@/components/TextModal';
 import { MoveDropModal } from '@/components/MoveDropModal';
+import WorkspaceOptionsModal from '@/components/WorkspaceOptionsModal';
 import { moveDrop, copyDrop } from '@/lib/drops';
 import { ensureCategoriesForTarget } from '@/lib/categories';
 
@@ -91,6 +92,7 @@ interface ClassicLayoutProps {
   handleJoinWorkspace: (code: string) => Promise<{ success: boolean; error?: string }>;
   handleDeleteWorkspace: () => void;
   handleLeaveWorkspace: () => void;
+  handleLeaveAndTransfer: (newOwnerId: string) => void;
   handlePreview: (drop: Drop) => void;
   handleShowVerifyModal: (email: string) => void;
   handleCheckVerification: () => Promise<boolean>;
@@ -135,7 +137,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
     drops, dropsLoading, refreshDrops,
     categories, handleCreateCategory, handleDeleteCategory,
     handleCreateWorkspace, handleJoinWorkspace,
-    handleDeleteWorkspace, handleLeaveWorkspace,
+    handleDeleteWorkspace, handleLeaveWorkspace, handleLeaveAndTransfer,
     handlePreview, handleShowVerifyModal, handleCheckVerification,
     signIn, emailSignIn, signUp, resetPassword, resendVerification,
     signOutUser, updateDisplayName, reauthenticateUser,
@@ -431,54 +433,18 @@ export function ClassicLayout(props: ClassicLayoutProps) {
         />
       )}
 
-      {/* Delete Workspace Confirmation Modal */}
+      {/* Workspace Options Modal (owner: delete or leave & transfer) */}
       {workspaceToDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center overscroll-contain">
-          <div className="fixed inset-0 bg-black/50" onClick={() => !isDeletingWorkspace && setWorkspaceToDelete(null)} />
-          <div className={`relative z-10 w-80 border ${theme === 'dark' ? 'bg-[#1A1A1A] border-white/10' : theme === 'minimal' ? 'bg-[#D4D8C8] border-[#1A1A1A]/20 rounded-lg' : 'bg-white border-[#1A1A1A]'}`}>
-            <div className={`px-4 py-3 border-b ${theme === 'dark' ? 'border-white/10' : theme === 'minimal' ? 'border-[#1A1A1A]/20' : 'border-[#1A1A1A]'} flex items-center justify-between ${theme === 'minimal' ? 'bg-[#1A1A1A]/5' : 'bg-[#FF5A47]'}`}>
-              <h3 className={`font-bold text-white ${theme === 'minimal' ? 'font-sans tracking-wide text-xs' : 'font-mono uppercase tracking-wider text-[10px]'}`}>
-                {theme === 'minimal' ? 'Delete workspace' : 'DELETE_WORKSPACE'}
-              </h3>
-              <button onClick={() => !isDeletingWorkspace && setWorkspaceToDelete(null)} className="text-white/70 hover:text-white transition-colors disabled:opacity-50" disabled={isDeletingWorkspace}>
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <div className="p-4">
-              <p className={`text-sm mb-4 ${theme === 'dark' ? 'text-white/80' : 'text-[#1A1A1A]/80'}`}>
-                {theme === 'minimal'
-                  ? `Are you sure you want to delete "${workspaceToDelete.name}"? This cannot be undone.`
-                  : `ARE_YOU_SURE_YOU_WANT_TO_DELETE "${workspaceToDelete.name}"? THIS_ACTION_CANNOT_BE_UNDONE.`
-                }
-              </p>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setWorkspaceToDelete(null)}
-                  disabled={isDeletingWorkspace}
-                  className={`flex-1 px-4 py-2 ${theme === 'dark' ? 'bg-white/10 hover:bg-white/20 text-white' : theme === 'minimal' ? 'bg-[#1A1A1A]/10 hover:bg-[#1A1A1A]/20 text-[#1A1A1A] rounded-lg' : 'bg-[#1A1A1A]/10 hover:bg-[#1A1A1A]/20 text-[#1A1A1A]'} transition-colors ${theme === 'minimal' ? 'font-sans tracking-wide text-xs' : 'font-mono uppercase tracking-wider text-[10px]'} disabled:opacity-50 disabled:cursor-not-allowed`}
-                >
-                  {theme === 'minimal' ? 'Cancel' : 'CANCEL'}
-                </button>
-                <button
-                  onClick={handleDeleteWorkspace}
-                  disabled={isDeletingWorkspace}
-                  className={`flex-1 px-4 py-2 bg-red-500 hover:bg-red-600 text-white transition-colors ${theme === 'minimal' ? 'rounded-lg font-sans tracking-wide text-xs' : 'font-mono uppercase tracking-wider text-[10px]'} flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed`}
-                >
-                  {isDeletingWorkspace ? (
-                    <>
-                      <div className={`w-4 h-4 border-2 border-white border-t-transparent animate-spin ${theme === 'minimal' ? 'rounded-full' : ''}`} />
-                      {theme === 'minimal' ? 'Deleting...' : 'DELETING...'}
-                    </>
-                  ) : (
-                    theme === 'minimal' ? 'Delete' : 'DELETE'
-                  )}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <WorkspaceOptionsModal
+          workspace={workspaceToDelete}
+          theme={theme}
+          variant="classic"
+          isDeleting={isDeletingWorkspace}
+          isLeaving={isLeavingWorkspace}
+          onDelete={handleDeleteWorkspace}
+          onLeaveAndTransfer={handleLeaveAndTransfer}
+          onClose={() => setWorkspaceToDelete(null)}
+        />
       )}
 
       {/* Leave Workspace Confirmation Modal */}

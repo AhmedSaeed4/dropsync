@@ -143,7 +143,7 @@ export async function joinWorkspace(userId: string, inviteCode: string): Promise
 }
 
 // Leave a workspace
-export async function leaveWorkspace(userId: string, workspaceId: string): Promise<boolean> {
+export async function leaveWorkspace(userId: string, workspaceId: string, newOwnerId?: string): Promise<boolean> {
   try {
     const workspaceRef = doc(db, WORKSPACES_COLLECTION, workspaceId);
     const snapshot = await getDocs(
@@ -161,10 +161,14 @@ export async function leaveWorkspace(userId: string, workspaceId: string): Promi
         // Delete workspace if no members left
         await deleteDoc(workspaceRef);
       } else {
-        // Transfer ownership to next member
+        // Transfer ownership: prefer the caller's chosen successor (must be a remaining
+        // member), else fall back to the first remaining member.
+        const successor = newOwnerId && updatedMembers.includes(newOwnerId)
+          ? newOwnerId
+          : updatedMembers[0];
         await updateDoc(workspaceRef, {
           members: updatedMembers,
-          ownerId: updatedMembers[0]
+          ownerId: successor
         });
       }
     } else {
@@ -260,6 +264,23 @@ export async function deleteWorkspace(userId: string, workspaceId: string): Prom
       await deleteDoc(doc(db, 'drops', dropDoc.id));
       // Delete associated share links (best-effort — swallows its own errors)
       await deleteSharesForDrop(dropDoc.id);
+    }
+
+    // Delete this workspace's categories (best-effort — never block deletion on a cleanup
+    // failure). Only workspace-scoped categories are touched; personal categories
+    // (workspaceId == null) are never deleted.
+    try {
+      const catsQuery = query(collection(db, 'categories'), where('workspaceId', '==', workspaceId));
+      const catsSnapshot = await getDocs(catsQuery);
+      for (const catDoc of catsSnapshot.docs) {
+        try {
+          await deleteDoc(catDoc.ref);
+        } catch (error) {
+          console.error('Failed to delete category:', error);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to query categories for cleanup:', error);
     }
 
     // Delete the workspace

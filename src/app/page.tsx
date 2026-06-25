@@ -259,6 +259,18 @@ export default function Home() {
     }
   };
 
+  const handleLeaveAndTransfer = async (newOwnerId: string) => {
+    if (workspaceToDelete) {
+      setIsLeavingWorkspace(true);
+      try {
+        await leaveWorkspace(workspaceToDelete.id, newOwnerId);
+        setWorkspaceToDelete(null);
+      } finally {
+        setIsLeavingWorkspace(false);
+      }
+    }
+  };
+
   // Auth handlers
   const handleShowVerifyModal = (email: string) => {
     setVerifyEmail(email);
@@ -1341,7 +1353,7 @@ export default function Home() {
     drops, dropsLoading, refreshDrops,
     categories, handleCreateCategory, handleDeleteCategory,
     handleCreateWorkspace, handleJoinWorkspace,
-    handleDeleteWorkspace, handleLeaveWorkspace,
+    handleDeleteWorkspace, handleLeaveWorkspace, handleLeaveAndTransfer,
     handlePreview, handleShowVerifyModal, handleCheckVerification,
     signIn, emailSignIn, signUp, resetPassword, resendVerification,
     signOutUser, updateDisplayName, reauthenticateUser,
