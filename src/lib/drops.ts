@@ -24,6 +24,7 @@ import {
   getWorkspaceKey,
   hasWorkspaceKey
 } from './keys';
+import { ensureCategoriesForTarget, type CategoryNameMap } from './categories';
 
 const DROPS_COLLECTION = 'drops';
 const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB limit
@@ -902,7 +903,8 @@ export function getTimeRemaining(expiresAt: Date | null): string {
 export async function moveDrop(
   drop: Drop,
   targetWorkspaceId: string | null,
-  currentUserId: string
+  currentUserId: string,
+  resolvedCategories?: CategoryNameMap
 ): Promise<{ success: boolean; error?: string }> {
   try {
     // Step 1: Decrypt the drop to get plaintext
@@ -1144,61 +1146,21 @@ export async function moveDrop(
       updateData.creatorName = null;
     }
 
-    // Category matching: preserve categories by checking/creating them in the target space
-    const BUILT_IN_CATEGORIES = new Set(['password', 'link']);
-
+    // Category matching: resolve the source categories into the target space. When the caller
+    // pre-resolved the whole batch (bulk move), reuse that map to avoid a race where N concurrent
+    // moves each query-before-write and all create the same category doc. Single-drop callers pass
+    // no map → resolve here (one query + create-missing, no race).
     const sourceCategories = drop.categories || (drop.category ? [drop.category] : []);
+    let resolvedNames: string[];
     if (sourceCategories.length > 0) {
-      const resolvedCategories: string[] = [];
-
-      // Separate built-in from custom categories
-      const customCategories: string[] = [];
-      for (const catName of sourceCategories) {
-        if (BUILT_IN_CATEGORIES.has(catName.toLowerCase().trim())) {
-          // Built-in category — just preserve it, no Firestore document needed
-          resolvedCategories.push(catName.trim());
-        } else {
-          customCategories.push(catName);
-        }
-      }
-
-      // Only query/create custom categories in the target space
-      if (customCategories.length > 0) {
-        let catQuery;
-        if (isTargetWorkspace) {
-          catQuery = query(collection(db, 'categories'), where('workspaceId', '==', targetWorkspaceId));
-        } else {
-          catQuery = query(collection(db, 'categories'), where('createdBy', '==', currentUserId), where('workspaceId', '==', null));
-        }
-        const catSnapshot = await getDocs(catQuery);
-        const existingCategories = new Map<string, string>();
-        catSnapshot.forEach(d => {
-          const data = d.data();
-          existingCategories.set(data.name.toLowerCase().trim(), data.name);
-        });
-
-        for (const catName of customCategories) {
-          const nameLower = catName.toLowerCase().trim();
-          if (existingCategories.has(nameLower)) {
-            resolvedCategories.push(existingCategories.get(nameLower)!);
-          } else {
-            const trimmedName = catName.trim();
-            await addDoc(collection(db, 'categories'), {
-              name: trimmedName,
-              workspaceId: targetWorkspaceId,
-              createdBy: currentUserId,
-              createdAt: serverTimestamp(),
-            });
-            existingCategories.set(nameLower, trimmedName);
-            resolvedCategories.push(trimmedName);
-          }
-        }
-      }
-
-      updateData.categories = resolvedCategories;
+      const catMap = resolvedCategories ?? await ensureCategoriesForTarget(targetWorkspaceId, currentUserId, sourceCategories);
+      resolvedNames = sourceCategories
+        .map(c => catMap.get(c.toLowerCase().trim()))
+        .filter((n): n is string => !!n);
     } else {
-      updateData.categories = [];
+      resolvedNames = [];
     }
+    updateData.categories = resolvedNames;
     updateData.category = null;
 
     // Step 5: Single atomic update
@@ -1232,7 +1194,8 @@ export async function moveDrop(
 export async function copyDrop(
   drop: Drop,
   targetWorkspaceId: string | null,
-  currentUserId: string
+  currentUserId: string,
+  resolvedCategories?: CategoryNameMap
 ): Promise<{ success: boolean; error?: string }> {
   try {
     // Step 1: Decrypt the drop to get plaintext.
@@ -1492,53 +1455,19 @@ export async function copyDrop(
     }
 
     // Category matching: resolve the source categories into the target space (same as moveDrop).
-    const BUILT_IN_CATEGORIES = new Set(['password', 'link']);
+    // When the caller pre-resolved the whole batch (bulk copy), reuse that map to avoid a race
+    // where N concurrent copies each query-before-write and all create the same category doc.
     const sourceCategories = drop.categories || (drop.category ? [drop.category] : []);
+    let resolvedNames: string[];
     if (sourceCategories.length > 0) {
-      const resolvedCategories: string[] = [];
-      const customCategories: string[] = [];
-      for (const catName of sourceCategories) {
-        if (BUILT_IN_CATEGORIES.has(catName.toLowerCase().trim())) {
-          resolvedCategories.push(catName.trim());
-        } else {
-          customCategories.push(catName);
-        }
-      }
-
-      if (customCategories.length > 0) {
-        let catQuery;
-        if (isTargetWorkspace) {
-          catQuery = query(collection(db, 'categories'), where('workspaceId', '==', targetWorkspaceId));
-        } else {
-          catQuery = query(collection(db, 'categories'), where('createdBy', '==', currentUserId), where('workspaceId', '==', null));
-        }
-        const catSnapshot = await getDocs(catQuery);
-        const existingCategories = new Map<string, string>();
-        catSnapshot.forEach(d => {
-          const data = d.data();
-          existingCategories.set(data.name.toLowerCase().trim(), data.name);
-        });
-
-        for (const catName of customCategories) {
-          const nameLower = catName.toLowerCase().trim();
-          if (existingCategories.has(nameLower)) {
-            resolvedCategories.push(existingCategories.get(nameLower)!);
-          } else {
-            const trimmedName = catName.trim();
-            await addDoc(collection(db, 'categories'), {
-              name: trimmedName,
-              workspaceId: targetWorkspaceId,
-              createdBy: currentUserId,
-              createdAt: serverTimestamp(),
-            });
-            existingCategories.set(nameLower, trimmedName);
-            resolvedCategories.push(trimmedName);
-          }
-        }
-      }
-
-      docData.categories = resolvedCategories;
+      const catMap = resolvedCategories ?? await ensureCategoriesForTarget(targetWorkspaceId, currentUserId, sourceCategories);
+      resolvedNames = sourceCategories
+        .map(c => catMap.get(c.toLowerCase().trim()))
+        .filter((n): n is string => !!n);
+    } else {
+      resolvedNames = [];
     }
+    docData.categories = resolvedNames;
 
     // Step 5: Create the copy with a single addDoc. The original doc + all its R2 objects
     // are never mutated or deleted.

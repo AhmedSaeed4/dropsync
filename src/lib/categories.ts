@@ -133,3 +133,62 @@ export function createCategoriesListener(
     callback([]);
   });
 }
+
+// lowercased category name -> canonical name. The canonical is the STORED doc `name` for an
+// existing custom category, the trimmed source name for a freshly created one, and the trimmed
+// source name for a built-in (password, link — which never get a doc).
+export type CategoryNameMap = Map<string, string>;
+
+// Resolve a set of category names for a target space in ONE pass: query the target's existing
+// categories once, then create only the missing custom ones, returning a name map covering all
+// inputs. Built-in categories (password, link) are mapped but never persisted. This is the
+// race-free replacement for the per-drop check-then-create loops that used to live inline in
+// moveDrop/copyDrop: when a batch of drops is moved/copied concurrently, each drop reuses this
+// pre-resolved map instead of querying (and all missing the same "already exists" check). The
+// normalization reproduces the old inline blocks EXACTLY (trimmed name, original casing preserved
+// for new docs, stored casing reused for existing docs).
+export async function ensureCategoriesForTarget(
+  targetWorkspaceId: string | null,
+  currentUserId: string,
+  names: string[]
+): Promise<CategoryNameMap> {
+  const map: CategoryNameMap = new Map();
+  const BUILT_IN = new Set(['password', 'link']);
+  const custom: string[] = [];
+  for (const raw of names) {
+    const lower = raw.toLowerCase().trim();
+    if (!lower) continue;
+    if (BUILT_IN.has(lower)) {
+      map.set(lower, raw.trim());
+    } else {
+      custom.push(raw);
+    }
+  }
+
+  if (custom.length > 0) {
+    const q = targetWorkspaceId
+      ? query(collection(db, CATEGORIES_COLLECTION), where('workspaceId', '==', targetWorkspaceId))
+      : query(collection(db, CATEGORIES_COLLECTION), where('createdBy', '==', currentUserId), where('workspaceId', '==', null));
+    const snap = await getDocs(q);
+    snap.forEach(d => {
+      const data = d.data();
+      map.set((data.name as string).toLowerCase().trim(), data.name as string);
+    });
+
+    for (const raw of custom) {
+      const lower = raw.toLowerCase().trim();
+      if (!map.has(lower)) {
+        const trimmed = raw.trim();
+        await addDoc(collection(db, CATEGORIES_COLLECTION), {
+          name: trimmed,
+          workspaceId: targetWorkspaceId,
+          createdBy: currentUserId,
+          createdAt: serverTimestamp(),
+        });
+        map.set(lower, trimmed);
+      }
+    }
+  }
+
+  return map;
+}
