@@ -10,6 +10,7 @@ import { EditorialDropItem } from './EditorialDropItem';
 import { UndoToast } from '@/components/UndoToast';
 import { Toast } from '@/components/Toast';
 import { deleteDrop, moveDrop, copyDrop, pinDrop, unpinDrop } from '@/lib/drops';
+import { ensureCategoriesForTarget } from '@/lib/categories';
 import { EditorialMoveDropModal } from './EditorialMoveDropModal';
 import { getEditorialThemeColors } from './editorialTheme';
 import { MemberInfo } from '@/lib/workspaces';
@@ -1206,7 +1207,21 @@ export function EditorialDropList({
           onMove={async (selectedDrops, targetWorkspaceId) => {
             if (!currentUserId) return;
             setMoveLoading(true);
-            const results = await Promise.all(selectedDrops.map(d => moveDrop(d, targetWorkspaceId, currentUserId!)));
+            let catMap = new Map<string, string>();
+            try {
+              const allCatNames = Array.from(new Set(
+                selectedDrops.flatMap(d => d.categories || (d.category ? [d.category] : []))
+              ));
+              if (allCatNames.length > 0) {
+                catMap = await ensureCategoriesForTarget(targetWorkspaceId, currentUserId!, allCatNames);
+              }
+            } catch (error) {
+              console.error('Category pre-resolution failed:', error);
+              setMoveLoading(false);
+              alert('Failed to prepare categories. Please try again.');
+              return;
+            }
+            const results = await Promise.all(selectedDrops.map(d => moveDrop(d, targetWorkspaceId, currentUserId!, catMap)));
             setMoveLoading(false);
             const failures = results.filter(r => !r.success);
             if (failures.length === 0) {
@@ -1221,7 +1236,21 @@ export function EditorialDropList({
           onCopy={async (selectedDrops, targetWorkspaceId) => {
             if (!currentUserId) return;
             setMoveLoading(true);
-            const results = await Promise.all(selectedDrops.map(d => copyDrop(d, targetWorkspaceId, currentUserId!)));
+            let catMap = new Map<string, string>();
+            try {
+              const allCatNames = Array.from(new Set(
+                selectedDrops.flatMap(d => d.categories || (d.category ? [d.category] : []))
+              ));
+              if (allCatNames.length > 0) {
+                catMap = await ensureCategoriesForTarget(targetWorkspaceId, currentUserId!, allCatNames);
+              }
+            } catch (error) {
+              console.error('Category pre-resolution failed:', error);
+              setMoveLoading(false);
+              alert('Failed to prepare categories. Please try again.');
+              return;
+            }
+            const results = await Promise.all(selectedDrops.map(d => copyDrop(d, targetWorkspaceId, currentUserId!, catMap)));
             setMoveLoading(false);
             const failures = results.filter(r => !r.success);
             if (failures.length === 0) {
