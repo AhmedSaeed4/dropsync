@@ -24,6 +24,7 @@ import {
   getNotificationPermission,
   requestNotificationPermission,
   showChatNotification,
+  registerChatServiceWorker,
 } from '@/lib/notifications';
 import { reauthenticateUser } from '@/lib/auth';
 import { db } from '@/lib/firebase';
@@ -507,6 +508,26 @@ export default function Home() {
       unsub?.();
     };
   }, [user, currentWorkspaceId, notifsActive, currentWorkspace?.name]);
+
+  // Register the chat service worker once on mount (Android mobile only — no-op on desktop,
+  // which must never register a SW).
+  useEffect(() => {
+    registerChatServiceWorker();
+  }, []);
+
+  // Open the group chat when the service worker reports a notification tap (mobile path).
+  // Desktop notifications open the chat directly via the Notification onclick handler instead.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return;
+    const handler = (event: Event) => {
+      if ((event as MessageEvent).data?.type === 'OPEN_CHAT') {
+        setChatMode('group');
+        setShowChat(true);
+      }
+    };
+    navigator.serviceWorker.addEventListener('message', handler);
+    return () => navigator.serviceWorker.removeEventListener('message', handler);
+  }, []);
 
   // Toggle chat panel — auto-switch to workspace tab when unreads exist.
   // Passed down as onToggleChat so the layout chat buttons hit this (and thus the
