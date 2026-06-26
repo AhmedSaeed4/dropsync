@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
+import { useModalBackClose } from '@/hooks/useModalBackClose';
 import { getEditorialThemeColors } from './editorialTheme';
 
 interface EditorialVerifyEmailModalProps {
@@ -13,6 +14,7 @@ interface EditorialVerifyEmailModalProps {
 
 export function EditorialVerifyEmailModal({ email, onResend, onClose, theme = 'light' }: EditorialVerifyEmailModalProps) {
   useBodyScrollLock();
+  useModalBackClose(true, onClose);
   const [resending, setResending] = useState(false);
   const [resent, setResent] = useState(false);
 

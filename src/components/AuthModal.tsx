@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
+import { useModalBackClose } from '@/hooks/useModalBackClose';
 
 interface AuthModalProps {
   onSignIn: (email: string, password: string) => Promise<{ error?: string; needsVerification?: boolean }>;
@@ -25,6 +26,7 @@ export function AuthModal({
   loading: externalLoading
 }: AuthModalProps) {
   useBodyScrollLock();
+  useModalBackClose(true, onClose);
   const [tab, setTab] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');

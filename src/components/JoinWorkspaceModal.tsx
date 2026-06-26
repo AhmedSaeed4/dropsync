@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
+import { useModalBackClose } from '@/hooks/useModalBackClose';
 
 interface JoinWorkspaceModalProps {
   onSubmit: (inviteCode: string) => Promise<{ success: boolean; error?: string }>;
@@ -11,6 +12,7 @@ interface JoinWorkspaceModalProps {
 
 export function JoinWorkspaceModal({ onSubmit, onClose, theme = 'light' }: JoinWorkspaceModalProps) {
   useBodyScrollLock();
+  useModalBackClose(true, onClose);
   const [inviteCode, setInviteCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

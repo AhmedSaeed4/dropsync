@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { Drop } from '@/types';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
+import { useModalBackClose } from '@/hooks/useModalBackClose';
 import { formatFileSize, getYouTubeVideoId } from '@/lib/drops';
 import { createShare } from '@/lib/shares';
 import { downloadBinaryFromUrl } from '@/lib/download';
@@ -34,6 +35,7 @@ function isTextFile(drop: Drop): boolean {
 
 export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoading = false, onEdit, onMove, allDrops = [], onPreview }: EditorialPreviewModalProps) {
   useBodyScrollLock();
+  useModalBackClose(true, onClose);
   const [copied, setCopied] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
   const [isSharing, setIsSharing] = useState(false);

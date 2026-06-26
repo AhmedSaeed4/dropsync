@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
+import { useModalBackClose } from '@/hooks/useModalBackClose';
 import { Drop, Workspace } from '@/types';
 import { getEditorialThemeColors } from './editorialTheme';
 
@@ -24,6 +25,8 @@ export function EditorialMoveDropModal({ drops: dropsProp, workspaces, currentWo
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(firstDrop.workspaceId);
   const [mode, setMode] = useState<'move' | 'copy'>('move');
   const [loading, setLoading] = useState(false);
+  // Back closes only when not mid move/copy (matches the disabled X/backdrop).
+  useModalBackClose(true, () => { if (!loading) onClose(); });
 
   const tc = getEditorialThemeColors(theme);
 

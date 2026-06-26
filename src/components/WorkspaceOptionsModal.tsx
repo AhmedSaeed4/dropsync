@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { Workspace } from '@/types';
 import { getWorkspaceMembers, type MemberInfo } from '@/lib/workspaces';
 import { getEditorialThemeColors } from '@/components/editorial/editorialTheme';
+import { useModalBackClose } from '@/hooks/useModalBackClose';
 
 /**
  * WorkspaceOptionsModal — the OWNER's choice modal (replaces the old inline delete-only
@@ -43,6 +44,8 @@ export default function WorkspaceOptionsModal({
   const [members, setMembers] = useState<MemberInfo[] | null>(null);
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<null | 'delete' | 'transfer'>(null);
+  // Back closes only when not mid delete/transfer (matches the disabled X/backdrop).
+  useModalBackClose(true, () => { if (!(isDeleting || isLeaving)) onClose(); });
 
   // Fetch members on mount / when the workspace changes. `cancelled` prevents setState after
   // unmount; the modal is dismissed once a transfer/delete resolves, so this guards the race.

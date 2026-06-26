@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Drop, ExpirationOption } from '@/types';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
+import { useModalBackClose } from '@/hooks/useModalBackClose';
 import { decryptDrop } from '@/lib/drops';
 import { DrawingCanvas, BG_COLORS } from './DrawingCanvas';
 import { DropPickerRow } from './DropPickerRow';
@@ -36,6 +37,7 @@ const BUILT_IN_CATEGORIES = [
 
 export function TextModal({ onSubmit, onClose, theme = 'light', customCategories = [], onCreateCategory, editDrop, onEdit, currentUserId, mentionableDrops = [] }: TextModalProps) {
   useBodyScrollLock();
+  useModalBackClose(true, onClose);
   const isEditMode = !!editDrop;
   const [name, setName] = useState(editDrop?.name || '');
   const [content, setContent] = useState(editDrop?.content || '');

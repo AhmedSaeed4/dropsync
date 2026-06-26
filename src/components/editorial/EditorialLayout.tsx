@@ -19,6 +19,7 @@ import { getEditorialThemeColors } from './editorialTheme';
 import { EditorialTextModal } from './EditorialTextModal';
 import { EditorialMoveDropModal } from './EditorialMoveDropModal';
 import WorkspaceOptionsModal from '@/components/WorkspaceOptionsModal';
+import { useModalBackClose } from '@/hooks/useModalBackClose';
 import { moveDrop, copyDrop } from '@/lib/drops';
 import { ensureCategoriesForTarget } from '@/lib/categories';
 
@@ -150,6 +151,8 @@ export function EditorialLayout(props: EditorialLayoutProps) {
   // Move drop state
   const [moveDrops, setMoveDrops] = useState<Drop[] | null>(null);
   const [moveLoading, setMoveLoading] = useState(false);
+  // Browser/mobile back closes the inline member Leave modal (the other modals self-register).
+  useModalBackClose(!!workspaceToLeave, () => setWorkspaceToLeave(null));
 
   const handleMoveDrop = async (drops: Drop[], targetWorkspaceId: string | null) => {
     if (!user || !drops.length) return;

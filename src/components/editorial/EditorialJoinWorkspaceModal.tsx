@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
+import { useModalBackClose } from '@/hooks/useModalBackClose';
 import { getEditorialThemeColors } from './editorialTheme';
 
 interface EditorialJoinWorkspaceModalProps {
@@ -12,6 +13,7 @@ interface EditorialJoinWorkspaceModalProps {
 
 export function EditorialJoinWorkspaceModal({ onJoin, onClose, theme = 'light' }: EditorialJoinWorkspaceModalProps) {
   useBodyScrollLock();
+  useModalBackClose(true, onClose);
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

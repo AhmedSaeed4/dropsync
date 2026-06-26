@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
+import { useModalBackClose } from '@/hooks/useModalBackClose';
 import { getEditorialThemeColors } from './editorialTheme';
 
 interface EditorialCreateWorkspaceModalProps {
@@ -12,6 +13,7 @@ interface EditorialCreateWorkspaceModalProps {
 
 export function EditorialCreateWorkspaceModal({ onCreate, onClose, theme = 'light' }: EditorialCreateWorkspaceModalProps) {
   useBodyScrollLock();
+  useModalBackClose(true, onClose);
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
