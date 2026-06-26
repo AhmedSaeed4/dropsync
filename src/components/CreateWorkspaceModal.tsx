@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
+import { useModalBackClose } from '@/hooks/useModalBackClose';
 
 interface CreateWorkspaceModalProps {
   onSubmit: (name: string) => Promise<void>;
@@ -12,6 +13,7 @@ interface CreateWorkspaceModalProps {
 
 export function CreateWorkspaceModal({ onSubmit, onClose, createdWorkspace, theme = 'light' }: CreateWorkspaceModalProps) {
   useBodyScrollLock();
+  useModalBackClose(true, onClose);
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
   const isDark = theme === 'dark';

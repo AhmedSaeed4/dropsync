@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Drop, ExpirationOption } from '@/types';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
+import { useModalBackClose } from '@/hooks/useModalBackClose';
 import { getEditorialThemeColors } from './editorialTheme';
 import { decryptDrop } from '@/lib/drops';
 import { DrawingCanvas, BG_COLORS } from '../DrawingCanvas';
@@ -37,6 +38,7 @@ const BUILT_IN_CATEGORIES = [
 
 export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customCategories = [], onCreateCategory, editDrop, onEdit, currentUserId, mentionableDrops = [] }: EditorialTextModalProps) {
   useBodyScrollLock();
+  useModalBackClose(true, onClose);
   const isEditMode = !!editDrop;
   const isFileDrop = isEditMode && editDrop?.type === 'file';
   const [name, setName] = useState(editDrop?.name || '');

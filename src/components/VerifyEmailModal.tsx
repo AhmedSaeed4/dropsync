@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
+import { useModalBackClose } from '@/hooks/useModalBackClose';
 
 interface VerifyEmailModalProps {
   email: string;
@@ -19,6 +20,7 @@ export function VerifyEmailModal({
   theme = 'light'
 }: VerifyEmailModalProps) {
   useBodyScrollLock();
+  useModalBackClose(true, onClose);
   const [loading, setLoading] = useState(false);
   const [resendSuccess, setResendSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);

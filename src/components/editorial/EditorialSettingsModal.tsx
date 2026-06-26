@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { User } from '@/types';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
+import { useModalBackClose } from '@/hooks/useModalBackClose';
 import { getEditorialThemeColors } from './editorialTheme';
 import { previewAccountDeletion, deleteAccount, DeletionPreview, SelectedOwners } from '@/lib/accountDeletion';
 import { updateUserDisplayName } from '@/lib/auth';
@@ -42,6 +43,7 @@ export function EditorialSettingsModal({
   onToggleNotifications,
 }: EditorialSettingsModalProps) {
   useBodyScrollLock();
+  useModalBackClose(true, onClose);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
