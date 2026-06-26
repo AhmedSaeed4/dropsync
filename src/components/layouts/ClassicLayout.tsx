@@ -18,6 +18,7 @@ import { TextModal } from '@/components/TextModal';
 import { MoveDropModal } from '@/components/MoveDropModal';
 import WorkspaceOptionsModal from '@/components/WorkspaceOptionsModal';
 import { useModalBackClose } from '@/hooks/useModalBackClose';
+import { useIsMobile } from '@/hooks/useIsMobile';
 import { moveDrop, copyDrop } from '@/lib/drops';
 import { ensureCategoriesForTarget } from '@/lib/categories';
 
@@ -154,6 +155,9 @@ export function ClassicLayout(props: ClassicLayoutProps) {
   const [moveLoading, setMoveLoading] = useState(false);
   // Browser/mobile back closes the inline member Leave modal (the other modals self-register).
   useModalBackClose(!!workspaceToLeave, () => setWorkspaceToLeave(null));
+  // On mobile the chat is a stacked card (not a docked column) — back closes it. Desktop untouched.
+  const isMobile = useIsMobile();
+  useModalBackClose(!!showChat, () => setShowChat(false), isMobile);
 
   const handleMoveDrop = async (drops: Drop[], targetWorkspaceId: string | null) => {
     if (!user || !drops.length) return;
