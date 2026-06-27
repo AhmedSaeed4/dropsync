@@ -67,7 +67,7 @@ export function showChatNotification(
         await reg.showNotification(`New message from ${senderName}`, {
           body: `In ${workspaceName}`,
           tag: 'dropsync-chat',
-          icon: '/icon.svg',
+          icon: '/icon.svg?v=2',
         });
       } catch (e) {
         console.error('Notification failed:', e);
@@ -80,7 +80,7 @@ export function showChatNotification(
     const n = new Notification(`New message from ${senderName}`, {
       body: `In ${workspaceName}`,
       tag: 'dropsync-chat', // shared tag → replaces, never stacks
-      icon: '/icon.svg',
+      icon: '/icon.svg?v=2',
     });
     n.onclick = () => {
       window.focus();
