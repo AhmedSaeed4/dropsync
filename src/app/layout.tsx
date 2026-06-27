@@ -17,7 +17,7 @@ export const metadata: Metadata = {
   title: "DROPSYNC // OP/INTELLIGENCE",
   description: "Secure file transfer system. Drop anywhere, pickup anywhere. Auto-expire 2hrs.",
   icons: {
-    icon: "/icon.svg",
+    icon: "/icon.svg?v=2",
   },
 };
 
