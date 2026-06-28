@@ -351,6 +351,18 @@ export function SettingsModal({
           <p className="text-xs text-red-500">{error}</p>
         </div>
       )}
+
+      {/* Privacy Policy */}
+      <div className={`pt-6 border-t ${tc.borderColor} text-center`}>
+        <a
+          href="/privacy"
+          target="_blank"
+          rel="noopener noreferrer"
+          className={`inline-block underline ${isMinimal ? 'font-sans tracking-wide' : 'font-mono uppercase tracking-wider'} text-xs ${tc.textMuted} hover:opacity-70 transition-opacity`}
+        >
+          {isMinimal ? 'Privacy Policy' : 'PRIVACY_POLICY'}
+        </a>
+      </div>
     </div>
   );
 
