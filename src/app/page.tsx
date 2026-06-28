@@ -176,6 +176,10 @@ export default function Home() {
   useEffect(() => {
     if (themeLoaded) {
       localStorage.setItem(THEME_STORAGE_KEY, theme);
+      // Mirror the share page: also write the `share-theme` cookie so public
+      // server-rendered pages (e.g. /privacy) can paint the app theme on the next
+      // load. Public pages only do light/dark, so minimal (and any non-dark) → light.
+      try { document.cookie = `share-theme=${theme === 'dark' ? 'dark' : 'light'};path=/;max-age=31536000;SameSite=Lax`; } catch {}
     }
   }, [theme, themeLoaded]);
 
@@ -1037,7 +1041,7 @@ export default function Home() {
             {/* Footer - fade in */}
             <footer className="flex justify-between items-center px-4 sm:px-6 lg:px-8 py-6 text-xs tracking-[0.05em] font-[family-name:var(--font-raleway)]" style={{ color: mutedColor, opacity: 0, animation: 'fadeIn 800ms ease 1000ms forwards' }}>
               <a href="/about" onClick={handleAboutClick} className="hover:opacity-70 transition-opacity cursor-pointer">About</a>
-              <span style={{ marginLeft: '104px' }}>EDITION 2.0</span>
+              <a href="/privacy" target="_blank" rel="noopener noreferrer" style={{ marginLeft: '104px' }} className="hover:opacity-70 transition-opacity cursor-pointer">Privacy Policy</a>
               <span className="hidden sm:inline">Max 500MB · Unlimited drops</span>
             </footer>
           </div>
@@ -1335,9 +1339,14 @@ export default function Home() {
             >
               ABOUT
             </Link>
-            <span className={`text-[10px] font-mono uppercase tracking-wider ${themeColors.isDark ? 'text-white/40' : 'text-[#1A1A1A]/40'}`}>
-              EDITION 2.0
-            </span>
+            <a
+              href="/privacy"
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`text-[10px] font-mono uppercase tracking-wider transition-colors ${themeColors.isDark ? 'text-white/40 hover:text-white' : 'text-[#1A1A1A]/40 hover:text-[#1A1A1A]'}`}
+            >
+              PRIVACY POLICY
+            </a>
             <span className={`hidden sm:inline text-[10px] font-mono uppercase tracking-wider ${themeColors.isDark ? 'text-white/40' : 'text-[#1A1A1A]/40'}`}>
               500MB / UNLIMITED
             </span>

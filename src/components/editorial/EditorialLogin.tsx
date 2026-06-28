@@ -59,6 +59,18 @@ export function EditorialLogin({ signIn, onShowAuthModal, theme }: EditorialLogi
               Sign in with Email
             </button>
           </div>
+
+          {/* Privacy Policy */}
+          <p className={`mt-8 text-xs ${tc.fontClass} ${tc.muted}`}>
+            <a
+              href="/privacy"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline hover:opacity-70 transition-opacity"
+            >
+              Privacy Policy
+            </a>
+          </p>
         </div>
 
         {/* Footer decorations */}

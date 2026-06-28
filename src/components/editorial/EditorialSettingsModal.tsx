@@ -533,6 +533,16 @@ export function EditorialSettingsModal({
           >
             Done
           </button>
+          <div className="mt-3 text-center">
+            <a
+              href="/privacy"
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`text-xs underline ${tc.muted} hover:opacity-70 transition-opacity ${tc.fontClass}`}
+            >
+              Privacy Policy
+            </a>
+          </div>
         </div>
       </div>
     </div>

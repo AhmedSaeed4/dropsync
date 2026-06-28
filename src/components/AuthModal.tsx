@@ -337,6 +337,18 @@ export function AuthModal({
                 </svg>
                 Sign in with Google
               </button>
+
+              {/* Privacy Policy */}
+              <p className={`mt-2 text-center ${tc.fontClass} ${tc.textMuted}`}>
+                <a
+                  href="/privacy"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline hover:opacity-70 transition-opacity"
+                >
+                  Privacy Policy
+                </a>
+              </p>
                 </>
               )}
             </>
