@@ -35,6 +35,7 @@ export async function signInWithGoogle(): Promise<User | null> {
         photoURL: firebaseUser.photoURL,
         createdAt: serverTimestamp(),
         lastActive: serverTimestamp(),
+        tier: 'standard',
       });
     } else {
       await setDoc(userRef, {
@@ -110,6 +111,7 @@ export async function signUpWithEmail(email: string, password: string): Promise<
       createdAt: serverTimestamp(),
       lastActive: serverTimestamp(),
       emailVerified: false,
+      tier: 'standard',
     });
 
     // Return success - user stays logged in but unverified

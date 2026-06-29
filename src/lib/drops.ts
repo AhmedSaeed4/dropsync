@@ -259,7 +259,21 @@ export async function createTextDrop(
       docData.isDrawing = true;
     }
 
-    const docRef = await addDoc(collection(db, DROPS_COLLECTION), docData);
+    let docRef: Awaited<ReturnType<typeof addDoc>>;
+    try {
+      docRef = await addDoc(collection(db, DROPS_COLLECTION), docData);
+    } catch (writeError) {
+      // Record write failed after the image uploaded → delete the orphaned R2 object so storage
+      // isn't left holding a file with no drop. Best-effort; never mask the original write error.
+      if (imageR2Key) {
+        try {
+          await deleteFromR2(imageR2Key, workspaceId);
+        } catch (cleanupError) {
+          console.error('Failed to clean up orphaned image after write failure:', cleanupError);
+        }
+      }
+      throw writeError;
+    }
 
     return {
       id: docRef.id,
@@ -434,7 +448,21 @@ export async function createFileDrop(
     }
 
     // Create document
-    const docRef = await addDoc(collection(db, DROPS_COLLECTION), docData);
+    let docRef: Awaited<ReturnType<typeof addDoc>>;
+    try {
+      docRef = await addDoc(collection(db, DROPS_COLLECTION), docData);
+    } catch (writeError) {
+      // Record write failed after the file uploaded → delete the orphaned R2 object so storage
+      // isn't left holding a file with no drop. Best-effort; never mask the original write error.
+      if (r2Key) {
+        try {
+          await deleteFromR2(r2Key, workspaceId);
+        } catch (cleanupError) {
+          console.error('Failed to clean up orphaned file after write failure:', cleanupError);
+        }
+      }
+      throw writeError;
+    }
 
     return {
       drop: {
@@ -710,7 +738,22 @@ export async function updateTextDrop(
     // PATH 3: Only metadata changed (name, category, expiration) → no re-encryption
 
     // Write to Firestore FIRST — if this fails, old R2 objects are untouched
-    await updateDoc(docRef, updateData);
+    try {
+      await updateDoc(docRef, updateData);
+    } catch (writeError) {
+      // Write failed after a new image uploaded → delete ONLY the new image object (never the
+      // previous version's image, which is still referenced by the existing doc). Best-effort;
+      // never mask the original write error.
+      const newImageKey = updateData.imageR2Key;
+      if (typeof newImageKey === 'string' && newImageKey) {
+        try {
+          await deleteFromR2(newImageKey, drop.workspaceId);
+        } catch (cleanupError) {
+          console.error('Failed to clean up orphaned image after write failure:', cleanupError);
+        }
+      }
+      throw writeError;
+    }
 
     // Only clean up old R2 objects after Firestore succeeds
     for (const { key, workspaceId } of r2KeysToDelete) {
@@ -1164,7 +1207,29 @@ export async function moveDrop(
     updateData.category = null;
 
     // Step 5: Single atomic update
-    await updateDoc(docRef, updateData);
+    try {
+      await updateDoc(docRef, updateData);
+    } catch (writeError) {
+      // Update failed after re-uploading the file/image to NEW keys → delete ONLY those new objects
+      // (never the drop's existing file/image, which still belong to the unchanged doc). Skip a
+      // reused file key — large unencrypted files reuse drop.r2Key, so there is no new object.
+      // Best-effort; never mask the original write error.
+      if (newR2Key && newR2Key !== drop.r2Key) {
+        try {
+          await deleteFromR2(newR2Key, targetWorkspaceId);
+        } catch (cleanupError) {
+          console.error('Failed to clean up orphaned file after move write failure:', cleanupError);
+        }
+      }
+      if (newImageR2Key) {
+        try {
+          await deleteFromR2(newImageR2Key, targetWorkspaceId);
+        } catch (cleanupError) {
+          console.error('Failed to clean up orphaned image after move write failure:', cleanupError);
+        }
+      }
+      throw writeError;
+    }
 
     // Step 6: Clean up old R2 objects after Firestore succeeds
     if (oldImageR2Key) {
@@ -1471,7 +1536,28 @@ export async function copyDrop(
 
     // Step 5: Create the copy with a single addDoc. The original doc + all its R2 objects
     // are never mutated or deleted.
-    await addDoc(collection(db, DROPS_COLLECTION), docData);
+    try {
+      await addDoc(collection(db, DROPS_COLLECTION), docData);
+    } catch (writeError) {
+      // Create failed after re-uploading the file/image to NEW keys → delete those new objects
+      // (a copy always uploads its own keys; the original's objects are never touched). Best-effort;
+      // never mask the original write error.
+      if (newR2Key) {
+        try {
+          await deleteFromR2(newR2Key, targetWorkspaceId);
+        } catch (cleanupError) {
+          console.error('Failed to clean up orphaned file after copy write failure:', cleanupError);
+        }
+      }
+      if (newImageR2Key) {
+        try {
+          await deleteFromR2(newImageR2Key, targetWorkspaceId);
+        } catch (cleanupError) {
+          console.error('Failed to clean up orphaned image after copy write failure:', cleanupError);
+        }
+      }
+      throw writeError;
+    }
 
     // Step 6: NO R2 cleanup — the original owns its objects and must keep them.
 

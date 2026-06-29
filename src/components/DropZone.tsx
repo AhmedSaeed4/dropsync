@@ -3,7 +3,9 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { createFileDrop, createTextDrop } from '@/lib/drops';
 import { useAuth } from '@/hooks/useAuth';
+import { useUserTier } from '@/hooks/useUserTier';
 import { TextModal } from './TextModal';
+import { ForeverLockedModal } from './ForeverLockedModal';
 import { ExpirationOption, Drop } from '@/types';
 
 interface DropZoneProps {
@@ -39,6 +41,8 @@ export function DropZone({
   const [error, setError] = useState<string | null>(null);
   const [showTextModal, setShowTextModal] = useState(false);
   const [expiration, setExpiration] = useState<ExpirationOption>('2h');
+  const [showForeverLocked, setShowForeverLocked] = useState(false);
+  const { tier, loading: tierLoading } = useUserTier();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isDark = theme === 'dark';
   const isMinimal = theme === 'minimal';
@@ -276,6 +280,10 @@ export function DropZone({
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
+                    if (option.value === 'forever' && tier === 'standard' && !tierLoading) {
+                      setShowForeverLocked(true);
+                      return;
+                    }
                     setExpiration(option.value);
                   }}
                   className={`px-2 py-1 text-xs transition-colors ${
@@ -339,6 +347,10 @@ export function DropZone({
           onCreateCategory={onCreateCategory}
           mentionableDrops={mentionableDrops}
         />
+      )}
+
+      {showForeverLocked && (
+        <ForeverLockedModal variant="classic" theme={theme} onClose={() => setShowForeverLocked(false)} />
       )}
     </>
   );

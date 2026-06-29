@@ -1,11 +1,46 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Users collection - users can read/write/delete their own data, read others for display
+    // ---- Trusted-tier helpers ----
+    // Owner identity lives in the config/owner doc (uid field), not hardcoded here.
+    function isOwner() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/config/owner)
+        && get(/databases/$(database)/documents/config/owner).data.uid == request.auth.uid;
+    }
+    function isTrusted() {
+      return isOwner()
+        || (request.auth != null
+            && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+            && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tier == 'trusted');
+    }
+    // A write is "forever" if it sets the expiration option to 'forever' or has no expiry.
+    function isForeverWrite() {
+      return request.resource.data.expirationOption == 'forever'
+          || request.resource.data.expiresAt == null;
+    }
+
+    // Users collection - field-guarded: read all users; create your own with tier 'standard';
+    // update any of your own fields EXCEPT tier; the owner may update ONLY tier.
     match /users/{userId} {
       allow read: if request.auth != null;
-      allow write: if request.auth != null && request.auth.uid == userId;
+      allow create: if request.auth != null
+        && request.auth.uid == userId
+        && (request.resource.data.tier == 'standard' || !('tier' in request.resource.data));
+      allow update: if (
+        (isOwner() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['tier']))
+        ||
+        (request.auth != null && request.auth.uid == userId
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['tier']))
+      );
       allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Config collection (config/owner holds the owner uid). Readable by any authenticated user
+    // (the /admin page reads it client-side); never client-writable — only the console / Admin SDK.
+    match /config/{docId} {
+      allow read: if request.auth != null;
+      allow write: if false;
     }
 
     // User encryption keys - users can only access their own keys
@@ -66,8 +101,10 @@ service cloud.firestore {
 
     // Drops collection
     match /drops/{dropId} {
-      // Create - must be authenticated and userId must match
-      allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
+      // Create - must be authenticated, own the drop, and be trusted to make it last forever
+      allow create: if request.auth != null
+        && request.auth.uid == request.resource.data.userId
+        && (!isForeverWrite() || isTrusted());
 
       // Read - authenticated users can read their own drops or workspace drops they're a member of
       allow read: if request.auth != null && (
@@ -76,12 +113,12 @@ service cloud.firestore {
           request.auth.uid in get(/databases/$(database)/documents/workspaces/$(resource.data.workspaceId)).data.members)
       );
 
-      // Update - creator can always update; workspace members can update workspace drops
+      // Update - creator or workspace member; forever writes require a trusted tier
       allow update: if request.auth != null && (
         request.auth.uid == resource.data.userId ||
         (resource.data.workspaceId != null &&
           request.auth.uid in get(/databases/$(database)/documents/workspaces/$(resource.data.workspaceId)).data.members)
-      );
+      ) && (!isForeverWrite() || isTrusted());
 
       // Delete - creator or current workspace member only (matches read/update trust boundary)
       allow delete: if request.auth != null && (

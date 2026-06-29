@@ -3,7 +3,9 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { createFileDrop, createTextDrop } from '@/lib/drops';
 import { useAuth } from '@/hooks/useAuth';
+import { useUserTier } from '@/hooks/useUserTier';
 import { EditorialTextModal } from './EditorialTextModal';
+import { ForeverLockedModal } from '../ForeverLockedModal';
 import { ExpirationOption, Drop } from '@/types';
 import { getEditorialThemeColors } from './editorialTheme';
 
@@ -46,6 +48,8 @@ export function EditorialDropZone({
   const [error, setError] = useState<string | null>(null);
   const [showTextModal, setShowTextModal] = useState(false);
   const [expiration, setExpiration] = useState<ExpirationOption>('2h');
+  const [showForeverLocked, setShowForeverLocked] = useState(false);
+  const { tier, loading: tierLoading } = useUserTier();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const tc = getEditorialThemeColors(theme);
@@ -304,6 +308,10 @@ export function EditorialDropZone({
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
+                      if (option.value === 'forever' && tier === 'standard' && !tierLoading) {
+                        setShowForeverLocked(true);
+                        return;
+                      }
                       setExpiration(option.value);
                     }}
                     className={`${tc.fontClass} rounded-full border transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${
@@ -360,6 +368,10 @@ export function EditorialDropZone({
           onCreateCategory={onCreateCategory}
           mentionableDrops={mentionableDrops}
         />
+      )}
+
+      {showForeverLocked && (
+        <ForeverLockedModal variant="editorial" theme={theme} onClose={() => setShowForeverLocked(false)} />
       )}
     </>
   );
