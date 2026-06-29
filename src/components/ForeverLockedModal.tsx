@@ -9,12 +9,20 @@ interface ForeverLockedModalProps {
   variant: 'classic' | 'editorial';
   /** Host app theme. */
   theme: 'light' | 'dark' | 'minimal';
+  /** Which forever-limit scenario triggered the popup — picks the message. Defaults to 'create'. */
+  context?: 'create' | 'move' | 'edit';
   onClose: () => void;
 }
 
-// Exact required wording for the forever lock.
-const BODY_TEXT =
-  "Forever storage isn't available yet. We're working on a paid plan so you can keep drops permanently — for now, drops last up to 24 hours.";
+// One clean voice across every forever-limit surface. No "trusted"/"tier" wording anywhere.
+const MESSAGES: Record<'create' | 'move' | 'edit', string> = {
+  create:
+    "Forever storage isn't available yet. We're working on a paid plan so you can keep drops permanently — for now, drops last up to 24 hours.",
+  move:
+    "This drop is set to forever, so it can't be moved. Forever storage is part of our upcoming paid plan.",
+  edit:
+    "This drop is set to forever, so your changes can't be saved. Switch the expiry to a timed option (up to 24h) to save your changes. Forever storage is part of our upcoming paid plan.",
+};
 
 /**
  * Small informational popup shown when a non-trusted user clicks the "∞"/Forever option.
@@ -22,9 +30,11 @@ const BODY_TEXT =
  * close button) and renders in the host layout's style via `variant` + `theme`. Rendered at
  * z-[60] so it overlays host modals (e.g. TextModal, which is z-50).
  */
-export function ForeverLockedModal({ variant, theme, onClose }: ForeverLockedModalProps) {
+export function ForeverLockedModal({ variant, theme, context = 'create', onClose }: ForeverLockedModalProps) {
   useBodyScrollLock();
   useModalBackClose(true, onClose);
+
+  const body = MESSAGES[context];
 
   if (variant === 'editorial') {
     const tc = getEditorialThemeColors(theme);
@@ -47,7 +57,7 @@ export function ForeverLockedModal({ variant, theme, onClose }: ForeverLockedMod
             </button>
           </div>
           <div className="px-5 py-5">
-            <p className={`text-sm ${tc.fontClass} ${tc.text} leading-relaxed`}>{BODY_TEXT}</p>
+            <p className={`text-sm ${tc.fontClass} ${tc.text} leading-relaxed`}>{body}</p>
             <button
               onClick={onClose}
               className={`mt-5 w-full ${tc.activePillBg} ${tc.activePillText} ${tc.fontClass} py-2.5 text-sm rounded-lg hover:opacity-90 transition-opacity`}
@@ -89,7 +99,7 @@ export function ForeverLockedModal({ variant, theme, onClose }: ForeverLockedMod
           </button>
         </div>
         <div className="p-6">
-          <p className={`${fontClass} ${textColor} leading-relaxed`}>{BODY_TEXT}</p>
+          <p className={`${fontClass} ${textColor} leading-relaxed`}>{body}</p>
           <button
             onClick={onClose}
             className={`mt-5 w-full bg-[#1A1A1A] text-white py-3 text-xs tracking-wider hover:bg-[#2A2A2A] transition-colors ${isMinimal ? 'rounded-full' : ''}`}

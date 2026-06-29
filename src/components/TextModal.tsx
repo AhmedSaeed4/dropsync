@@ -46,6 +46,7 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
   const [loading, setLoading] = useState(false);
   const [expiration, setExpiration] = useState<ExpirationOption>(editDrop?.expirationOption || '2h');
   const [showForeverLocked, setShowForeverLocked] = useState(false);
+  const [foreverContext, setForeverContext] = useState<'create' | 'edit'>('create');
   const { tier, loading: tierLoading } = useUserTier();
   const [selectedCategories, setSelectedCategories] = useState<string[]>(
     editDrop?.categories || (editDrop?.category ? [editDrop.category] : [])
@@ -149,6 +150,14 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isFileDrop && !content.trim() && !drawingFile) return;
+
+    // Standard users editing a forever drop can't save it (the rules reject the write). Show the
+    // edit popup instead. Switching to a timed option and saving still works (that's a downgrade).
+    if (isEditMode && tier === 'standard' && !tierLoading && expiration === 'forever') {
+      setForeverContext('edit');
+      setShowForeverLocked(true);
+      return;
+    }
 
     setLoading(true);
     const imageToUpload = drawingFile || attachedImage || undefined;
@@ -788,6 +797,7 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
                   type="button"
                   onClick={() => {
                     if (option.value === 'forever' && tier === 'standard' && !tierLoading) {
+                      setForeverContext('create');
                       setShowForeverLocked(true);
                       return;
                     }
@@ -834,7 +844,7 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
         </form>
       </div>
       {showForeverLocked && (
-        <ForeverLockedModal variant="classic" theme={theme} onClose={() => setShowForeverLocked(false)} />
+        <ForeverLockedModal context={foreverContext} variant="classic" theme={theme} onClose={() => setShowForeverLocked(false)} />
       )}
     </div>
   );

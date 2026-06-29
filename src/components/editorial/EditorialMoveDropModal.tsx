@@ -3,8 +3,10 @@
 import { useState } from 'react';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useModalBackClose } from '@/hooks/useModalBackClose';
+import { useUserTier } from '@/hooks/useUserTier';
 import { Drop, Workspace } from '@/types';
 import { getEditorialThemeColors } from './editorialTheme';
+import { ForeverLockedModal } from '../ForeverLockedModal';
 
 interface EditorialMoveDropModalProps {
   drops: Drop | Drop[];
@@ -25,6 +27,8 @@ export function EditorialMoveDropModal({ drops: dropsProp, workspaces, currentWo
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(firstDrop.workspaceId);
   const [mode, setMode] = useState<'move' | 'copy'>('move');
   const [loading, setLoading] = useState(false);
+  const [showForeverLocked, setShowForeverLocked] = useState(false);
+  const { tier, loading: tierLoading } = useUserTier();
   // Back closes only when not mid move/copy (matches the disabled X/backdrop).
   useModalBackClose(true, () => { if (!loading) onClose(); });
 
@@ -42,6 +46,17 @@ export function EditorialMoveDropModal({ drops: dropsProp, workspaces, currentWo
 
   const handleSubmit = async () => {
     if (isSameLocation) return;
+    // Standard users can't move a forever drop (the rules reject the write). Show a clean popup
+    // instead of letting the move fail. Copy is NOT gated here — copyDrop silently downgrades.
+    if (
+      mode === 'move' &&
+      tier === 'standard' &&
+      !tierLoading &&
+      dropList.some((d) => d.expirationOption === 'forever' || d.expiresAt == null)
+    ) {
+      setShowForeverLocked(true);
+      return;
+    }
     setLoading(true);
     if (mode === 'copy') await onCopy(dropList, selectedWorkspaceId);
     else await onMove(dropList, selectedWorkspaceId);
@@ -224,6 +239,9 @@ export function EditorialMoveDropModal({ drops: dropsProp, workspaces, currentWo
           </button>
         </div>
       </div>
+      {showForeverLocked && (
+        <ForeverLockedModal context="move" variant="editorial" theme={theme} onClose={() => setShowForeverLocked(false)} />
+      )}
     </div>
   );
 }
