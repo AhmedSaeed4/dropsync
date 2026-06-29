@@ -3,7 +3,9 @@
 import { useState } from 'react';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useModalBackClose } from '@/hooks/useModalBackClose';
+import { useUserTier } from '@/hooks/useUserTier';
 import { Drop, Workspace } from '@/types';
+import { ForeverLockedModal } from './ForeverLockedModal';
 
 interface MoveDropModalProps {
   drops: Drop | Drop[];
@@ -24,6 +26,8 @@ export function MoveDropModal({ drops: dropsProp, workspaces, currentWorkspaceId
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(firstDrop.workspaceId);
   const [mode, setMode] = useState<'move' | 'copy'>('move');
   const [loading, setLoading] = useState(false);
+  const [showForeverLocked, setShowForeverLocked] = useState(false);
+  const { tier, loading: tierLoading } = useUserTier();
   // Back closes only when not mid move/copy (matches the disabled X/backdrop).
   useModalBackClose(true, () => { if (!loading) onClose(); });
   const isDark = theme === 'dark';
@@ -41,6 +45,17 @@ export function MoveDropModal({ drops: dropsProp, workspaces, currentWorkspaceId
 
   const handleSubmit = async () => {
     if (isSameLocation) return;
+    // Standard users can't move a forever drop (the rules reject the write). Show a clean popup
+    // instead of letting the move fail. Copy is NOT gated here — copyDrop silently downgrades.
+    if (
+      mode === 'move' &&
+      tier === 'standard' &&
+      !tierLoading &&
+      dropList.some((d) => d.expirationOption === 'forever' || d.expiresAt == null)
+    ) {
+      setShowForeverLocked(true);
+      return;
+    }
     setLoading(true);
     if (mode === 'copy') await onCopy(dropList, selectedWorkspaceId);
     else await onMove(dropList, selectedWorkspaceId);
@@ -295,6 +310,9 @@ export function MoveDropModal({ drops: dropsProp, workspaces, currentWorkspaceId
           </button>
         </div>
       </div>
+      {showForeverLocked && (
+        <ForeverLockedModal context="move" variant="classic" theme={theme} onClose={() => setShowForeverLocked(false)} />
+      )}
     </div>
   );
 }

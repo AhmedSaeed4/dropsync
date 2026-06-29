@@ -8,6 +8,7 @@ import {
   onSnapshot,
   serverTimestamp,
   Timestamp,
+  getDoc,
   getDocs,
   updateDoc
 } from 'firebase/firestore';
@@ -1443,14 +1444,27 @@ export async function copyDrop(
     }
 
     // Step 4: Build the NEW document (addDoc — the original doc is never touched).
-    const expiresAt = getExpirationDate(drop.expirationOption ?? '2h');
+    // Standard users can't keep forever: silently copy a forever source as 24h (trusted users and
+    // timed sources are unaffected). Best-effort tier read — default to standard on miss/error.
+    const sourceOption = drop.expirationOption ?? '2h';
+    const sourceIsForever = sourceOption === 'forever' || drop.expiresAt == null;
+    let copyExpiration: ExpirationOption = sourceIsForever ? 'forever' : sourceOption;
+    if (sourceIsForever) {
+      try {
+        const userSnap = await getDoc(doc(db, 'users', currentUserId));
+        if (userSnap.get('tier') !== 'trusted') copyExpiration = '24h';
+      } catch {
+        copyExpiration = '24h';
+      }
+    }
+    const expiresAt = getExpirationDate(copyExpiration);
     const docData: Record<string, unknown> = {
       userId: currentUserId, // the copier owns the copy
       type: drop.type,
       name: drop.name,
       createdAt: serverTimestamp(),
       expiresAt: expiresAt ? Timestamp.fromDate(expiresAt) : null,
-      expirationOption: drop.expirationOption ?? '2h',
+      expirationOption: copyExpiration,
       workspaceId: targetWorkspaceId,
       pinned: false,
       category: null,
