@@ -4,7 +4,9 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { Drop, ExpirationOption } from '@/types';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useModalBackClose } from '@/hooks/useModalBackClose';
+import { useUserTier } from '@/hooks/useUserTier';
 import { getEditorialThemeColors } from './editorialTheme';
+import { ForeverLockedModal } from '../ForeverLockedModal';
 import { decryptDrop } from '@/lib/drops';
 import { DrawingCanvas, BG_COLORS } from '../DrawingCanvas';
 import { EditorialDropPickerRow } from './EditorialDropPickerRow';
@@ -45,6 +47,8 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
   const [content, setContent] = useState(editDrop?.content || '');
   const [loading, setLoading] = useState(false);
   const [expiration, setExpiration] = useState<ExpirationOption>(editDrop?.expirationOption || '2h');
+  const [showForeverLocked, setShowForeverLocked] = useState(false);
+  const { tier, loading: tierLoading } = useUserTier();
   const [selectedCategories, setSelectedCategories] = useState<string[]>(
     editDrop?.categories || (editDrop?.category ? [editDrop.category] : [])
   );
@@ -749,7 +753,13 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
                   <button
                     key={option.value}
                     type="button"
-                    onClick={() => setExpiration(option.value)}
+                    onClick={() => {
+                      if (option.value === 'forever' && tier === 'standard' && !tierLoading) {
+                        setShowForeverLocked(true);
+                        return;
+                      }
+                      setExpiration(option.value);
+                    }}
                     className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${tc.fontClass} ${
                       expiration === option.value
                         ? `${tc.activePillBg} ${tc.activePillText} border-[#1a1a1a]`
@@ -788,6 +798,9 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
           </div>
         </form>
       </div>
+      {showForeverLocked && (
+        <ForeverLockedModal variant="editorial" theme={theme} onClose={() => setShowForeverLocked(false)} />
+      )}
     </div>
   );
 }

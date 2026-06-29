@@ -4,7 +4,9 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { Drop, ExpirationOption } from '@/types';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useModalBackClose } from '@/hooks/useModalBackClose';
+import { useUserTier } from '@/hooks/useUserTier';
 import { decryptDrop } from '@/lib/drops';
+import { ForeverLockedModal } from './ForeverLockedModal';
 import { DrawingCanvas, BG_COLORS } from './DrawingCanvas';
 import { DropPickerRow } from './DropPickerRow';
 import { useMentionEditor } from '@/hooks/useMentionEditor';
@@ -43,6 +45,8 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
   const [content, setContent] = useState(editDrop?.content || '');
   const [loading, setLoading] = useState(false);
   const [expiration, setExpiration] = useState<ExpirationOption>(editDrop?.expirationOption || '2h');
+  const [showForeverLocked, setShowForeverLocked] = useState(false);
+  const { tier, loading: tierLoading } = useUserTier();
   const [selectedCategories, setSelectedCategories] = useState<string[]>(
     editDrop?.categories || (editDrop?.category ? [editDrop.category] : [])
   );
@@ -782,7 +786,13 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
                 <button
                   key={option.value}
                   type="button"
-                  onClick={() => setExpiration(option.value)}
+                  onClick={() => {
+                    if (option.value === 'forever' && tier === 'standard' && !tierLoading) {
+                      setShowForeverLocked(true);
+                      return;
+                    }
+                    setExpiration(option.value);
+                  }}
                   className={`px-3 py-2 text-xs ${isMinimal ? 'rounded-full' : ''} border transition-colors ${
                     expiration === option.value
                       ? 'bg-[#1A1A1A] text-white border-[#1A1A1A]'
@@ -823,6 +833,9 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
           </div>
         </form>
       </div>
+      {showForeverLocked && (
+        <ForeverLockedModal variant="classic" theme={theme} onClose={() => setShowForeverLocked(false)} />
+      )}
     </div>
   );
 }
