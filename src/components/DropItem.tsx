@@ -9,6 +9,7 @@ import { DropMentionContent } from './DropMentionContent';
 import { useState, useEffect } from 'react';
 import { useVideoThumbnail } from '@/hooks/useVideoThumbnail';
 import { DropContextMenu, useContextMenu } from './DropContextMenu';
+import { LockedHintTooltip } from './LockedHintTooltip';
 import { LockedActionButton } from './LockedActionButton';
 
 interface DropItemProps {
@@ -548,6 +549,12 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
           locked={!!drop.locked}
           canMutate={canMutate}
         />
+      )}
+
+      {/* Locked hint: when the menu is suppressed (locked drop, non-creator), show a brief
+          auto-dismissing hint at the gesture point instead of a silent dead-end. */}
+      {menuState && drop.locked && !canMutate && (
+        <LockedHintTooltip x={menuState.x} y={menuState.y} onClose={closeMenu} />
       )}
     </div>
   );
