@@ -12,10 +12,16 @@ interface DropContextMenuProps {
   onClose: () => void;
   theme?: 'light' | 'dark' | 'minimal';
   editorial?: boolean;
+  // When the drop is locked and the current user can't mutate it, the rules block pin/unpin —
+  // hide the option rather than show an action that fails silently.
+  locked?: boolean;
+  canMutate?: boolean;
 }
 
-export function DropContextMenu({ x, y, isPinned, onPin, onUnpin, onClose, theme = 'light', editorial }: DropContextMenuProps) {
+export function DropContextMenu({ x, y, isPinned, onPin, onUnpin, onClose, theme = 'light', editorial, locked = false, canMutate = false }: DropContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
+  // Pin/unpin is a mutation the Firestore rules reject for a non-creator on a locked drop.
+  const pinBlocked = locked && !canMutate;
   const [adjustedPos, setAdjustedPos] = useState({ x, y });
 
   // Adjust position so menu doesn't overflow viewport
@@ -76,15 +82,17 @@ export function DropContextMenu({ x, y, isPinned, onPin, onUnpin, onClose, theme
           onContextMenu={stopEvent}
           style={{ left: `${adjustedPos.x}px`, top: `${adjustedPos.y}px` }}
         >
-          <button
-            onClick={handlePin}
-            className={`w-full px-3 py-2 text-left text-xs ${tc.fontClass} ${tc.text} hover:bg-[#1a1a1a]/5 transition-colors flex items-center gap-2`}
-          >
-            <svg className="w-3.5 h-3.5" fill={isPinned ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5m-10.5 0h10.5m-10.5 0l.75-10.5h9l.75 10.5" />
-            </svg>
-            {isPinned ? 'Unpin drop' : 'Pin drop'}
-          </button>
+          {!pinBlocked && (
+            <button
+              onClick={handlePin}
+              className={`w-full px-3 py-2 text-left text-xs ${tc.fontClass} ${tc.text} hover:bg-[#1a1a1a]/5 transition-colors flex items-center gap-2`}
+            >
+              <svg className="w-3.5 h-3.5" fill={isPinned ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5m-10.5 0h10.5m-10.5 0l.75-10.5h9l.75 10.5" />
+              </svg>
+              {isPinned ? 'Unpin drop' : 'Pin drop'}
+            </button>
+          )}
         </div>
       </>
     );
@@ -106,22 +114,24 @@ export function DropContextMenu({ x, y, isPinned, onPin, onUnpin, onClose, theme
         onContextMenu={stopEvent}
         style={{ left: `${adjustedPos.x}px`, top: `${adjustedPos.y}px` }}
       >
-        <button
-          onClick={handlePin}
-          className={`w-full px-3 py-2 text-left flex items-center gap-2 transition-colors ${
-            isMinimal
-              ? `text-xs font-sans tracking-wide text-[#1A1A1A] hover:bg-[#1A1A1A]/10`
-              : `text-[10px] font-mono uppercase tracking-wider ${isDark ? 'text-white hover:bg-white/10' : 'text-[#1A1A1A] hover:bg-[#1A1A1A]/10'}`
-          }`}
-        >
-          <svg className="w-3.5 h-3.5" fill={isPinned ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5m-10.5 0h10.5m-10.5 0l.75-10.5h9l.75 10.5" />
-          </svg>
-          {isMinimal
-            ? (isPinned ? 'Unpin drop' : 'Pin drop')
-            : (isPinned ? 'UNPIN_DROP' : 'PIN_DROP')
-          }
-        </button>
+        {!pinBlocked && (
+          <button
+            onClick={handlePin}
+            className={`w-full px-3 py-2 text-left flex items-center gap-2 transition-colors ${
+              isMinimal
+                ? `text-xs font-sans tracking-wide text-[#1A1A1A] hover:bg-[#1A1A1A]/10`
+                : `text-[10px] font-mono uppercase tracking-wider ${isDark ? 'text-white hover:bg-white/10' : 'text-[#1A1A1A] hover:bg-[#1A1A1A]/10'}`
+            }`}
+          >
+            <svg className="w-3.5 h-3.5" fill={isPinned ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5m-10.5 0h10.5m-10.5 0l.75-10.5h9l.75 10.5" />
+            </svg>
+            {isMinimal
+              ? (isPinned ? 'Unpin drop' : 'Pin drop')
+              : (isPinned ? 'UNPIN_DROP' : 'PIN_DROP')
+            }
+          </button>
+        )}
       </div>
     </>
   );

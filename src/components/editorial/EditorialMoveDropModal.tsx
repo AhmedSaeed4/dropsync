@@ -4,9 +4,11 @@ import { useState } from 'react';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useModalBackClose } from '@/hooks/useModalBackClose';
 import { useUserTier } from '@/hooks/useUserTier';
+import { useAuth } from '@/hooks/useAuth';
 import { Drop, Workspace } from '@/types';
 import { getEditorialThemeColors } from './editorialTheme';
 import { ForeverLockedModal } from '../ForeverLockedModal';
+import { LockedActionButton } from '../LockedActionButton';
 
 interface EditorialMoveDropModalProps {
   drops: Drop | Drop[];
@@ -29,6 +31,8 @@ export function EditorialMoveDropModal({ drops: dropsProp, workspaces, currentWo
   const [loading, setLoading] = useState(false);
   const [showForeverLocked, setShowForeverLocked] = useState(false);
   const { tier, loading: tierLoading } = useUserTier();
+  const { user } = useAuth();
+  const currentUserId = user?.uid ?? null;
   // Back closes only when not mid move/copy (matches the disabled X/backdrop).
   useModalBackClose(true, () => { if (!loading) onClose(); });
 
@@ -43,6 +47,11 @@ export function EditorialMoveDropModal({ drops: dropsProp, workspaces, currentWo
 
   const allSameWorkspace = dropList.every(d => d.workspaceId === firstDrop.workspaceId);
   const isSameLocation = selectedWorkspaceId === firstDrop.workspaceId;
+  // A locked drop can only be moved by its creator or the workspace owner. In Move mode, if any
+  // selected drop is unmovable by this user, the submit button fades (LockedActionButton) instead
+  // of running — Copy mode is never blocked (a copy is a fresh open drop).
+  const moveBlocked = mode === 'move' && dropList.some((d) => d.locked && currentUserId !== d.userId &&
+    currentUserId !== (d.workspaceId ? workspaces.find(w => w.id === d.workspaceId)?.ownerId : undefined));
 
   const handleSubmit = async () => {
     if (isSameLocation) return;
@@ -212,31 +221,48 @@ export function EditorialMoveDropModal({ drops: dropsProp, workspaces, currentWo
           >
             Cancel
           </button>
-          <button
-            onClick={handleSubmit}
-            disabled={isSameLocation || loading}
-            className={`px-4 py-2 text-sm rounded-lg disabled:opacity-50 flex items-center gap-2 ${tc.activePillBg} ${tc.activePillText} hover:opacity-90 transition-opacity ${tc.fontClass}`}
-          >
-            {loading ? (
-              <>
-                <div className={`w-4 h-4 border border-white/30 border-t-white animate-spin rounded-full`} />
-                {mode === 'copy' ? 'Copying...' : 'Moving...'}
-              </>
-            ) : (
-              <>
-                {mode === 'copy' ? (
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                  </svg>
-                ) : (
+          {moveBlocked ? (
+            <LockedActionButton
+              context="move"
+              variant="editorial"
+              theme={theme}
+              className={`px-4 py-2 text-sm rounded-lg flex items-center gap-2 ${tc.activePillBg} ${tc.activePillText} transition-opacity ${tc.fontClass}`}
+              icon={
+                <>
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M3 7.5L7.5 3m0 0L12 7.5M7.5 3v13.5M12 16.5l4.5-4.5m0 0L21 16.5M16.5 12V3" />
                   </svg>
-                )}
-                {mode === 'copy' ? 'Copy' : 'Move'}
-              </>
-            )}
-          </button>
+                  Move
+                </>
+              }
+            />
+          ) : (
+            <button
+              onClick={handleSubmit}
+              disabled={isSameLocation || loading}
+              className={`px-4 py-2 text-sm rounded-lg disabled:opacity-50 flex items-center gap-2 ${tc.activePillBg} ${tc.activePillText} hover:opacity-90 transition-opacity ${tc.fontClass}`}
+            >
+              {loading ? (
+                <>
+                  <div className={`w-4 h-4 border border-white/30 border-t-white animate-spin rounded-full`} />
+                  {mode === 'copy' ? 'Copying...' : 'Moving...'}
+                </>
+              ) : (
+                <>
+                  {mode === 'copy' ? (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                  ) : (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 7.5L7.5 3m0 0L12 7.5M7.5 3v13.5M12 16.5l4.5-4.5m0 0L21 16.5M16.5 12V3" />
+                    </svg>
+                  )}
+                  {mode === 'copy' ? 'Copy' : 'Move'}
+                </>
+              )}
+            </button>
+          )}
         </div>
       </div>
       {showForeverLocked && (

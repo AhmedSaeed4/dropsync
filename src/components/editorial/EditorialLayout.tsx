@@ -109,7 +109,7 @@ interface EditorialLayoutProps {
   editDrop: Drop | null;
   setEditDrop: (d: Drop | null) => void;
   handleEditDrop: (drop: Drop) => void;
-  handleEditSubmit: (drop: Drop, updates: { name?: string; content?: string; category?: string | null; expirationOption?: ExpirationOption; imageFile?: File | null; imageRemoved?: boolean }) => Promise<boolean>;
+  handleEditSubmit: (drop: Drop, updates: { name?: string; content?: string; category?: string | null; expirationOption?: ExpirationOption; imageFile?: File | null; imageRemoved?: boolean; locked?: boolean }) => Promise<boolean>;
 }
 
 export function EditorialLayout(props: EditorialLayoutProps) {
@@ -355,6 +355,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
       {previewDrop && (
         <EditorialPreviewModal
           drop={previewDrop}
+          canMutate={!!user && (user.uid === previewDrop.userId || (!!currentWorkspace && user.uid === currentWorkspace.ownerId))}
           onClose={() => {
             setPreviewDrop(null);
             setPreviewLoading(false);
@@ -397,6 +398,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
           onEdit={handleEditSubmit}
           currentUserId={user?.uid}
           mentionableDrops={drops}
+          canMutate={!!user && !!editDrop && (user.uid === editDrop.userId || (!!currentWorkspace && user.uid === currentWorkspace.ownerId))}
         />
       )}
 

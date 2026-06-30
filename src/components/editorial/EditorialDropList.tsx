@@ -1075,6 +1075,7 @@ export function EditorialDropList({
                     selectionMode={selectionMode}
                     theme={theme}
                     currentUserId={currentUserId}
+                    canMutate={!!currentUserId && (currentUserId === drop.userId || (!!currentWorkspace && currentUserId === currentWorkspace.ownerId))}
                     onPin={handlePinDrop}
                     onUnpin={handlePinDrop}
                     allDrops={allDrops}
@@ -1094,6 +1095,7 @@ export function EditorialDropList({
                       selectionMode={selectionMode}
                       theme={theme}
                       currentUserId={currentUserId}
+                      canMutate={!!currentUserId && (currentUserId === drop.userId || (!!currentWorkspace && currentUserId === currentWorkspace.ownerId))}
                       onPin={handlePinDrop}
                       onUnpin={handlePinDrop}
                       allDrops={allDrops}
@@ -1126,6 +1128,7 @@ export function EditorialDropList({
                         selectionMode={selectionMode}
                         theme={theme}
                         currentUserId={currentUserId}
+                        canMutate={!!currentUserId && (currentUserId === drop.userId || (!!currentWorkspace && currentUserId === currentWorkspace.ownerId))}
                         onPin={handlePinDrop}
                         onUnpin={handlePinDrop}
                         allDrops={allDrops}
@@ -1156,6 +1159,7 @@ export function EditorialDropList({
                     selectionMode={selectionMode}
                     theme={theme}
                     currentUserId={currentUserId}
+                    canMutate={!!currentUserId && (currentUserId === drop.userId || (!!currentWorkspace && currentUserId === currentWorkspace.ownerId))}
                     onPin={handlePinDrop}
                     onUnpin={handlePinDrop}
                     allDrops={allDrops}

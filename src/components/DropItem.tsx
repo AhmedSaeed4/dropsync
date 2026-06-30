@@ -9,6 +9,7 @@ import { DropMentionContent } from './DropMentionContent';
 import { useState, useEffect } from 'react';
 import { useVideoThumbnail } from '@/hooks/useVideoThumbnail';
 import { DropContextMenu, useContextMenu } from './DropContextMenu';
+import { LockedActionButton } from './LockedActionButton';
 
 interface DropItemProps {
   drop: Drop;
@@ -24,6 +25,8 @@ interface DropItemProps {
   onUnpin?: (drop: Drop) => void;
   // Current space's drops — used to resolve #[Name](id) mention chips inline.
   allDrops?: Drop[];
+  // Creator/workspace owner — may still delete a locked drop. Non-creators see a faded gate.
+  canMutate?: boolean;
 }
 
 function isTextFile(drop: Drop): boolean {
@@ -47,7 +50,7 @@ function getFileContent(drop: Drop): string {
   return '';
 }
 
-export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect, selectionMode, theme = 'light', currentUserId, onPin, onUnpin, allDrops = [] }: DropItemProps) {
+export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect, selectionMode, theme = 'light', currentUserId, onPin, onUnpin, allDrops = [], canMutate = false }: DropItemProps) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [copied, setCopied] = useState(false);
   const [decryptedContent, setDecryptedContent] = useState<string>('');
@@ -302,6 +305,14 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
           PIN
         </div>
       )}
+      {/* Lock badge — top-right (PIN is top-left) so a pinned+locked drop shows both. */}
+      {drop.locked && (
+        <div className={`absolute top-0 right-0 z-10 px-1.5 py-0.5 flex items-center ${isMinimal ? 'bg-[#1A1A1A]/80 text-[#D4D8C8]' : isDark ? 'bg-white/80 text-[#1A1A1A]' : 'bg-[#FF5A47] text-white'}`} title="Locked">
+          <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+            <path d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+          </svg>
+        </div>
+      )}
       <div className="flex items-stretch min-w-0 overflow-hidden">
         {/* Selection checkbox or icon */}
         {selectionMode ? (
@@ -460,7 +471,19 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
               )}
             </button>
             {/* Delete button with inline confirmation */}
-            {confirmDelete ? (
+            {drop.locked && !canMutate ? (
+              <LockedActionButton
+                context="delete"
+                variant="classic"
+                theme={theme}
+                className={`w-12 h-full flex items-center justify-center ${tc.textMuted} transition-colors`}
+                icon={
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                    <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                }
+              />
+            ) : confirmDelete ? (
               <div className="flex items-center h-full">
                 <button
                   onClick={handleCancelDelete}
@@ -522,6 +545,8 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
           onUnpin={() => onUnpin?.(drop)}
           onClose={closeMenu}
           theme={theme}
+          locked={!!drop.locked}
+          canMutate={canMutate}
         />
       )}
     </div>

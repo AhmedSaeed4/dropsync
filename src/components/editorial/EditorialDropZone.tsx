@@ -6,6 +6,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useUserTier } from '@/hooks/useUserTier';
 import { EditorialTextModal } from './EditorialTextModal';
 import { ForeverLockedModal } from '../ForeverLockedModal';
+import { Tooltip } from '../Tooltip';
 import { ExpirationOption, Drop } from '@/types';
 import { getEditorialThemeColors } from './editorialTheme';
 
@@ -49,6 +50,8 @@ export function EditorialDropZone({
   const [showTextModal, setShowTextModal] = useState(false);
   const [expiration, setExpiration] = useState<ExpirationOption>('2h');
   const [showForeverLocked, setShowForeverLocked] = useState(false);
+  // Open/Locked toggle for shared-workspace drops. Defaults Open; hidden for personal drops (Phase 3).
+  const [locked, setLocked] = useState(false);
   const { tier, loading: tierLoading } = useUserTier();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -69,7 +72,8 @@ export function EditorialDropZone({
           expiration,
           workspaceId,
           workspaceMembers,
-          creatorName
+          creatorName,
+          locked
         );
         if (result.error) {
           setError(result.error);
@@ -77,7 +81,7 @@ export function EditorialDropZone({
       }
       setUploading(false);
     },
-    [user, expiration, workspaceId, workspaceMembers]
+    [user, expiration, workspaceId, workspaceMembers, locked]
   );
 
   // --- Drag & Drop ---
@@ -122,7 +126,8 @@ export function EditorialDropZone({
     category?: string,
     imageFile?: File,
     categories?: string[],
-    isDrawing?: boolean
+    isDrawing?: boolean,
+    locked: boolean = false
   ) => {
     if (!user) return;
     const creatorName =
@@ -139,7 +144,8 @@ export function EditorialDropZone({
       creatorName,
       imageFile,
       categories,
-      isDrawing
+      isDrawing,
+      locked
     );
     setUploading(false);
     setShowTextModal(false);
@@ -298,31 +304,59 @@ export function EditorialDropZone({
               )}
             </div>
 
-            {/* Expiry selector */}
+            {/* Expiry + lock toggle — one row: expiry pills left, Open/Locked far right (workspace-only). */}
             <div className={`border-t ${tc.border} transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${showChat ? 'pt-4' : 'pt-6'}`}>
-              <p className={`text-xs ${tc.fontClass} ${tc.muted} mb-3 tracking-wider uppercase`}>Expires after</p>
-              <div className="flex gap-2 flex-wrap">
-                {EXPIRATION_OPTIONS.map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (option.value === 'forever' && tier === 'standard' && !tierLoading) {
-                        setShowForeverLocked(true);
-                        return;
-                      }
-                      setExpiration(option.value);
-                    }}
-                    className={`${tc.fontClass} rounded-full border transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${
-                      expiration === option.value
-                        ? `${tc.activePillBg} ${tc.activePillText} ${tc.border}`
-                        : `bg-transparent ${tc.text} ${tc.border} ${tc.hoverBorder}`
-                    } ${showChat ? 'px-3 py-1.5 text-xs' : 'px-4 py-2 text-sm'}`}
-                  >
-                    {option.label}
-                  </button>
-                ))}
+              <div className="flex items-end justify-between gap-4">
+                <div>
+                  <p className={`text-xs ${tc.fontClass} ${tc.muted} mb-2 tracking-wider uppercase`}>Expires after</p>
+                  <div className="flex gap-2 flex-wrap">
+                    {EXPIRATION_OPTIONS.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (option.value === 'forever' && tier === 'standard' && !tierLoading) {
+                            setShowForeverLocked(true);
+                            return;
+                          }
+                          setExpiration(option.value);
+                        }}
+                        className={`${tc.fontClass} rounded-full border transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${
+                          expiration === option.value
+                            ? `${tc.activePillBg} ${tc.activePillText} ${tc.border}`
+                            : `bg-transparent ${tc.text} ${tc.border} ${tc.hoverBorder}`
+                        } ${showChat ? 'px-3 py-1.5 text-xs' : 'px-4 py-2 text-sm'}`}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {workspaceId && (
+                  <Tooltip content={locked ? 'Locked — only the creator can edit' : 'Open — anyone can edit'}>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); setLocked(!locked); }}
+                      aria-label={locked ? 'Locked — only the creator can edit' : 'Open — anyone can edit'}
+                      className={`flex items-center justify-center ${tc.fontClass} rounded-full border transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${
+                        locked
+                          ? `${tc.activePillBg} ${tc.activePillText} ${tc.border}`
+                          : `bg-transparent ${tc.text} ${tc.border} ${tc.hoverBorder}`
+                      } ${showChat ? 'px-3 py-1.5 text-xs' : 'px-4 py-2 text-sm'}`}
+                    >
+                      {locked ? (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                        </svg>
+                      ) : (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
+                        </svg>
+                      )}
+                    </button>
+                  </Tooltip>
+                )}
               </div>
             </div>
           </>
@@ -367,6 +401,7 @@ export function EditorialDropZone({
           customCategories={customCategories}
           onCreateCategory={onCreateCategory}
           mentionableDrops={mentionableDrops}
+          isWorkspace={!!workspaceId}
         />
       )}
 

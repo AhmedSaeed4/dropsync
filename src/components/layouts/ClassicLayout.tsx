@@ -109,7 +109,7 @@ interface ClassicLayoutProps {
   editDrop: Drop | null;
   setEditDrop: (d: Drop | null) => void;
   handleEditDrop: (drop: Drop) => void;
-  handleEditSubmit: (drop: Drop, updates: { name?: string; content?: string; category?: string | null; expirationOption?: ExpirationOption; imageFile?: File | null; imageRemoved?: boolean }) => Promise<boolean>;
+  handleEditSubmit: (drop: Drop, updates: { name?: string; content?: string; category?: string | null; expirationOption?: ExpirationOption; imageFile?: File | null; imageRemoved?: boolean; locked?: boolean }) => Promise<boolean>;
 }
 
 export function ClassicLayout(props: ClassicLayoutProps) {
@@ -377,6 +377,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
       {previewDrop && (
         <PreviewModal
           drop={previewDrop}
+          canMutate={!!user && (user.uid === previewDrop.userId || (!!currentWorkspace && user.uid === currentWorkspace.ownerId))}
           onClose={() => {
             setPreviewDrop(null);
             setPreviewLoading(false);
@@ -419,6 +420,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
           onEdit={handleEditSubmit}
           currentUserId={user?.uid}
           mentionableDrops={drops}
+          canMutate={!!user && !!editDrop && (user.uid === editDrop.userId || (!!currentWorkspace && user.uid === currentWorkspace.ownerId))}
         />
       )}
 
