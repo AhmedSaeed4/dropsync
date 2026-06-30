@@ -507,6 +507,7 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
                   selectionMode={selectionMode}
                   theme={theme}
                   currentUserId={currentUserId}
+                  canMutate={!!currentUserId && (currentUserId === drop.userId || (!!currentWorkspace && currentUserId === currentWorkspace.ownerId))}
                   onPin={handlePinDrop}
                   onUnpin={handlePinDrop}
                   allDrops={allDrops}

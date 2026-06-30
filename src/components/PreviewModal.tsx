@@ -9,6 +9,7 @@ import { createShare } from '@/lib/shares';
 import { downloadBinaryFromUrl } from '@/lib/download';
 import { contentToPlainText } from '@/lib/dropTagUtils';
 import { DropMentionContent } from './DropMentionContent';
+import { LockedActionButton } from './LockedActionButton';
 
 interface PreviewModalProps {
   drop: Drop;
@@ -20,6 +21,8 @@ interface PreviewModalProps {
   // Current space's drops — resolve #[Name](id) chips inline; clicking swaps the preview.
   allDrops?: Drop[];
   onPreview?: (drop: Drop) => void;
+  // Creator/workspace owner — may still Edit/Move a locked drop. Non-creators see faded gates.
+  canMutate?: boolean;
 }
 
 function isTextFile(drop: Drop): boolean {
@@ -30,7 +33,7 @@ function isTextFile(drop: Drop): boolean {
          textExtensions.some(ext => drop.name.toLowerCase().endsWith(ext));
 }
 
-export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false, onEdit, onMove, allDrops = [], onPreview }: PreviewModalProps) {
+export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false, onEdit, onMove, allDrops = [], onPreview, canMutate = false }: PreviewModalProps) {
   useBodyScrollLock();
   useModalBackClose(true, onClose);
   const [copied, setCopied] = useState(false);
@@ -506,7 +509,7 @@ export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false
               {isMinimal ? 'Save' : 'SAVE'}
             </button>
           )}
-          {/* Move button */}
+          {/* Move button — opens the move/copy modal for everyone (Copy is reachable via the in-modal toggle). */}
           {onMove && (
             <button
               onClick={() => onMove(drop)}
@@ -520,18 +523,37 @@ export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false
           )}
           {/* Edit button */}
           {onEdit && (
-            <button
-              onClick={() => onEdit(drop)}
-              className={`border ${tc.borderColor} ${tc.textColor} px-3 py-1.5 sm:px-5 sm:py-2 text-xs tracking-wider hover:bg-[#1A1A1A] hover:text-white transition-colors flex items-center gap-2 ${isMinimal ? 'rounded-full' : ''}`}
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
-              </svg>
-              {drop.isDrawing
-                ? (isMinimal ? 'Edit drawing' : 'EDIT_DRAWING')
-                : (isMinimal ? 'Edit' : 'EDIT')
-              }
-            </button>
+            drop.locked && !canMutate ? (
+              <LockedActionButton
+                context="edit"
+                variant="classic"
+                theme={theme}
+                className={`border ${tc.borderColor} ${tc.textColor} px-3 py-1.5 sm:px-5 sm:py-2 text-xs tracking-wider transition-colors flex items-center gap-2 ${isMinimal ? 'rounded-full' : ''}`}
+                icon={
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+                    </svg>
+                    {drop.isDrawing
+                      ? (isMinimal ? 'Edit drawing' : 'EDIT_DRAWING')
+                      : (isMinimal ? 'Edit' : 'EDIT')}
+                  </>
+                }
+              />
+            ) : (
+              <button
+                onClick={() => onEdit(drop)}
+                className={`border ${tc.borderColor} ${tc.textColor} px-3 py-1.5 sm:px-5 sm:py-2 text-xs tracking-wider hover:bg-[#1A1A1A] hover:text-white transition-colors flex items-center gap-2 ${isMinimal ? 'rounded-full' : ''}`}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+                </svg>
+                {drop.isDrawing
+                  ? (isMinimal ? 'Edit drawing' : 'EDIT_DRAWING')
+                  : (isMinimal ? 'Edit' : 'EDIT')
+                }
+              </button>
+            )
           )}
           {drop.type === 'file' && drop.fileData && (
             <button

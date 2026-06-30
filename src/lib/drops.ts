@@ -104,6 +104,7 @@ export function createDropListener(
           creatorName: data.creatorName || undefined,
           pinned: data.pinned || false,
           isDrawing: data.isDrawing || false,
+          locked: data.locked || false,
           fileFormat: data.fileFormat,
         });
       }
@@ -141,7 +142,8 @@ export async function createTextDrop(
   creatorName?: string,
   imageFile?: File,
   categories?: string[],
-  isDrawing?: boolean
+  isDrawing?: boolean,
+  locked: boolean = false
 ): Promise<Drop | null> {
   try {
     const now = new Date();
@@ -230,6 +232,7 @@ export async function createTextDrop(
       expiresAt: expiresAt ? Timestamp.fromDate(expiresAt) : null,
       expirationOption,
       workspaceId,
+      locked,
       category: null,
       categories: categories && categories.length > 0 ? categories : (category ? [category] : []),
     };
@@ -296,6 +299,7 @@ export async function createTextDrop(
       category,
       creatorName: workspaceId ? creatorName : undefined,
       isDrawing: isDrawing || false,
+      locked,
     };
   } catch (error) {
     console.error('Error creating text drop:', error);
@@ -309,7 +313,8 @@ export async function createFileDrop(
   expirationOption: ExpirationOption = '2h',
   workspaceId: string | null = null,
   workspaceMembers?: string[],
-  creatorName?: string
+  creatorName?: string,
+  locked: boolean = false
 ): Promise<{ drop: Drop | null; error?: string }> {
   try {
     // Check file size (NOW UP TO 50MB instead of 800KB)
@@ -423,6 +428,7 @@ export async function createFileDrop(
       expiresAt: expiresAt ? Timestamp.fromDate(expiresAt) : null,
       expirationOption,
       workspaceId,
+      locked,
     };
 
     // Add R2 URL and key (NEW)
@@ -484,6 +490,7 @@ export async function createFileDrop(
         encryptedDEK,
         fileFormat,
         creatorName: workspaceId ? creatorName : undefined,
+        locked,
       }
     };
   } catch (error) {
@@ -499,6 +506,7 @@ export async function updateDropMetadata(
     category?: string | null;
     categories?: string[];
     expirationOption?: ExpirationOption;
+    locked?: boolean;
   }
 ): Promise<boolean> {
   try {
@@ -513,6 +521,10 @@ export async function updateDropMetadata(
       updateData.category = null;
     } else if (updates.category !== undefined) {
       updateData.category = updates.category || null;
+    }
+    // Lock state — write only when the caller explicitly passes it (never default/synthesize).
+    if (updates.locked !== undefined) {
+      updateData.locked = updates.locked;
     }
     // Hoisted so it stays in scope for the best-effort share-expiry sync below. getExpirationDate
     // only runs when the expiry is actually changing, so this is behavior-identical to before.
@@ -548,6 +560,7 @@ export async function updateTextDrop(
     expirationOption?: ExpirationOption;
     imageFile?: File | null;
     imageRemoved?: boolean;
+    locked?: boolean;
   },
   currentUserId: string
 ): Promise<boolean> {
@@ -565,6 +578,10 @@ export async function updateTextDrop(
       updateData.category = null;
     } else if (updates.category !== undefined) {
       updateData.category = updates.category || null;
+    }
+    // Lock state — write only when the caller explicitly passes it (never default/synthesize).
+    if (updates.locked !== undefined) {
+      updateData.locked = updates.locked;
     }
     // Hoisted so it stays in scope for the best-effort share-expiry sync after updateDoc.
     // getExpirationDate only runs when the expiry is actually changing.
@@ -1467,6 +1484,7 @@ export async function copyDrop(
       expirationOption: copyExpiration,
       workspaceId: targetWorkspaceId,
       pinned: false,
+      locked: false, // a copy always starts open — the lock never transfers
       category: null,
       categories: [],
     };

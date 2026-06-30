@@ -12,16 +12,20 @@ import { DropPickerRow } from './DropPickerRow';
 import { useMentionEditor } from '@/hooks/useMentionEditor';
 
 interface TextModalProps {
-  onSubmit: (name: string, content: string, expiration: ExpirationOption, category?: string, imageFile?: File, categories?: string[], isDrawing?: boolean) => Promise<void>;
+  onSubmit: (name: string, content: string, expiration: ExpirationOption, category?: string, imageFile?: File, categories?: string[], isDrawing?: boolean, locked?: boolean) => Promise<void>;
   onClose: () => void;
   theme?: 'light' | 'dark' | 'minimal';
   customCategories?: string[];
   onCreateCategory?: (name: string) => Promise<string | null>;
   editDrop?: Drop | null;
-  onEdit?: (drop: Drop, updates: { name?: string; content?: string; category?: string | null; categories?: string[]; expirationOption?: ExpirationOption; imageFile?: File | null; imageRemoved?: boolean }) => Promise<boolean>;
+  onEdit?: (drop: Drop, updates: { name?: string; content?: string; category?: string | null; categories?: string[]; expirationOption?: ExpirationOption; imageFile?: File | null; imageRemoved?: boolean; locked?: boolean }) => Promise<boolean>;
   currentUserId?: string;
   // Drops in the current space, used for the #-mention autocomplete in the content field.
   mentionableDrops?: Drop[];
+  // Whether the create flow is for a shared workspace (the lock toggle is workspace-only).
+  isWorkspace?: boolean;
+  // Creator/workspace owner — may toggle the lock on an existing workspace drop in edit mode.
+  canMutate?: boolean;
 }
 
 const EXPIRATION_OPTIONS: { value: ExpirationOption; label: string }[] = [
@@ -37,7 +41,7 @@ const BUILT_IN_CATEGORIES = [
   { value: 'link', label: 'Link' },
 ];
 
-export function TextModal({ onSubmit, onClose, theme = 'light', customCategories = [], onCreateCategory, editDrop, onEdit, currentUserId, mentionableDrops = [] }: TextModalProps) {
+export function TextModal({ onSubmit, onClose, theme = 'light', customCategories = [], onCreateCategory, editDrop, onEdit, currentUserId, mentionableDrops = [], isWorkspace = false, canMutate = false }: TextModalProps) {
   useBodyScrollLock();
   useModalBackClose(true, onClose);
   const isEditMode = !!editDrop;
@@ -47,6 +51,14 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
   const [expiration, setExpiration] = useState<ExpirationOption>(editDrop?.expirationOption || '2h');
   const [showForeverLocked, setShowForeverLocked] = useState(false);
   const [foreverContext, setForeverContext] = useState<'create' | 'edit'>('create');
+  // Open/Locked toggle — create mode + shared workspace only. Edit-mode toggling is Phase 4.
+  const [locked, setLocked] = useState(false);
+  // Edit mode seeds the toggle from the drop being edited; create mode keeps the Open default.
+  useEffect(() => {
+    if (isEditMode && editDrop) {
+      setLocked(editDrop.locked ?? false);
+    }
+  }, [isEditMode, editDrop]);
   const { tier, loading: tierLoading } = useUserTier();
   const [selectedCategories, setSelectedCategories] = useState<string[]>(
     editDrop?.categories || (editDrop?.category ? [editDrop.category] : [])
@@ -67,6 +79,9 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
   const isDark = theme === 'dark';
   const isMinimal = theme === 'minimal';
   const isFileDrop = isEditMode && editDrop?.type === 'file';
+  // Show the toggle for a new shared-workspace drop, or when editing one as creator/owner
+  // (canMutate). Personal drops and non-creator edits never show it.
+  const showLockToggle = (!isEditMode && isWorkspace) || (isEditMode && canMutate && !!editDrop?.workspaceId);
   const [mode, setMode] = useState<'text' | 'draw'>(
     isEditMode && editDrop?.isDrawing ? 'draw' : 'text'
   );
@@ -169,9 +184,12 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
         expirationOption: expiration,
         imageFile: imageToUpload,
         imageRemoved: imageRemoved,
+        // Only creator/owner may send locked — a non-creator edit must omit it or the rules'
+        // field-guard rejects the save.
+        ...(canMutate ? { locked } : {}),
       });
     } else {
-      await onSubmit(name.trim() || (isMinimal ? 'Text snippet' : 'TEXT_SNIPPET'), content, expiration, selectedCategories[0] || undefined, imageToUpload, selectedCategories, !!drawingFile);
+      await onSubmit(name.trim() || (isMinimal ? 'Text snippet' : 'TEXT_SNIPPET'), content, expiration, selectedCategories[0] || undefined, imageToUpload, selectedCategories, !!drawingFile, locked);
     }
     setLoading(false);
   };
@@ -283,7 +301,8 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
     (!isFileDrop && content !== (editDrop.content || '')) ||
     !!attachedImage ||
     imageRemoved ||
-    !!drawingFile
+    !!drawingFile ||
+    locked !== (editDrop.locked ?? false)
   ) : true;
 
   const handleModeSwitch = (newMode: 'text' | 'draw') => {
@@ -814,6 +833,42 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
               ))}
             </div>
           </div>
+
+          {/* Lock toggle — create mode (shared workspace) or edit mode (creator/owner). */}
+          {showLockToggle && (
+            <div>
+              <label className={`block ${tc.fontClass} ${tc.textMuted} mb-2`}>
+                {isMinimal ? 'Access' : 'ACCESS'}
+              </label>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setLocked(false)}
+                  className={`px-3 py-2 text-xs ${isMinimal ? 'rounded-full' : ''} border transition-colors ${
+                    !locked
+                      ? 'bg-[#1A1A1A] text-white border-[#1A1A1A]'
+                      : `${tc.borderColor} ${tc.textColor} hover:bg-[#1A1A1A]/10`
+                  }`}
+                >
+                  {isMinimal ? 'Open' : 'OPEN'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLocked(true)}
+                  className={`flex items-center gap-1 px-3 py-2 text-xs ${isMinimal ? 'rounded-full' : ''} border transition-colors ${
+                    locked
+                      ? 'bg-[#1A1A1A] text-white border-[#1A1A1A]'
+                      : `${tc.borderColor} ${tc.textColor} hover:bg-[#1A1A1A]/10`
+                  }`}
+                >
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                  </svg>
+                  {isMinimal ? 'Locked' : 'LOCKED'}
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="flex gap-3 pt-2">
             <button

@@ -20,6 +20,39 @@ service cloud.firestore {
           || request.resource.data.expiresAt == null;
     }
 
+    // ---- Locked-drop helpers (apply to update/delete of an existing drop) ----
+    // True if the existing drop is locked (missing field = open, so old drops stay editable).
+    function isLockedDrop() {
+      return resource.data.locked == true;
+    }
+    // Creator of the existing drop.
+    function isDropCreator() {
+      return request.auth != null && request.auth.uid == resource.data.userId;
+    }
+    // Owner of the workspace the existing drop lives in (false for personal drops).
+    function isDropWorkspaceOwner() {
+      return request.auth != null
+        && resource.data.workspaceId != null
+        && exists(/databases/$(database)/documents/workspaces/$(resource.data.workspaceId))
+        && get(/databases/$(database)/documents/workspaces/$(resource.data.workspaceId)).data.ownerId == request.auth.uid;
+    }
+    // A regular member of the drop's workspace (false for personal drops).
+    function isDropWorkspaceMember() {
+      return request.auth != null
+        && resource.data.workspaceId != null
+        && exists(/databases/$(database)/documents/workspaces/$(resource.data.workspaceId))
+        && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(resource.data.workspaceId)).data.members;
+    }
+    // Creator or workspace owner — full control of the drop.
+    function canMutateDrop() {
+      return isDropCreator() || isDropWorkspaceOwner();
+    }
+    // A drop whose timer has already run out. Forever drops (expiresAt null) are never "expired".
+    function isExpiredDrop() {
+      return resource.data.expiresAt != null
+        && resource.data.expiresAt <= request.time;
+    }
+
     // Users collection - field-guarded: read all users; create your own with tier 'standard';
     // update any of your own fields EXCEPT tier; the owner may update ONLY tier.
     match /users/{userId} {
@@ -113,18 +146,19 @@ service cloud.firestore {
           request.auth.uid in get(/databases/$(database)/documents/workspaces/$(resource.data.workspaceId)).data.members)
       );
 
-      // Update - creator or workspace member; forever writes require a trusted tier
-      allow update: if request.auth != null && (
-        request.auth.uid == resource.data.userId ||
-        (resource.data.workspaceId != null &&
-          request.auth.uid in get(/databases/$(database)/documents/workspaces/$(resource.data.workspaceId)).data.members)
-      ) && (!isForeverWrite() || isTrusted());
+      // Update - creator/owner always; a member only if the drop is NOT locked; forever writes still
+      // require a trusted tier; only creator/owner may touch the locked field.
+      allow update: if request.auth != null
+        && (canMutateDrop() || (!isLockedDrop() && isDropWorkspaceMember()))
+        && (!isForeverWrite() || isTrusted())
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['locked']) || canMutateDrop());
 
-      // Delete - creator or current workspace member only (matches read/update trust boundary)
+      // Delete - creator/owner always; a member may delete an open drop OR an already-expired drop
+      // (so cleanup can remove dead locked drops when only members are online). Live locked + forever
+      // drops stay protected.
       allow delete: if request.auth != null && (
-        request.auth.uid == resource.data.userId ||
-        (resource.data.workspaceId != null &&
-          request.auth.uid in get(/databases/$(database)/documents/workspaces/$(resource.data.workspaceId)).data.members)
+        canMutateDrop()
+        || (isDropWorkspaceMember() && (!isLockedDrop() || isExpiredDrop()))
       );
     }
 

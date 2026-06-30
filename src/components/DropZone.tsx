@@ -6,6 +6,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useUserTier } from '@/hooks/useUserTier';
 import { TextModal } from './TextModal';
 import { ForeverLockedModal } from './ForeverLockedModal';
+import { Tooltip } from './Tooltip';
 import { ExpirationOption, Drop } from '@/types';
 
 interface DropZoneProps {
@@ -42,6 +43,8 @@ export function DropZone({
   const [showTextModal, setShowTextModal] = useState(false);
   const [expiration, setExpiration] = useState<ExpirationOption>('2h');
   const [showForeverLocked, setShowForeverLocked] = useState(false);
+  // Open/Locked toggle for shared-workspace drops. Defaults Open; hidden for personal drops (Phase 3).
+  const [locked, setLocked] = useState(false);
   const { tier, loading: tierLoading } = useUserTier();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isDark = theme === 'dark';
@@ -70,14 +73,14 @@ export function DropZone({
       // Use displayName if set, otherwise fall back to email prefix
       const creatorName = user.displayName || user.email?.split('@')[0] || undefined;
       for (const file of files) {
-        const result = await createFileDrop(user.uid, file, expiration, workspaceId, workspaceMembers, creatorName);
+        const result = await createFileDrop(user.uid, file, expiration, workspaceId, workspaceMembers, creatorName, locked);
         if (result.error) {
           setError(result.error);
         }
       }
       setUploading(false);
     }
-  }, [user, expiration, workspaceId, workspaceMembers]);
+  }, [user, expiration, workspaceId, workspaceMembers, locked]);
 
   const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!user || !e.target.files) return;
@@ -89,7 +92,7 @@ export function DropZone({
       // Use displayName if set, otherwise fall back to email prefix
       const creatorName = user.displayName || user.email?.split('@')[0] || undefined;
       for (const file of files) {
-        const result = await createFileDrop(user.uid, file, expiration, workspaceId, workspaceMembers, creatorName);
+        const result = await createFileDrop(user.uid, file, expiration, workspaceId, workspaceMembers, creatorName, locked);
         if (result.error) {
           setError(result.error);
         }
@@ -100,15 +103,15 @@ export function DropZone({
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
-  }, [user, expiration, workspaceId, workspaceMembers]);
+  }, [user, expiration, workspaceId, workspaceMembers, locked]);
 
-  const handleTextSubmit = async (name: string, content: string, textExpiration: ExpirationOption, category?: string, imageFile?: File, categories?: string[], isDrawing?: boolean) => {
+  const handleTextSubmit = async (name: string, content: string, textExpiration: ExpirationOption, category?: string, imageFile?: File, categories?: string[], isDrawing?: boolean, locked: boolean = false) => {
     if (!user) return;
 
     const creatorName = user.displayName || user.email?.split('@')[0] || undefined;
 
     setUploading(true);
-    await createTextDrop(user.uid, name, content, textExpiration, workspaceId, workspaceMembers, category, creatorName, imageFile, categories, isDrawing);
+    await createTextDrop(user.uid, name, content, textExpiration, workspaceId, workspaceMembers, category, creatorName, imageFile, categories, isDrawing, locked);
     setUploading(false);
     setShowTextModal(false);
   };
@@ -143,7 +146,7 @@ export function DropZone({
         setUploading(true);
         const creatorName = user.displayName || user.email?.split('@')[0] || undefined;
         for (const file of imageFiles) {
-          const result = await createFileDrop(user.uid, file, expiration, workspaceId, workspaceMembers, creatorName);
+          const result = await createFileDrop(user.uid, file, expiration, workspaceId, workspaceMembers, creatorName, locked);
           if (result.error) {
             setError(result.error);
           }
@@ -154,7 +157,7 @@ export function DropZone({
 
     document.addEventListener('paste', handlePaste);
     return () => document.removeEventListener('paste', handlePaste);
-  }, [user, uploading, expiration, workspaceId, workspaceMembers, showTextModal, editModalOpen]);
+  }, [user, uploading, expiration, workspaceId, workspaceMembers, showTextModal, editModalOpen, locked]);
 
   // Theme colors
   const getThemeColors = () => {
@@ -267,35 +270,61 @@ export function DropZone({
           )}
         </div>
 
-        {/* Expiration selector */}
+        {/* Expiry + lock toggle — one row: expiry pills left, Open/Locked far right (workspace-only). */}
         <div className={`border-t ${tc.borderColor} px-4 py-3 ${tc.headerBg} transition-colors duration-300`}>
-          <div className="flex items-center justify-between gap-4">
-            <span className={`${tc.fontClass} ${tc.textMuted}`}>
-              {isMinimal ? 'Expires after' : 'EXPIRES_AFTER'}
-            </span>
-            <div className="flex gap-1">
-              {EXPIRATION_OPTIONS.map((option) => (
+          <div className="flex items-end justify-between gap-4">
+            <div>
+              <span className={`${tc.fontClass} ${tc.textMuted} block mb-1`}>
+                {isMinimal ? 'Expires after' : 'EXPIRES_AFTER'}
+              </span>
+              <div className="flex gap-1">
+                {EXPIRATION_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (option.value === 'forever' && tier === 'standard' && !tierLoading) {
+                        setShowForeverLocked(true);
+                        return;
+                      }
+                      setExpiration(option.value);
+                    }}
+                    className={`px-2 py-1 text-xs transition-colors ${
+                      expiration === option.value
+                        ? 'bg-[#1A1A1A] text-white'
+                        : `${tc.textColor} hover:bg-[#1A1A1A]/10`
+                    } ${isMinimal ? 'rounded-full' : ''}`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {workspaceId && (
+              <Tooltip content={locked ? 'Locked — only the creator can edit' : 'Open — anyone can edit'}>
                 <button
-                  key={option.value}
                   type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (option.value === 'forever' && tier === 'standard' && !tierLoading) {
-                      setShowForeverLocked(true);
-                      return;
-                    }
-                    setExpiration(option.value);
-                  }}
-                  className={`px-2 py-1 text-xs transition-colors ${
-                    expiration === option.value
+                  onClick={(e) => { e.stopPropagation(); setLocked(!locked); }}
+                  aria-label={locked ? 'Locked — only the creator can edit' : 'Open — anyone can edit'}
+                  className={`flex items-center justify-center px-2 py-1 text-xs transition-colors ${
+                    locked
                       ? 'bg-[#1A1A1A] text-white'
                       : `${tc.textColor} hover:bg-[#1A1A1A]/10`
                   } ${isMinimal ? 'rounded-full' : ''}`}
                 >
-                  {option.label}
+                  {locked ? (
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                    </svg>
+                  ) : (
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
+                    </svg>
+                  )}
                 </button>
-              ))}
-            </div>
+              </Tooltip>
+            )}
           </div>
         </div>
 
@@ -346,6 +375,7 @@ export function DropZone({
           customCategories={customCategories}
           onCreateCategory={onCreateCategory}
           mentionableDrops={mentionableDrops}
+          isWorkspace={!!workspaceId}
         />
       )}
 

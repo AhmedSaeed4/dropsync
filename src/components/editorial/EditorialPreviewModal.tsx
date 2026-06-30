@@ -10,6 +10,7 @@ import { downloadBinaryFromUrl } from '@/lib/download';
 import { contentToPlainText } from '@/lib/dropTagUtils';
 import { getEditorialThemeColors } from './editorialTheme';
 import { DropMentionContent } from '../DropMentionContent';
+import { LockedActionButton } from '../LockedActionButton';
 
 const YOUTUBE_PLAYER_TRANSITION = 'transition-[grid-template-rows] duration-300 ease-in-out';
 
@@ -23,6 +24,8 @@ interface EditorialPreviewModalProps {
   // Current space's drops — resolve #[Name](id) chips inline; clicking swaps the preview.
   allDrops?: Drop[];
   onPreview?: (drop: Drop) => void;
+  // Creator/workspace owner — may still Edit/Move a locked drop. Non-creators see faded gates.
+  canMutate?: boolean;
 }
 
 function isTextFile(drop: Drop): boolean {
@@ -33,7 +36,7 @@ function isTextFile(drop: Drop): boolean {
          textExtensions.some(ext => drop.name.toLowerCase().endsWith(ext));
 }
 
-export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoading = false, onEdit, onMove, allDrops = [], onPreview }: EditorialPreviewModalProps) {
+export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoading = false, onEdit, onMove, allDrops = [], onPreview, canMutate = false }: EditorialPreviewModalProps) {
   useBodyScrollLock();
   useModalBackClose(true, onClose);
   const [copied, setCopied] = useState(false);
@@ -471,7 +474,7 @@ export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoadin
               </button>
             )}
 
-            {/* Move button */}
+            {/* Move button — opens the move/copy modal for everyone (Copy is reachable via the in-modal toggle). */}
             {onMove && (
               <button
                 onClick={() => onMove(drop)}
@@ -487,16 +490,33 @@ export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoadin
 
             {/* Edit button */}
             {onEdit && (
-              <button
-                onClick={() => onEdit(drop)}
-                className={`flex items-center gap-2 px-2 sm:px-4 py-2 rounded-md border ${tc.border} ${tc.text} hover:border-[#1a1a1a] transition-all text-sm ${tc.fontClass}`}
-                title="Edit"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
-                </svg>
-                <span className="hidden sm:inline">{drop.isDrawing ? 'Edit drawing' : 'Edit'}</span>
-              </button>
+              drop.locked && !canMutate ? (
+                <LockedActionButton
+                  context="edit"
+                  variant="editorial"
+                  theme={theme}
+                  className={`flex items-center gap-2 px-2 sm:px-4 py-2 rounded-md border ${tc.border} ${tc.text} transition-all text-sm ${tc.fontClass}`}
+                  icon={
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+                      </svg>
+                      <span className="hidden sm:inline">{drop.isDrawing ? 'Edit drawing' : 'Edit'}</span>
+                    </>
+                  }
+                />
+              ) : (
+                <button
+                  onClick={() => onEdit(drop)}
+                  className={`flex items-center gap-2 px-2 sm:px-4 py-2 rounded-md border ${tc.border} ${tc.text} hover:border-[#1a1a1a] transition-all text-sm ${tc.fontClass}`}
+                  title="Edit"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+                  </svg>
+                  <span className="hidden sm:inline">{drop.isDrawing ? 'Edit drawing' : 'Edit'}</span>
+                </button>
+              )
             )}
           </div>
 

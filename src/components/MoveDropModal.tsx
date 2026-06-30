@@ -4,8 +4,10 @@ import { useState } from 'react';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useModalBackClose } from '@/hooks/useModalBackClose';
 import { useUserTier } from '@/hooks/useUserTier';
+import { useAuth } from '@/hooks/useAuth';
 import { Drop, Workspace } from '@/types';
 import { ForeverLockedModal } from './ForeverLockedModal';
+import { LockedActionButton } from './LockedActionButton';
 
 interface MoveDropModalProps {
   drops: Drop | Drop[];
@@ -28,6 +30,8 @@ export function MoveDropModal({ drops: dropsProp, workspaces, currentWorkspaceId
   const [loading, setLoading] = useState(false);
   const [showForeverLocked, setShowForeverLocked] = useState(false);
   const { tier, loading: tierLoading } = useUserTier();
+  const { user } = useAuth();
+  const currentUserId = user?.uid ?? null;
   // Back closes only when not mid move/copy (matches the disabled X/backdrop).
   useModalBackClose(true, () => { if (!loading) onClose(); });
   const isDark = theme === 'dark';
@@ -42,6 +46,11 @@ export function MoveDropModal({ drops: dropsProp, workspaces, currentWorkspaceId
 
   const allSameWorkspace = dropList.every(d => d.workspaceId === firstDrop.workspaceId);
   const isSameLocation = selectedWorkspaceId === firstDrop.workspaceId;
+  // A locked drop can only be moved by its creator or the workspace owner. In Move mode, if any
+  // selected drop is unmovable by this user, the submit button fades (LockedActionButton) instead
+  // of running — Copy mode is never blocked (a copy is a fresh open drop).
+  const moveBlocked = mode === 'move' && dropList.some((d) => d.locked && currentUserId !== d.userId &&
+    currentUserId !== (d.workspaceId ? workspaces.find(w => w.id === d.workspaceId)?.ownerId : undefined));
 
   const handleSubmit = async () => {
     if (isSameLocation) return;
@@ -281,33 +290,50 @@ export function MoveDropModal({ drops: dropsProp, workspaces, currentWorkspaceId
           >
             {isMinimal ? 'Cancel' : 'CANCEL'}
           </button>
-          <button
-            onClick={handleSubmit}
-            disabled={isSameLocation || loading}
-            className={`px-4 py-2 text-xs tracking-wider text-white transition-colors disabled:opacity-50 flex items-center gap-2 ${
-              isMinimal ? 'bg-[#1A1A1A] rounded-full hover:bg-[#2A2A2A]' : 'bg-[#FF5A47] hover:bg-[#e04a38]'
-            }`}
-          >
-            {loading ? (
-              <>
-                <div className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                {isMinimal ? (mode === 'copy' ? 'Copying...' : 'Moving...') : (mode === 'copy' ? 'COPYING...' : 'MOVING...')}
-              </>
-            ) : (
-              <>
-                {mode === 'copy' ? (
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                  </svg>
-                ) : (
+          {moveBlocked ? (
+            <LockedActionButton
+              context="move"
+              variant="classic"
+              theme={theme}
+              className={`px-4 py-2 text-xs tracking-wider text-white transition-colors flex items-center gap-2 ${isMinimal ? 'bg-[#1A1A1A] rounded-full' : 'bg-[#FF5A47]'}`}
+              icon={
+                <>
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M3 7.5L7.5 3m0 0L12 7.5M7.5 3v13.5M12 16.5l4.5-4.5m0 0L21 16.5M16.5 12V3" />
                   </svg>
-                )}
-                {isMinimal ? (mode === 'copy' ? 'Copy' : 'Move') : (mode === 'copy' ? 'COPY' : 'MOVE')}
-              </>
-            )}
-          </button>
+                  {isMinimal ? 'Move' : 'MOVE'}
+                </>
+              }
+            />
+          ) : (
+            <button
+              onClick={handleSubmit}
+              disabled={isSameLocation || loading}
+              className={`px-4 py-2 text-xs tracking-wider text-white transition-colors disabled:opacity-50 flex items-center gap-2 ${
+                isMinimal ? 'bg-[#1A1A1A] rounded-full hover:bg-[#2A2A2A]' : 'bg-[#FF5A47] hover:bg-[#e04a38]'
+              }`}
+            >
+              {loading ? (
+                <>
+                  <div className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                  {isMinimal ? (mode === 'copy' ? 'Copying...' : 'Moving...') : (mode === 'copy' ? 'COPYING...' : 'MOVING...')}
+                </>
+              ) : (
+                <>
+                  {mode === 'copy' ? (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                  ) : (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 7.5L7.5 3m0 0L12 7.5M7.5 3v13.5M12 16.5l4.5-4.5m0 0L21 16.5M16.5 12V3" />
+                    </svg>
+                  )}
+                  {isMinimal ? (mode === 'copy' ? 'Copy' : 'Move') : (mode === 'copy' ? 'COPY' : 'MOVE')}
+                </>
+              )}
+            </button>
+          )}
         </div>
       </div>
       {showForeverLocked && (
