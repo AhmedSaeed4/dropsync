@@ -10,6 +10,7 @@ import { useState, useEffect, useRef, memo } from 'react';
 import { useVideoThumbnail } from '@/hooks/useVideoThumbnail';
 import { getEditorialThemeColors } from './editorialTheme';
 import { DropContextMenu, useContextMenu } from '../DropContextMenu';
+import { LockedHintTooltip } from '../LockedHintTooltip';
 import { LockedActionButton } from '../LockedActionButton';
 
 interface EditorialDropItemProps {
@@ -737,6 +738,12 @@ export const EditorialDropItem = memo(function EditorialDropItem({
           locked={!!drop.locked}
           canMutate={canMutate}
         />
+      )}
+
+      {/* Locked hint: when the menu is suppressed (locked drop, non-creator), show a brief
+          auto-dismissing hint at the gesture point instead of a silent dead-end. */}
+      {menuState && drop.locked && !canMutate && (
+        <LockedHintTooltip x={menuState.x} y={menuState.y} onClose={closeMenu} />
       )}
     </div>
   );
