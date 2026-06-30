@@ -23,7 +23,7 @@ service cloud.firestore {
     // ---- Locked-drop helpers (apply to update/delete of an existing drop) ----
     // True if the existing drop is locked (missing field = open, so old drops stay editable).
     function isLockedDrop() {
-      return resource.data.locked == true;
+      return 'locked' in resource.data && resource.data.locked == true;
     }
     // Creator of the existing drop.
     function isDropCreator() {

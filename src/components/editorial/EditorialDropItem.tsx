@@ -724,7 +724,7 @@ export const EditorialDropItem = memo(function EditorialDropItem({
       )}
 
       {/* Context menu */}
-      {menuState && (
+      {menuState && !(drop.locked && !canMutate) && (
         <DropContextMenu
           x={menuState.x}
           y={menuState.y}
