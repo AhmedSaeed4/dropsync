@@ -536,7 +536,7 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
       )}
 
       {/* Context menu */}
-      {menuState && (
+      {menuState && !(drop.locked && !canMutate) && (
         <DropContextMenu
           x={menuState.x}
           y={menuState.y}
