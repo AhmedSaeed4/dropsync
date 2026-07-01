@@ -67,6 +67,18 @@ service cloud.firestore {
           && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['tier']))
       );
       allow delete: if request.auth != null && request.auth.uid == userId;
+
+      // Per-device FCM push tokens (push foundation). The doc id is the token string. A user may
+      // create/delete only their own token docs; reads are closed (the server reads tokens via the
+      // Admin SDK in a later stage, which bypasses these rules). No updates allowed.
+      match /fcmTokens/{token} {
+        allow read: if false;
+        allow create: if request.auth != null && request.auth.uid == userId
+                        && request.resource.data.uid == userId
+                        && request.resource.data.token == token;
+        allow delete: if request.auth != null && request.auth.uid == userId;
+        allow update: if false;
+      }
     }
 
     // Config collection (config/owner holds the owner uid). Readable by any authenticated user

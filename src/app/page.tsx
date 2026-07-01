@@ -25,10 +25,11 @@ import {
   requestNotificationPermission,
   showChatNotification,
   registerChatServiceWorker,
+  ensureFcmToken,
 } from '@/lib/notifications';
 import { reauthenticateUser } from '@/lib/auth';
 import { db } from '@/lib/firebase';
-import { collection, query, orderBy, limit, onSnapshot, getDocs, Timestamp } from 'firebase/firestore';
+import { collection, query, orderBy, limit, onSnapshot, getDocs, getDoc, doc, updateDoc, Timestamp } from 'firebase/firestore';
 
 type Theme = 'light' | 'dark' | 'minimal';
 type LayoutMode = 'classic' | 'editorial';
@@ -95,6 +96,11 @@ export default function Home() {
   const [notifMuted, setNotifMuted] = useState(false);
   const notifAskedOnce = useRef(false);
   const viewingGroupChatRef = useRef(false);
+  // Opens the group chat (optionally switching to a tapped workspace) — held in a ref so the stable
+  // service-worker message listener always calls the latest version without re-subscribing.
+  const openChatFromTapRef = useRef<(workspaceId?: string) => void>(() => {});
+  // Guards the /?chat=<id> deep link so it runs once, not after the user has navigated.
+  const deepLinkHandledRef = useRef(false);
   const [resolvedWorkspaceMembers, setResolvedWorkspaceMembers] = useState<MemberInfo[]>([]);
 
   // Auto-close auth modal when user successfully logs in
@@ -409,14 +415,25 @@ export default function Home() {
 
   // --- Foreground desktop chat notifications (separate from the unread counter) ---
 
-  // Init permission + mute pref from browser/localStorage (SSR-safe).
+  // Init notif permission (sync) + the per-device "asked once" UX flag (localStorage). The mute flag
+  // is server-honored (Part B), so it lives on the user doc and is loaded below once the user is known.
   useEffect(() => {
     setNotifPermission(getNotificationPermission());
     try {
-      if (localStorage.getItem('chat-notif-muted') === 'true') setNotifMuted(true);
       if (localStorage.getItem('chat-notif-asked') === 'true') notifAskedOnce.current = true;
     } catch {}
   }, []);
+
+  // Load the server-honored mute flag from users/{uid}.notifMuted so the foreground gate and the push
+  // route agree on the same value across all of the user's devices.
+  useEffect(() => {
+    if (!user) { setNotifMuted(false); return; }
+    let cancelled = false;
+    getDoc(doc(db, 'users', user.uid))
+      .then((snap) => { if (!cancelled) setNotifMuted(!!snap.data()?.notifMuted); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [user]);
 
   // Re-read permission when Settings opens (can change in browser site settings).
   useEffect(() => {
@@ -424,8 +441,10 @@ export default function Home() {
   }, [showSettingsModal]);
 
   const persistMuted = (v: boolean) => {
-    setNotifMuted(v);
-    try { localStorage.setItem('chat-notif-muted', String(v)); } catch {}
+    setNotifMuted(v); // optimistic so the foreground gate updates instantly
+    if (user) {
+      updateDoc(doc(db, 'users', user.uid), { notifMuted: v }).catch(() => {});
+    }
   };
 
   // Toggle handler for the Settings switch: requests permission if still 'default',
@@ -493,8 +512,10 @@ export default function Home() {
 
         // Re-check permission at fire time (can change outside the app).
         if (getNotificationPermission() !== 'granted') continue;
-        // Only notify when NOT actively viewing the group chat OR the tab is hidden.
-        if (viewingGroupChatRef.current && !document.hidden) continue;
+        // Only notify when the tab is VISIBLE and NOT actively viewing the chat. When the tab is
+        // hidden, defer to the FCM push (which fires for backgrounded/closed tabs) — otherwise both
+        // fire and the user gets a double notification for one message.
+        if (document.hidden || viewingGroupChatRef.current) continue;
         // Throttle: max one notification per 3 seconds (spam control).
         if (Date.now() - lastNotifiedAt < 3000) continue;
         lastNotifiedAt = Date.now();
@@ -513,20 +534,63 @@ export default function Home() {
     };
   }, [user, currentWorkspaceId, notifsActive, currentWorkspace?.name]);
 
-  // Register the chat service worker once on mount (Android mobile only — no-op on desktop,
-  // which must never register a SW).
+  // Register the chat + FCM service worker once on mount (all platforms except iOS Safari).
   useEffect(() => {
     registerChatServiceWorker();
   }, []);
 
-  // Open the group chat when the service worker reports a notification tap (mobile path).
-  // Desktop notifications open the chat directly via the Notification onclick handler instead.
+  // Register this device for push (FCM token) on app load when notifications are already granted,
+  // so returning users who previously allowed them still register. Needs a signed-in user (the
+  // token is stored under their uid); foreground permission grants re-call ensureFcmToken() too.
+  useEffect(() => {
+    if (!user) return;
+    if (isNotificationsSupported() && getNotificationPermission() === 'granted') {
+      void ensureFcmToken();
+    }
+  }, [user]);
+
+  // Keep openChatFromTapRef pointing at the latest "switch workspace (if a member) + open chat"
+  // logic, so the stable SW message listener below always calls a current closure.
+  useEffect(() => {
+    openChatFromTapRef.current = (workspaceId?: string) => {
+      if (
+        workspaceId &&
+        user &&
+        workspaces.some((w) => w.id === workspaceId && (w.members ?? []).includes(user.uid))
+      ) {
+        switchWorkspace(workspaceId);
+      }
+      setChatMode('group');
+      setShowChat(true);
+    };
+  }, [user, workspaces, switchWorkspace]);
+
+  // Deep-link from a notification tap that launched the app: /?chat=<workspaceId>. Switch to that
+  // workspace (if a member) and open the group chat. We mark "handled" ONLY once the chat actually
+  // opens (or when there's no chat param) — if the target workspace isn't loaded yet we return
+  // WITHOUT setting the flag, so this retries on the next workspaces change instead of silently
+  // giving up on a fresh app load (the race that left the chat panel closed after a tap).
+  useEffect(() => {
+    if (deepLinkHandledRef.current || !user || workspacesLoading) return;
+    const chatWsId = new URLSearchParams(window.location.search).get('chat');
+    if (!chatWsId) { deepLinkHandledRef.current = true; return; }
+    const isMember = workspaces.some((w) => w.id === chatWsId && (w.members ?? []).includes(user.uid));
+    if (!isMember) return; // workspace not hydrated yet (or no access) — retry on the next workspaces change
+    switchWorkspace(chatWsId);
+    setChatMode('group');
+    setShowChat(true);
+    deepLinkHandledRef.current = true;
+  }, [user, workspaces, workspacesLoading, switchWorkspace]);
+
+  // Open the group chat when the service worker reports a notification tap. workspaceId (from the
+  // push's data) switches to that workspace first. Desktop foreground notifications have no
+  // workspaceId and fall back to just opening the chat.
   useEffect(() => {
     if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return;
     const handler = (event: Event) => {
-      if ((event as MessageEvent).data?.type === 'OPEN_CHAT') {
-        setChatMode('group');
-        setShowChat(true);
+      const data = (event as MessageEvent).data;
+      if (data?.type === 'OPEN_CHAT') {
+        openChatFromTapRef.current(data.workspaceId);
       }
     };
     navigator.serviceWorker.addEventListener('message', handler);

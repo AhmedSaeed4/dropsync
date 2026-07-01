@@ -20,6 +20,7 @@ import {
   Timestamp,
   writeBatch,
 } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
 import { db } from './firebase';
 import { encryptData, decryptData } from './crypto';
 import { getWorkspaceKey } from './keys';
@@ -134,6 +135,25 @@ export async function sendGroupMessage(
         createdAt: serverTimestamp(),
       },
     );
+
+    // Fire-and-forget push (Stage 2): notify every OTHER member with registered devices. Runs in
+    // the background — must NEVER block, delay, or fail the message send, so it's fully isolated
+    // (its own try/catch, not awaited by this function). Only fires when addDoc produced an id.
+    if (docRef.id) {
+      void (async () => {
+        try {
+          const idToken = await getAuth().currentUser?.getIdToken();
+          if (!idToken) return;
+          await fetch('/api/notify-chat-message', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ workspaceId, messageId: docRef.id, senderId: userId, senderName }),
+          });
+        } catch {
+          // Push is best-effort — never surface a failure to the chat.
+        }
+      })();
+    }
 
     return docRef.id;
   } catch (error) {
