@@ -15,6 +15,7 @@ import {
 } from 'firebase/auth';
 import { doc, setDoc, serverTimestamp, getDoc } from 'firebase/firestore';
 import { auth, db } from './firebase';
+import { clearFcmToken } from './notifications';
 import { User } from '@/types';
 
 const provider = new GoogleAuthProvider();
@@ -56,6 +57,11 @@ export async function signInWithGoogle(): Promise<User | null> {
 }
 
 export async function signOut(): Promise<void> {
+  // Remove this device's push token BEFORE signing out, while still authenticated, so a shared
+  // computer stops receiving this user's notifications. Best-effort — clearFcmToken never throws.
+  try {
+    await clearFcmToken();
+  } catch {}
   try {
     await firebaseSignOut(auth);
   } catch (error) {
