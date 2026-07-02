@@ -41,6 +41,14 @@ export function subscribeToGroupMessages(
   // Cache the workspace key so we don't re-fetch on every snapshot tick
   let cachedKey: CryptoKey | null = null;
   let keyFetched = false;
+  // Cancellation flag. The onSnapshot callback below is async and awaits getWorkspaceKey before it
+  // invokes the panel callback; Firestore's unsubscribe() cannot cancel an already-suspended async
+  // callback. Without this, a rapid workspace switch (A→B→C within B's key-fetch window) could let
+  // an orphaned B callback resume and deliver B's messages into a panel now viewing C — which would
+  // let a stale message list overwrite the WRONG workspace's read state (silent unread suppression).
+  // Setting this on teardown and re-checking after the await guarantees a torn-down subscription
+  // never delivers messages.
+  let cancelled = false;
 
   const q = query(
     collection(db, 'workspaces', workspaceId, 'messages'),
@@ -48,12 +56,16 @@ export function subscribeToGroupMessages(
     limit(MAX_MESSAGES),
   );
 
-  return onSnapshot(q, async (snapshot) => {
+  const unsubscribe = onSnapshot(q, async (snapshot) => {
+    if (cancelled) return;
     // Fetch workspace key once (or reuse cached)
     if (!keyFetched) {
       cachedKey = await getWorkspaceKey(workspaceId, userId);
       keyFetched = true;
     }
+    // Re-check after the await — the subscription may have been torn down while we were suspended
+    // (e.g. a rapid workspace switch). Never deliver a stale workspace's messages to the panel.
+    if (cancelled) return;
 
     const messages: GroupChatMessage[] = [];
 
@@ -101,8 +113,13 @@ export function subscribeToGroupMessages(
   }, (error) => {
     // Permission denied = user left workspace or doesn't have access
     console.error('Group chat subscription error:', error.message);
-    callback([]);
+    if (!cancelled) callback([]);
   });
+
+  return () => {
+    cancelled = true;
+    unsubscribe();
+  };
 }
 
 /**
@@ -214,11 +231,21 @@ export async function getLastRead(workspaceId: string, userId: string): Promise<
 }
 
 /**
- * Mark everything up to NOW as read — server timestamp. Use on chat open/close.
+ * Mark everything as read up to the newest message the user has seen. Pass `newestSeenCreatedAt`
+ * (an already-resolved message Timestamp) so lastReadAt shares the same time base as the messages
+ * it is compared against — no independent serverTimestamp() resolution, hence no cross-write clock
+ * skew that could leave the newest message falsely counted as unread (Cause C). Falls back to
+ * serverTimestamp() only when no message is available (e.g. an empty workspace, or a caller with
+ * no message context). Backward-compatible: lastReadAt stays a Timestamp field; existing readState
+ * docs keep working and pick up the derived value on the next mark-read.
  */
-export async function markWorkspaceChatRead(workspaceId: string, userId: string): Promise<void> {
+export async function markWorkspaceChatRead(
+  workspaceId: string,
+  userId: string,
+  newestSeenCreatedAt?: Timestamp,
+): Promise<void> {
   const ref = doc(db, 'workspaces', workspaceId, 'readState', userId);
-  await setDoc(ref, { lastReadAt: serverTimestamp() }, { merge: true });
+  await setDoc(ref, { lastReadAt: newestSeenCreatedAt ?? serverTimestamp() }, { merge: true });
 }
 
 /**
