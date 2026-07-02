@@ -94,7 +94,10 @@ export default function Home() {
   // Default: notifications ON once permission is granted (mute flag = off).
   const [notifPermission, setNotifPermission] = useState<NotificationPermission>('default');
   const [notifMuted, setNotifMuted] = useState(false);
-  const notifAskedOnce = useRef(false);
+  // Session-only guard for the chat-open permission prompt. Resets on every page load (NO
+  // localStorage), so accounts created before the push feature get prompted again instead of being
+  // permanently skipped. Only caps the prompt at once-per-tab-session.
+  const chatNotifPromptedRef = useRef(false);
   const viewingGroupChatRef = useRef(false);
   // Opens the group chat (optionally switching to a tapped workspace) — held in a ref so the stable
   // service-worker message listener always calls the latest version without re-subscribing.
@@ -415,13 +418,11 @@ export default function Home() {
 
   // --- Foreground desktop chat notifications (separate from the unread counter) ---
 
-  // Init notif permission (sync) + the per-device "asked once" UX flag (localStorage). The mute flag
-  // is server-honored (Part B), so it lives on the user doc and is loaded below once the user is known.
+  // Init notif permission (sync). The mute flag is server-honored, so it lives on the user doc and is
+  // loaded below once the user is known. The chat-open prompt now uses a session-only ref (no
+  // permanent "already asked" flag), so there is nothing to restore from localStorage here.
   useEffect(() => {
     setNotifPermission(getNotificationPermission());
-    try {
-      if (localStorage.getItem('chat-notif-asked') === 'true') notifAskedOnce.current = true;
-    } catch {}
   }, []);
 
   // Load the server-honored mute flag from users/{uid}.notifMuted so the foreground gate and the push
@@ -447,20 +448,34 @@ export default function Home() {
     }
   };
 
-  // Toggle handler for the Settings switch: requests permission if still 'default',
-  // otherwise flips the mute flag. No-op once permission is 'denied' (can't re-prompt).
+  // The Settings switch is THE reliable way to enable push. Its checked state (computed in
+  // SettingsModal as `permission === 'granted' && !notifMuted`) decides direction:
+  //  - Turning ON: if permission is still 'default', ask for it; then register the device token
+  //    (ensureFcmToken) and unmute. Works identically for brand-new AND pre-push accounts (which
+  //    were previously stuck with no prompt → no grant → no token).
+  //  - Turning OFF: mute only — never changes the permission.
+  // 'denied' can't reach here (the switch is disabled for it) but is guarded anyway.
   const handleToggleNotifications = async () => {
     const current = getNotificationPermission();
     setNotifPermission(current);
     if (!isNotificationsSupported()) return;
     if (current === 'denied') return;
-    if (current === 'default') {
-      const result = await requestNotificationPermission();
-      setNotifPermission(result);
-      if (result === 'granted') persistMuted(false); // ensure ON
-      return;
+
+    const isOn = current === 'granted' && !notifMuted; // mirrors the switch's checked state
+    if (!isOn) {
+      // Turning ON.
+      if (current === 'default') {
+        const result = await requestNotificationPermission();
+        setNotifPermission(result);
+        if (result !== 'granted') return; // dismissed or denied → stay off, don't register/unmute
+      }
+      // permission is now 'granted' (was already granted, or just granted above)
+      void ensureFcmToken();
+      persistMuted(false);
+    } else {
+      // Turning OFF.
+      persistMuted(true);
     }
-    persistMuted(!notifMuted);
   };
 
   // Keep a ref so the notif listener reads the latest "actively viewing?" value
@@ -601,10 +616,12 @@ export default function Home() {
   // Passed down as onToggleChat so the layout chat buttons hit this (and thus the
   // Option B notification-permission prompt) instead of an inline handler.
   const handleToggleChat = useCallback(() => {
-    // Ask for notification permission once on first chat open (user gesture).
-    if (!showChat && isNotificationsSupported() && !notifAskedOnce.current && getNotificationPermission() === 'default') {
-      notifAskedOnce.current = true;
-      try { localStorage.setItem('chat-notif-asked', 'true'); } catch {}
+    // Ask for notification permission on the first chat open of the session (user gesture), so
+    // accounts that predate the push feature get prompted instead of being silently skipped. The
+    // guard is session-only (plain ref, resets every page load — NO localStorage), so it caps at one
+    // prompt per tab session but never permanently suppresses old accounts.
+    if (!showChat && !chatNotifPromptedRef.current && isNotificationsSupported() && getNotificationPermission() === 'default') {
+      chatNotifPromptedRef.current = true;
       requestNotificationPermission().then(p => setNotifPermission(p));
     }
     if (!showChat && unreadCount > 0) {

@@ -20,11 +20,6 @@ import { doc, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { getToken, deleteToken } from 'firebase/messaging';
 import { db, messaging } from './firebase';
 
-// localStorage key recording the FCM token we last registered on this device, so registration is
-// idempotent across reloads (see ensureFcmToken). The token is already client-accessible (the SDK
-// holds it in IndexedDB); storing it here adds no new exposure.
-const FCM_TOKEN_KEY = 'dropsync-fcm-token';
-
 /** True where the Notification API exists (guards SSR). */
 export function isNotificationsSupported(): boolean {
   return typeof window !== 'undefined' && 'Notification' in window;
@@ -130,10 +125,13 @@ export async function registerChatServiceWorker(): Promise<void> {
 
 /**
  * Register this device for FCM push and persist its token at users/{uid}/fcmTokens/{token}
- * (the doc id is the token string). Idempotent: getToken returns the existing token while the SW
- * grant is valid, and re-writing the same doc id just refreshes createdAt. Fire-and-forget from
- * callers — it never throws. No-ops without a VAPID key (warns), without a signed-in user, on
- * iOS Safari, or where serviceWorker/messaging is unavailable.
+ * (the doc id is the token string). Always attempts the write: if the doc is ABSENT this CREATEs it
+ * (re-registers — e.g. after a stale-token cleanup deleted it); if it EXISTS the rule blocks the
+ * UPDATE (permission-denied) and we treat that as "already registered" (silent). We deliberately do
+ * NOT cache "already registered" in localStorage — that flag goes stale if the doc is ever deleted,
+ * which would make us skip the write and never recreate the token. Fire-and-forget from callers — it
+ * never throws. No-ops without a VAPID key (warns), without a signed-in user, on iOS Safari, or
+ * where serviceWorker/messaging is unavailable.
  *
  * The VAPID public key comes from NEXT_PUBLIC_VAPID_KEY (added by the operator). If it is
  * missing we log a warning and bail out instead of letting getToken throw, so the app keeps
@@ -160,25 +158,19 @@ export async function ensureFcmToken(): Promise<void> {
     const token = await getToken(messaging, { vapidKey, serviceWorkerRegistration });
     if (!token) return;
 
-    // Idempotent registration: only write when this exact token isn't already registered on this
-    // device. The Firestore rule allows CREATE of your own token doc but blocks read AND update
-    // (`allow read: if false`, `allow update: if false`) — so we can't check existence server-side, and
-    // a reload that re-runs setDoc would be treated as an update and throw "permission-denied" (the
-    // reload warning this fixes). We remember the last registered token in localStorage instead. A
-    // permission-denied on the write (doc already exists — e.g. first load after this change, before
-    // the flag is set) is treated as "already registered".
-    let alreadyRegistered = false;
-    try { alreadyRegistered = localStorage.getItem(FCM_TOKEN_KEY) === token; } catch {}
-    if (!alreadyRegistered) {
-      const tokenDocRef = doc(db, 'users', uid, 'fcmTokens', token);
-      try {
-        await setDoc(tokenDocRef, { uid, token, createdAt: serverTimestamp() });
-      } catch (writeErr) {
-        // permission-denied ⟹ the doc already exists (create is allowed for your own token) ⟹ already
-        // registered. Anything else is a real error → rethrow to the outer catch.
-        if ((writeErr as { code?: string }).code !== 'permission-denied') throw writeErr;
-      }
-      try { localStorage.setItem(FCM_TOKEN_KEY, token); } catch {}
+    // Always write the token doc. If it's ABSENT this CREATEs it (re-registers — e.g. after a
+    // stale-token cleanup deleted it). If it EXISTS this is an UPDATE, which the rule blocks
+    // (`allow update: if false`) → permission-denied → swallowed below as "already registered" (no
+    // reload warning). Any other error is rethrown to the outer catch. No localStorage "already
+    // registered" flag: it goes stale when the doc is deleted, which would make us skip the write
+    // and never recreate the token (the bug this fixes).
+    const tokenDocRef = doc(db, 'users', uid, 'fcmTokens', token);
+    try {
+      await setDoc(tokenDocRef, { uid, token, createdAt: serverTimestamp() });
+    } catch (writeErr) {
+      // permission-denied ⟹ doc already exists (create is allowed for your own token) ⟹ silently registered.
+      // Anything else is a real error → rethrow to the outer catch.
+      if ((writeErr as { code?: string }).code !== 'permission-denied') throw writeErr;
     }
   } catch (e) {
     console.warn('[FCM] Could not register push token:', e);
@@ -202,9 +194,6 @@ export async function clearFcmToken(): Promise<void> {
     if (!token) return;
     await deleteDoc(doc(db, 'users', uid, 'fcmTokens', token));
     await deleteToken(messaging);
-    // Clear the local "registered" flag so a later sign-in re-registers (getToken mints a fresh
-    // token after deleteToken).
-    try { localStorage.removeItem(FCM_TOKEN_KEY); } catch {}
   } catch {
     // best-effort — never throw to the caller
   }
