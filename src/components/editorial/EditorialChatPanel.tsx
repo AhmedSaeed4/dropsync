@@ -14,6 +14,7 @@ import {
   ChatMessage,
 } from '@/lib/chat';
 import { subscribeToGroupMessages, sendGroupMessage, deleteGroupMessage, clearGroupChat } from '@/lib/groupChat';
+import { useInPanelMarkRead } from '@/hooks/useInPanelMarkRead';
 import { Drop, GroupChatMessage } from '@/types';
 import { getEditorialThemeColors } from './editorialTheme';
 import { parseMessageContent, detectHashtagTrigger } from '@/lib/dropTagUtils';
@@ -217,6 +218,10 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
       }
     };
   }, [chatMode, workspaceId, userId]);
+
+  // Mark group messages read as they're viewed (panel open + tab visible) — closes Cause B of the
+  // phantom-unread glow (messages read while the panel was open but never closed weren't persisted).
+  useInPanelMarkRead(workspaceId, userId, groupMessages);
 
   // Lock body scroll on mobile/tablet when chat is open as overlay
   useEffect(() => {

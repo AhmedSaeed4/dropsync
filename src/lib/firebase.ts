@@ -1,6 +1,12 @@
-import { initializeApp } from 'firebase/app';
+import { initializeApp, type FirebaseApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import {
+  getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+  type Firestore,
+} from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import { getMessaging } from 'firebase/messaging';
 
@@ -16,7 +22,28 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+
+// Browser: enable IndexedDB-backed Firestore persistence (multi-tab aware) so in-flight writes —
+// chiefly the chat mark-read write at workspaces/{ws}/readState/{uid} — survive a tab close /
+// device sleep / dropped connection and are replayed on the next load. Without it Firestore is
+// memory-only: a mark-read write that doesn't finish before the tab dies is lost, and already-read
+// messages recount as unread on the next cold start (the phantom-unread-glow bug). This is paired
+// with a flush-on-hidden handler (page.tsx) and awaiting the mark-read write.
+// Server/SSR: IndexedDB does not exist during prerender, so use plain getFirestore(app) there.
+// initializeFirestore throws if Firestore is already initialized for this app (e.g. HMR
+// re-evaluating this module) — on throw, getFirestore(app) returns the already-initialized
+// (persistent) instance, so the call is idempotent across hot reloads.
+function initPersistentDb(firebaseApp: FirebaseApp): Firestore {
+  try {
+    return initializeFirestore(firebaseApp, {
+      localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+    });
+  } catch {
+    return getFirestore(firebaseApp);
+  }
+}
+
+export const db = typeof window !== 'undefined' ? initPersistentDb(app) : getFirestore(app);
 export const storage = getStorage(app);
 
 // Firebase Cloud Messaging instance (web push). Browser-only: getMessaging(app) touches browser

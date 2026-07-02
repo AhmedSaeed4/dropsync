@@ -29,7 +29,7 @@ import {
 } from '@/lib/notifications';
 import { reauthenticateUser } from '@/lib/auth';
 import { db } from '@/lib/firebase';
-import { collection, query, orderBy, limit, onSnapshot, getDocs, getDoc, doc, updateDoc, Timestamp } from 'firebase/firestore';
+import { collection, query, orderBy, limit, onSnapshot, getDocs, getDoc, doc, updateDoc, waitForPendingWrites, Timestamp } from 'firebase/firestore';
 
 type Theme = 'light' | 'dark' | 'minimal';
 type LayoutMode = 'classic' | 'editorial';
@@ -338,17 +338,60 @@ export default function Home() {
     return () => { cancelled = true; };
   }, [currentWorkspace?.id]);
 
-  // Mark as read when chat opens/closes (MUST come before unread listener)
+  // Mark as read when chat opens/closes (MUST come before unread listener). AWAITS the Firestore
+  // write and only clears the glow (setUnreadCount(0)) on success — previously the write was
+  // fire-and-forget and setUnreadCount(0) ran immediately, so a write lost to a tab close / device
+  // sleep / dropped connection (before the server round-trip finished) silently cleared the glow
+  // while the read state was never saved → phantom glow on the next cold start. Now a failed write
+  // leaves the glow so the next open retries. The write is also flushed on tab-hidden (next effect)
+  // and persisted via IndexedDB (firebase.ts), so it survives the common close paths.
   useEffect(() => {
     const prevShowChat = prevShowChatRef.current;
     prevShowChatRef.current = showChat;
 
     if (currentWorkspaceId && user && prevShowChat !== showChat) {
-      markWorkspaceChatRead(currentWorkspaceId, user.uid)   // Firestore write (server timestamp)
-        .catch(err => console.error('Failed to mark chat read:', err));
-      setUnreadCount(0);
+      void (async () => {
+        try {
+          // Derive lastReadAt from the newest message's already-resolved createdAt so it shares the
+          // same time base as the messages it is compared against — no independent serverTimestamp
+          // skew that could leave the newest message falsely unread (Cause C). Empty workspace →
+          // no message → markWorkspaceChatRead falls back to serverTimestamp().
+          let newestSeenCreatedAt: Timestamp | undefined;
+          const newestSnap = await getDocs(query(
+            collection(db, 'workspaces', currentWorkspaceId, 'messages'),
+            orderBy('createdAt', 'desc'),
+            limit(1),
+          ));
+          const newest = newestSnap.docs[0];
+          if (newest) newestSeenCreatedAt = newest.data().createdAt as Timestamp | undefined;
+
+          await markWorkspaceChatRead(currentWorkspaceId, user.uid, newestSeenCreatedAt);
+          setUnreadCount(0); // only clear the glow once the write actually committed
+        } catch (err) {
+          // Don't clear the glow on failure — it correctly persists so the next open retries.
+          console.error('Failed to mark chat read:', err);
+        }
+      })();
     }
   }, [showChat, currentWorkspaceId, user]);
+
+  // Flush pending Firestore writes when the tab is hidden / unloaded, so an in-flight mark-read
+  // write (above) is pushed to the backend before the device sleeps or the tab is switched away —
+  // the common close path that previously lost the write. visibilitychange covers backgrounding
+  // (mobile swipe-away, tab switch, minimize); pagehide is belt-and-suspenders for navigation /
+  // close. Non-blocking (fire-and-forget); persistence (firebase.ts) backstops anything still in
+  // flight when the tab is ultimately torn down.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const flush = () => { void waitForPendingWrites(db).catch(() => {}); };
+    const onVisibility = () => { if (document.visibilityState === 'hidden') flush(); };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', flush);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', flush);
+    };
+  }, []);
 
   // Lightweight unread workspace chat counter — no decryption needed
   useEffect(() => {
@@ -398,7 +441,11 @@ export default function Home() {
         if (cancelled) return;                       // ← stale-listener guard
         let count = 0;
         snap.forEach((d) => {
-          const ts = d.data().createdAt as Timestamp | undefined;
+          const data = d.data();
+          // Own messages never count as unread (mirrors the foreground notification listener) —
+          // also defends against createdAt/lastReadAt skew on the user's own messages (Cause C).
+          if (data.senderId === user.uid) return;
+          const ts = data.createdAt as Timestamp | undefined;
           if (ts && ts.toDate() > lastReadTime!) count++;
         });
         setUnreadCount(count);
