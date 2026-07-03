@@ -11,6 +11,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  increment,
   setDoc,
   query,
   orderBy,
@@ -18,6 +19,7 @@ import {
   onSnapshot,
   serverTimestamp,
   Timestamp,
+  updateDoc,
   writeBatch,
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
@@ -81,6 +83,9 @@ export function subscribeToGroupMessages(
           encrypted: !!data.encrypted,
           iv: data.iv || '',
           createdAt: data.createdAt?.toDate() || new Date(),
+          edited: !!data.edited,
+          editedAt: data.editedAt?.toDate() ?? null,
+          editCount: typeof data.editCount === 'number' ? data.editCount : 0,
         });
         continue;
       }
@@ -95,6 +100,9 @@ export function subscribeToGroupMessages(
           encrypted: true,
           iv: data.iv,
           createdAt: data.createdAt?.toDate() || new Date(),
+          edited: !!data.edited,
+          editedAt: data.editedAt?.toDate() ?? null,
+          editCount: typeof data.editCount === 'number' ? data.editCount : 0,
         });
       } catch {
         messages.push({
@@ -105,6 +113,9 @@ export function subscribeToGroupMessages(
           encrypted: true,
           iv: data.iv || '',
           createdAt: data.createdAt?.toDate() || new Date(),
+          edited: !!data.edited,
+          editedAt: data.editedAt?.toDate() ?? null,
+          editCount: typeof data.editCount === 'number' ? data.editCount : 0,
         });
       }
     }
@@ -149,6 +160,8 @@ export async function sendGroupMessage(
         content: encrypted,
         encrypted: true,
         iv,
+        editCount: 0,            // baseline so the update rule's editCount math never hits the
+                                 // missing-field branch for new messages
         createdAt: serverTimestamp(),
       },
     );
@@ -193,6 +206,45 @@ export async function deleteGroupMessage(
     return true;
   } catch (error) {
     console.error('Error deleting group message:', error);
+    return false;
+  }
+}
+
+/**
+ * Edit the sender's OWN message in place (NOT delete+create): updates content/iv with a FRESH
+ * encryption of `newPlaintext` via the workspace key, sets edited/editedAt, and atomically
+ * increments editCount. SILENT — never calls any notify endpoint. `createdAt` is deliberately
+ * omitted so Firestore preserves it: a fresh createdAt would resurrect the phantom-unread glow for
+ * everyone AND re-fire an FCM push (the exact bug we just fixed). Mirrors the drops.ts edit
+ * precedent — one encryptData call writing BOTH content and the fresh iv from that single result
+ * (reusing the old iv is a serious AES-GCM iv-reuse break that leaks plaintext). Server-side
+ * enforcement (sender-only, 24h, 10-edit cap) lives in firestore.rules; the UI only does UX gating.
+ */
+export async function editGroupMessage(
+  workspaceId: string,
+  messageId: string,
+  userId: string,
+  newPlaintext: string,
+): Promise<boolean> {
+  try {
+    const workspaceKey = await getWorkspaceKey(workspaceId, userId);
+    if (!workspaceKey) {
+      console.error('No workspace key available to edit group message');
+      return false;
+    }
+    const { encrypted, iv } = await encryptData(newPlaintext, workspaceKey); // ONE call → fresh iv
+    const ref = doc(db, 'workspaces', workspaceId, 'messages', messageId);
+    await updateDoc(ref, {
+      content: encrypted,
+      iv,
+      encrypted: true,
+      edited: true,
+      editedAt: serverTimestamp(),
+      editCount: increment(1),
+    });
+    return true;
+  } catch (error) {
+    console.error('Error editing group message:', error);
     return false;
   }
 }

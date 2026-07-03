@@ -116,14 +116,48 @@ service cloud.firestore {
           request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members;
         allow create: if request.auth != null &&
           request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members &&
-          request.auth.uid == request.resource.data.senderId;
+          request.auth.uid == request.resource.data.senderId
+          // Trust anchors the update rule relies on — enforced at create so a raw-SDK member can't
+          // forge a malformed message that defeats the 24h window (future-dated createdAt), the
+          // 10-edit cap (editCount < 0), or inject plaintext (encrypted:false). A serverTimestamp()
+          // write resolves to request.time, so legitimate sends (sendGroupMessage) still pass.
+          && request.resource.data.encrypted == true
+          && request.resource.data.editCount == 0
+          && request.resource.data.createdAt == request.time;
         allow delete: if request.auth != null && (
           (request.auth.uid == resource.data.senderId &&
            request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members)
           ||
           request.auth.uid == get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId
         );
-        allow update: if false;
+        // Edit your OWN message only — sender-only (NOT the owner), within 24h, capped at 10 edits.
+        allow update: if request.auth != null
+          // caller IS the EXISTING doc's sender (resource.data = pre-update; senderId cannot be reassigned via payload)
+          && 'senderId' in resource.data
+          && request.auth.uid == resource.data.senderId
+          // still a current member (revoked members lose edit access)
+          && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members
+          // allowlist of mutable keys: senderId/senderName/createdAt/encrypted are NOT here -> immutable.
+          // (also blocks a full set()-replacement, which diffs every key -> hasOnly fails)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['content', 'iv', 'edited', 'editedAt', 'editCount'])
+          // encryption flag stays true in the result (blocks plaintext-injection via encrypted=false)
+          && 'encrypted' in request.resource.data
+          && request.resource.data.encrypted == true
+          // edited flag MUST be true in the result (blocks a stealth edit that changes content/iv but
+          // hides the "(edited)" indicator — locked decision #2; mirrors the encrypted enforcement)
+          && 'edited' in request.resource.data
+          && request.resource.data.edited == true
+          // 24h window in TRUSTED server time vs immutable createdAt (24h = 86,400,000 ms). A message
+          // with null/missing createdAt is DENIED (not allowed) — otherwise a raw-SDK attacker could
+          // create a null-createdAt message and edit it past the 24h lock.
+          && 'createdAt' in resource.data
+          && resource.data.createdAt != null
+          && request.time.toMillis() - resource.data.createdAt.toMillis() <= 86400000
+          // ~10-edit cap: editCount must increment by exactly 1 and prior count < 10
+          && (('editCount' in resource.data)
+              ? (request.resource.data.editCount == resource.data.editCount + 1
+                 && resource.data.editCount < 10)
+              : request.resource.data.editCount == 1);
       }
 
       // Per-user group chat read state - user can only access their own doc, must be a workspace member
