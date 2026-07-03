@@ -14,7 +14,7 @@ import {
   Conversation,
   ChatMessage,
 } from '@/lib/chat';
-import { subscribeToGroupMessages, sendGroupMessage, deleteGroupMessage, clearGroupChat } from '@/lib/groupChat';
+import { subscribeToGroupMessages, sendGroupMessage, editGroupMessage, deleteGroupMessage, clearGroupChat } from '@/lib/groupChat';
 import { useInPanelMarkRead } from '@/hooks/useInPanelMarkRead';
 import { Drop, GroupChatMessage } from '@/types';
 import { parseMessageContent, detectHashtagTrigger } from '@/lib/dropTagUtils';
@@ -157,6 +157,9 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [menuMsg, setMenuMsg] = useState<{ msg: GroupChatMessage; x: number; y: number } | null>(null);
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
+  // Inline message editor — editingMsgId === msg.id swaps that bubble's text node for a textarea.
+  const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState('');
   const groupUnsubRef = useRef<(() => void) | null>(null);
   const systemNoticeRef = useRef<HTMLDivElement>(null);
   const hadNoticeRef = useRef(false);
@@ -583,6 +586,40 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
 
   const closeMessageMenu = () => setMenuMsg(null);
 
+  // Inline edit lifecycle. editDraft is seeded from the RAW message content (not the parsed parts) so
+  // #[name](id) attachment mentions survive the round-trip and re-parse correctly after save. Silent:
+  // editGroupMessage never notifies. On failure we revert to the old content (cancel) + log.
+  const startEditing = (msg: GroupChatMessage) => {
+    setMenuMsg(null);
+    setEditingMsgId(msg.id);
+    setEditDraft(msg.content);
+  };
+  const cancelEditing = () => {
+    setEditingMsgId(null);
+    setEditDraft('');
+  };
+  const saveEdit = async (msg: GroupChatMessage) => {
+    if (!workspaceId || !userId) return;
+    const text = editDraft;
+    if (!text.trim()) return; // never persist an empty edit (Save is also disabled while empty)
+    const ok = await editGroupMessage(workspaceId, msg.id, userId, text);
+    if (ok) {
+      setEditingMsgId(null);
+      setEditDraft('');
+    } else {
+      console.error('Failed to edit message');
+      cancelEditing();
+    }
+  };
+
+  // Cancel any open editor when the user leaves this workspace / chat mode — the panel does NOT
+  // remount on a workspace switch (its groupMessages state isn't cleared), so without this an
+  // editingMsgId could outlive the message it points at.
+  useEffect(() => {
+    setEditingMsgId(null);
+    setEditDraft('');
+  }, [workspaceId, chatMode]);
+
   // Scroll a notice into view ONLY when one appears from nothing.
   // Skip the confirm→success/error handoff (card collapsing into a divider):
   // the user is already viewing that spot, and a smooth scroll there chases the
@@ -858,6 +895,47 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
                     onTouchMove={handleMessageTouchMove}
                     onTouchEnd={handleMessageTouchEnd}
                   >
+                    {editingMsgId === msg.id ? (
+                      <div className={`flex flex-col gap-1.5 min-w-[180px] p-1.5 border ${s.inputBorder} ${s.roundedClass} ${s.panelBg}`}>
+                        <textarea
+                          value={editDraft}
+                          onChange={(e) => setEditDraft(e.target.value)}
+                          autoFocus
+                          rows={2}
+                          onClick={(e) => e.stopPropagation()}
+                          onContextMenu={(e) => e.stopPropagation()}
+                          onTouchStart={(e) => e.stopPropagation()}
+                          className={`w-full px-2 py-1.5 text-xs ${s.inputBg} ${s.inputText} ${s.placeholder} ${s.fontClass} resize-none border ${s.inputBorder} ${s.roundedClass} focus:outline-none focus:ring-1 ${s.focusRing}`}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                              e.preventDefault();
+                              saveEdit(msg);
+                            } else if (e.key === 'Escape') {
+                              e.preventDefault();
+                              cancelEditing();
+                            }
+                          }}
+                        />
+                        <div className="flex justify-end gap-1.5">
+                          <button
+                            type="button"
+                            onClick={cancelEditing}
+                            className={`px-2 py-1 text-[10px] ${s.fontClass} border ${s.borderColor} ${s.inputText} ${s.roundedClass} hover:opacity-70`}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => saveEdit(msg)}
+                            disabled={!editDraft.trim()}
+                            className={`px-2 py-1 text-[10px] ${s.fontClass} text-white disabled:opacity-40 ${s.sendBtn} ${s.roundedClass}`}
+                          >
+                            Save
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                    <>
                     {/* Attachment cards */}
                     {tagParts.length > 0 && (
                       <div className="flex flex-wrap gap-1.5 mb-1">
@@ -900,6 +978,11 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
                           <span key={i}>{part.value}</span>
                         ))}
                       </div>
+                    )}
+                    {msg.edited && (
+                      <span className="block text-[9px] opacity-60 mt-0.5">(edited)</span>
+                    )}
+                    </>
                     )}
                   </div>
                   {showSender && (
@@ -967,6 +1050,13 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
               x={menuMsg.x}
               y={menuMsg.y}
               isOwnMessage={menuMsg.msg.senderId === userId}
+              canEdit={
+                !!userId &&
+                menuMsg.msg.senderId === userId &&
+                Date.now() - menuMsg.msg.createdAt.getTime() <= 86_400_000 &&
+                (menuMsg.msg.editCount ?? 0) < 10
+              }
+              onEdit={() => startEditing(menuMsg.msg)}
               onCopy={() => handleCopyMessage(menuMsg.msg)}
               onDelete={() => handleDeleteMessage(menuMsg.msg)}
               onClose={closeMessageMenu}

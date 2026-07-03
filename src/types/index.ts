@@ -84,4 +84,10 @@ export interface GroupChatMessage {
   encrypted: boolean;
   iv: string;
   createdAt: Date;
+  // Edit metadata — optional so pre-edit / legacy messages stay valid. editedAt is DISPLAY-ONLY and
+  // MUST NEVER be used as a comparator in the unread counter, the foreground notification listener,
+  // useInPanelMarkRead, or markWorkspaceChatRead (those stay keyed exclusively on createdAt).
+  edited?: boolean;
+  editedAt?: Date | null;
+  editCount?: number;
 }

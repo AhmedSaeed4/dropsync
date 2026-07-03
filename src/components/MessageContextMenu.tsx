@@ -10,6 +10,8 @@ interface MessageContextMenuProps {
   isOwnMessage: boolean;
   onCopy: () => void;
   onDelete: () => void;
+  onEdit?: () => void;
+  canEdit?: boolean;
   onClose: () => void;
   theme?: 'light' | 'dark' | 'minimal';
   editorial?: boolean;
@@ -21,6 +23,8 @@ export function MessageContextMenu({
   isOwnMessage,
   onCopy,
   onDelete,
+  onEdit,
+  canEdit,
   onClose,
   theme = 'light',
   editorial,
@@ -71,6 +75,13 @@ export function MessageContextMenu({
     onClose();
   };
 
+  const handleEdit = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    onEdit?.();
+    onClose();
+  };
+
   const stopAndClose = (e: React.MouseEvent) => {
     e.stopPropagation();
     e.preventDefault();
@@ -107,6 +118,17 @@ export function MessageContextMenu({
           </svg>
           Copy text
         </button>
+        {canEdit && (
+          <button
+            onClick={handleEdit}
+            className={`w-full px-3 py-2 text-left text-xs ${tc!.fontClass} ${tc!.text} hover:bg-[#1a1a1a]/5 transition-colors flex items-center gap-2`}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125" />
+            </svg>
+            Edit
+          </button>
+        )}
         {isOwnMessage && (
           <button
             onClick={handleDelete}
@@ -150,6 +172,21 @@ export function MessageContextMenu({
           </svg>
           {isMinimal ? 'Copy text' : 'COPY_TEXT'}
         </button>
+        {canEdit && (
+          <button
+            onClick={handleEdit}
+            className={`w-full px-3 py-2 text-left flex items-center gap-2 transition-colors ${
+              isMinimal
+                ? `text-xs font-sans tracking-wide text-[#1A1A1A] hover:bg-[#1A1A1A]/10`
+                : `text-[10px] font-mono uppercase tracking-wider ${isDark ? 'text-white hover:bg-white/10' : 'text-[#1A1A1A] hover:bg-[#1A1A1A]/10'}`
+            }`}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125" />
+            </svg>
+            {isMinimal ? 'Edit' : 'EDIT'}
+          </button>
+        )}
         {isOwnMessage && (
           <button
             onClick={handleDelete}
