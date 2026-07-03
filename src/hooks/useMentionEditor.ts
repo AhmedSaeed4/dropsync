@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import type { KeyboardEvent, FocusEvent, Dispatch, SetStateAction } from 'react';
 import { Drop } from '@/types';
 import { detectHashtagTrigger, parseMessageContent } from '@/lib/dropTagUtils';
@@ -119,6 +119,25 @@ export function useMentionEditor({
   const [showMention, setShowMention] = useState(false);
   const [mentionQuery, setMentionQuery] = useState('');
   const [mentionIndex, setMentionIndex] = useState(0);
+  // Bumped by the setEditorRef callback whenever the contentEditable (re)mounts. Added to the
+  // external→DOM effect's deps so the effect re-runs on remount EVEN IF `content` is unchanged —
+  // which is what happens on a group→AI→group tab switch (the composer's contentEditable is
+  // conditionally rendered on chatMode) or when editing message A then directly editing message B
+  // whose content is identical to A's. Without this, the remounted editor stays blank and the next
+  // keystroke overwrites the preserved draft (data loss).
+  const [mountKey, setMountKey] = useState(0);
+  // Callback ref the chat call sites attach (ref={groupMention.setEditorRef}). It mirrors the node
+  // into the stable object `editorRef` (so .current readers — the always-mounted drop-note editor
+  // AND the chat panels' focus/auto-grow effects — keep working unchanged) AND bumps mountKey on
+  // attach so the sync effect re-runs. The drop-note editor keeps using ref={mention.editorRef}
+  // directly (no callback, never remounts → mountKey stays 0 → no behavior change).
+  const setEditorRef = useCallback((node: HTMLDivElement | null) => {
+    editorRef.current = node;
+    if (node) {
+      lastSerializedRef.current = null;   // force the guard below to see `content` as new
+      setMountKey((k) => k + 1);
+    }
+  }, []);
 
   const filteredMentionDrops = useMemo(() => {
     const q = mentionQuery.toLowerCase().trim();
@@ -131,6 +150,12 @@ export function useMentionEditor({
   // Reset highlight when the query changes.
   useEffect(() => { setMentionIndex(0); }, [mentionQuery]);
 
+  // Clamp the highlight when the filtered list shrinks under an open picker (e.g. the live drops
+  // list changes) so Enter always lands on a valid row instead of a silent no-op past the end.
+  useEffect(() => {
+    setMentionIndex((idx) => Math.max(0, Math.min(idx, filteredMentionDrops.length - 1)));
+  }, [filteredMentionDrops]);
+
   // Keep the highlighted dropdown row in view while arrow-navigating.
   useEffect(() => {
     if (!showMention) return;
@@ -138,20 +163,29 @@ export function useMentionEditor({
     if (el) el.scrollIntoView({ block: 'nearest' });
   }, [mentionIndex, showMention]);
 
-  // EXTERNAL → DOM. Only fires when content changed for reasons other than the user typing
-  // (mount, edit-load, voice append). The guard prevents innerHTML rewrites during typing.
+  // EXTERNAL → DOM. Fires when `content` changes for reasons other than typing (mount, edit-load,
+  // voice appends), OR when the editor (re)mounts (mountKey — see setEditorRef). The guard prevents
+  // innerHTML rewrites during typing (caret-safety).
   useEffect(() => {
     const editor = editorRef.current;
     if (!editor) return;
+    // Remount detection (belt-and-suspenders): a conditionally-rendered editor that remounts comes
+    // back as an EMPTY DOM node while lastSerializedRef still holds the prior value. setEditorRef
+    // already nulls lastSerializedRef on attach for chat callers; this covers any future caller that
+    // remounts without the callback. A truthy serialized value facing an empty DOM → reset → re-render.
+    // Never fires during typing: deleting to nothing sets content='' and lastSerialized='' (falsy).
+    if (lastSerializedRef.current && editor.childNodes.length === 0) {
+      lastSerializedRef.current = null;
+    }
     if (content !== lastSerializedRef.current) {
       editor.innerHTML = renderContentToHtml(content, allDrops, foundClassName, deletedClassName);
       lastSerializedRef.current = content;
       placeCaretAtEnd(editor);
     }
-    // allDrops / class names are read via closure at the moment content changes; depending on
+    // allDrops / class names are read via closure at the moment content/mount changes; depending on
     // them would re-run this effect on every parent render and risk caret disruption.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [content]);
+  }, [content, mountKey]);
 
   // DOM → EXTERNAL. Read-only on input: serialize and sync state. Never writes innerHTML back.
   const handleInput = () => {
@@ -256,6 +290,7 @@ export function useMentionEditor({
 
   return {
     editorRef,
+    setEditorRef,
     dropdownRef,
     showMention,
     mentionQuery,
