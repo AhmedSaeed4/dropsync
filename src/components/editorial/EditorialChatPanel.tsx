@@ -15,10 +15,11 @@ import {
 } from '@/lib/chat';
 import { subscribeToGroupMessages, sendGroupMessage, editGroupMessage, deleteGroupMessage, clearGroupChat } from '@/lib/groupChat';
 import { useInPanelMarkRead } from '@/hooks/useInPanelMarkRead';
+import { useMentionEditor } from '@/hooks/useMentionEditor';
 import { Drop, GroupChatMessage } from '@/types';
 import { getEditorialThemeColors } from './editorialTheme';
-import { parseMessageContent, detectHashtagTrigger } from '@/lib/dropTagUtils';
 import { EditorialDropPickerRow } from './EditorialDropPickerRow';
+import { DropMentionContent } from '../DropMentionContent';
 import { MessageContextMenu } from '@/components/MessageContextMenu';
 
 interface EditorialChatPanelProps {
@@ -73,20 +74,31 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   const longPressTimer = useRef<NodeJS.Timeout | null>(null);
   const touchStartPos = useRef<{ x: number; y: number } | null>(null);
 
-  // Drop tag picker state
-  const [showDropPicker, setShowDropPicker] = useState(false);
-  const [hashtagQuery, setHashtagQuery] = useState('');
-  const [pickerSelectedIndex, setPickerSelectedIndex] = useState(0);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const [tagReplaceRange, setTagReplaceRange] = useState<{ start: number; end: number } | null>(null);
-
-  // Attachment state — drops selected for the current message
-  const [attachments, setAttachments] = useState<Drop[]>([]);
+  // Inline drop-reference chips — mirrors the drop-note editor (EditorialTextModal). The group
+  // composer AND the inline edit box back a contentEditable <div> with the shared useMentionEditor
+  // hook; chips serialize to #[name](id), the exact token format group chat already stores/encrypts/
+  // renders, so there are NO crypto / rules / data-model changes. workspaceDrops feeds the picker and
+  // resolves chip targets for the editor AND the inline display.
+  const workspaceDrops = useMemo(() => (drops || []).filter(d => d.workspaceId === workspaceId), [drops, workspaceId]);
+  // Editor chip classes — solid pills on the editor's single-bg surface.
+  const mentionChipBase = `inline-flex items-center mx-0.5 px-1.5 py-0.5 align-middle rounded text-[13px] leading-none ${tc.fontClass}`;
+  const mentionFoundClass = `${mentionChipBase} ${tc.activePillBg} ${tc.activePillText}`;
+  const mentionDeletedClass = `${mentionChipBase} ${tc.inactivePillBg} ${tc.muted} line-through cursor-not-allowed`;
+  // Display chip classes — found reuses the theme accent (matches the prior separate-card look 1:1);
+  // deleted is themed (inactive + muted + strike) instead of the old gray, per "deleted chip is
+  // themed (not gray)".
+  const displayChipBase = `inline-flex items-center mx-0.5 px-1.5 py-0.5 align-middle rounded text-[11px] font-medium leading-none ${tc.fontClass}`;
+  const displayFoundClass = `${displayChipBase} ${tc.activePillBg} ${tc.activePillText} hover:opacity-80 cursor-pointer`;
+  const displayDeletedClass = `${displayChipBase} ${tc.inactivePillBg} ${tc.muted} line-through cursor-not-allowed opacity-60`;
+  const groupMention = useMentionEditor({ content: groupInput, setContent: setGroupInput, allDrops: workspaceDrops, foundClassName: mentionFoundClass, deletedClassName: mentionDeletedClass });
+  // editMention is a single top-level instance (Rules of Hooks); its contentEditable renders only
+  // for the message being edited (editingMsgId === msg.id).
+  const editMention = useMentionEditor({ content: editDraft, setContent: setEditDraft, allDrops: workspaceDrops, foundClassName: mentionFoundClass, deletedClassName: mentionDeletedClass });
 
   const [switchingConv, setSwitchingConv] = useState<string | null>(null);
   const [animateMessages, setAnimateMessages] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const aiTextareaRef = useRef<HTMLTextAreaElement>(null);
   const unsubRef = useRef<(() => void) | null>(null);
   const userId = auth.currentUser?.uid;
   const isOwner = !!userId && ownerId === userId;
@@ -175,28 +187,6 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
     }
   }, [workspaceId]);
 
-  // Reset selected index when query changes
-  useEffect(() => {
-    setPickerSelectedIndex(0);
-  }, [hashtagQuery]);
-
-  // Scroll highlighted dropdown item into view
-  useEffect(() => {
-    if (!showDropPicker) return;
-    const el = document.querySelector('[data-drop-highlighted="true"]');
-    if (el) {
-      el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    }
-  }, [pickerSelectedIndex, showDropPicker]);
-
-  // Close dropdown when switching out of group mode
-  useEffect(() => {
-    if (chatMode !== 'group') {
-      setShowDropPicker(false);
-      setAttachments([]);
-    }
-  }, [chatMode]);
-
   // Subscribe to group chat messages when group tab is active
   useEffect(() => {
     if (chatMode !== 'group' || !workspaceId || !userId) {
@@ -271,21 +261,32 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
     }
   }, [groupMessages, chatMode]);
 
-  // Auto-resize textarea
+  // Auto-resize AI textarea (the AI branch's <textarea ref={aiTextareaRef}>)
   useEffect(() => {
-    if (textareaRef.current && chatMode === 'ai') {
-      textareaRef.current.style.height = 'auto';
-      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + 'px';
+    if (aiTextareaRef.current) {
+      aiTextareaRef.current.style.height = 'auto';
+      aiTextareaRef.current.style.height = Math.min(aiTextareaRef.current.scrollHeight, 120) + 'px';
     }
-  }, [input, chatMode]);
+  }, [input]);
 
-  // Auto-resize group textarea
+  // Auto-grow the group contentEditable — same 120px cap the AI textarea uses. The emerge wrapper
+  // already hosted a self-growing textarea, so this is the SAME behavior, not a new one.
   useEffect(() => {
-    if (textareaRef.current && chatMode === 'group') {
-      textareaRef.current.style.height = 'auto';
-      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + 'px';
+    const el = groupMention.editorRef.current;
+    if (el) {
+      el.style.height = 'auto';
+      el.style.height = Math.min(el.scrollHeight, 120) + 'px';
     }
-  }, [groupInput, chatMode]);
+  }, [groupInput]);
+
+  // Focus the inline edit box when it opens. The hook's external→DOM effect (keyed on editDraft)
+  // renders the seeded tokens as chips; this places focus + the caret at the end.
+  useEffect(() => {
+    if (editingMsgId) editMention.focusEditor();
+    // editMention.focusEditor is stable enough for this open/close transition; we only want this to
+    // fire when editingMsgId changes, not on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingMsgId]);
 
   const handleNewChat = () => {
     setActiveConvId(null);
@@ -379,7 +380,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
       await saveMessage(userId, convId, 'assistant', `Error: ${e.message || 'Something went wrong'}`);
     } finally {
       setLoading(false);
-      requestAnimationFrame(() => textareaRef.current?.focus());
+      requestAnimationFrame(() => aiTextareaRef.current?.focus());
     }
   };
 
@@ -413,7 +414,6 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   };
 
   const handleGroupSend = async () => {
-    setShowDropPicker(false);
     const text = groupInput.trim();
     if (groupSending || !userId || !workspaceId) return;
 
@@ -427,19 +427,16 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
       return;
     }
 
-    if (!text && attachments.length === 0) return;
+    if (!text) return;
 
-    // Build message with attachments at the top
-    const attachmentTags = attachments.map(drop => `#[${drop.name}](${drop.id})`).join(' ');
-    const fullText = attachmentTags ? `${attachmentTags} ${text}` : text;
-
+    // Chips are already inline in groupInput as #[name](id) tokens (serialized by useMentionEditor),
+    // so the message body IS the trimmed input — no separate attachment prepend.
     const senderName = auth.currentUser?.displayName || auth.currentUser?.email?.split('@')[0] || 'Unknown';
     setGroupInput('');
-    setAttachments([]);
     setGroupSending(true);
-    await sendGroupMessage(workspaceId, userId, senderName, fullText);
+    await sendGroupMessage(workspaceId, userId, senderName, text);
     setGroupSending(false);
-    setTimeout(() => textareaRef.current?.focus(), 100);
+    setTimeout(() => groupMention.editorRef.current?.focus(), 100);
   };
 
   const handleClearChat = async () => {
@@ -572,75 +569,6 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   useEffect(() => () => {
     if (noticeTimer.current) clearTimeout(noticeTimer.current);
   }, []);
-
-  // Filter drops for hashtag autocomplete
-  const filteredDrops = useMemo(() => {
-    if (!drops || !workspaceId) return [];
-    const query = hashtagQuery.toLowerCase();
-    const workspaceDrops = drops.filter(d => d.workspaceId === workspaceId);
-    const matched = query
-      ? workspaceDrops.filter(d => d.name.toLowerCase().includes(query))
-      : workspaceDrops;
-    const MAX_RESULTS = typeof window !== 'undefined' && window.innerWidth < 640 ? 5 : 8;
-    return matched.slice(0, MAX_RESULTS);
-  }, [drops, workspaceId, hashtagQuery]);
-
-  const attachDrop = (drop: Drop) => {
-    // Don't attach duplicates
-    if (attachments.some(a => a.id === drop.id)) {
-      setShowDropPicker(false);
-      setTagReplaceRange(null);
-      return;
-    }
-
-    // Remove the trigger text from input
-    if (tagReplaceRange) {
-      const { start, end } = tagReplaceRange;
-      const before = groupInput.slice(0, start);
-      const after = groupInput.slice(end);
-      setGroupInput(before + after);
-    }
-
-    setAttachments(prev => [...prev, drop]);
-    setShowDropPicker(false);
-    setHashtagQuery('');
-    setTagReplaceRange(null);
-  };
-
-  const removeAttachment = (dropId: string) => {
-    setAttachments(prev => prev.filter(d => d.id !== dropId));
-  };
-
-  const handleGroupKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // Dropdown navigation
-    if (showDropPicker && filteredDrops.length > 0) {
-      if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        setPickerSelectedIndex(prev => Math.max(0, prev - 1));
-        return;
-      }
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        setPickerSelectedIndex(prev => Math.min(filteredDrops.length - 1, prev + 1));
-        return;
-      }
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        const selected = filteredDrops[pickerSelectedIndex];
-        if (selected) attachDrop(selected);
-        return;
-      }
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        setShowDropPicker(false);
-        return;
-      }
-    }
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleGroupSend();
-    }
-  };
 
   return (
     <div className={`flex flex-col h-full overflow-hidden border-l ${tc.border} ${tc.bg} transition-colors duration-500`}>
@@ -872,9 +800,6 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
             const showSender = !prevMsg || prevMsg.senderId !== msg.senderId;
             const initial = msg.senderName.charAt(0).toUpperCase();
             const timeStr = msg.createdAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            const parts = parseMessageContent(msg.content);
-            const textParts = parts.filter(p => p.type === 'text');
-            const tagParts = parts.filter(p => p.type === 'tag');
 
             return (
               <div key={msg.id} className={`flex ${isOwn ? 'justify-end' : 'justify-start'} animate-fade-in-up`} style={{ animationDelay: `${Math.min(idx, 10) * 30}ms` }}>
@@ -902,25 +827,44 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
                     onTouchEnd={handleMessageTouchEnd}
                   >
                     {editingMsgId === msg.id ? (
-                      <div className={`flex flex-col gap-1.5 min-w-[200px] p-1.5 border ${tc.border} ${tc.roundedClass} ${tc.bg}`}>
-                        <textarea
-                          value={editDraft}
-                          onChange={(e) => setEditDraft(e.target.value)}
-                          autoFocus
-                          rows={2}
+                      <div className={`relative flex flex-col gap-1.5 min-w-[200px] p-1.5 border ${tc.border} ${tc.roundedClass} ${tc.bg}`}>
+                        {/* #-mention dropdown — anchored to this edit wrapper, floats above the bubble */}
+                        {editMention.showMention && editMention.filteredMentionDrops.length > 0 && (
+                          <div ref={editMention.dropdownRef} className={`absolute bottom-full left-0 right-0 mb-1 z-50 max-h-[240px] overflow-y-auto rounded-md border ${tc.border} ${tc.bg} shadow-lg`} style={{ touchAction: 'pan-y' }}>
+                            {editMention.filteredMentionDrops.map((drop, idx) => (
+                              <EditorialDropPickerRow key={drop.id} drop={drop} selected={idx === editMention.mentionIndex} attached={false} onSelect={editMention.insertMention} theme={theme} />
+                            ))}
+                          </div>
+                        )}
+                        {editDraft === '' && !editMention.showMention && (
+                          <span className={`pointer-events-none absolute left-4 top-3 text-sm ${tc.fontClass} ${theme === 'dark' ? 'text-white/30' : 'text-[#1A1A1A]/30'}`}>
+                            Edit message...
+                          </span>
+                        )}
+                        <div
+                          ref={editMention.setEditorRef}
+                          contentEditable
+                          suppressContentEditableWarning
+                          onInput={editMention.handleInput}
+                          onKeyDown={(e) => {
+                            editMention.handleKeyDown(e);
+                            if (!e.defaultPrevented) {
+                              if (e.key === 'Enter' && !e.shiftKey) {
+                                e.preventDefault();
+                                saveEdit(msg);
+                              } else if (e.key === 'Escape') {
+                                e.preventDefault();
+                                cancelEditing();
+                              }
+                            }
+                          }}
+                          onBlur={editMention.handleBlur}
                           onClick={(e) => e.stopPropagation()}
                           onContextMenu={(e) => e.stopPropagation()}
                           onTouchStart={(e) => e.stopPropagation()}
-                          className={`w-full px-2 py-1.5 text-sm ${tc.bg} ${tc.text} ${tc.fontClass} resize-none border ${tc.border} rounded-lg focus:outline-none ${theme === 'dark' ? 'placeholder:text-white/30' : 'placeholder:text-[#1A1A1A]/30'}`}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' && !e.shiftKey) {
-                              e.preventDefault();
-                              saveEdit(msg);
-                            } else if (e.key === 'Escape') {
-                              e.preventDefault();
-                              cancelEditing();
-                            }
-                          }}
+                          role="textbox"
+                          aria-multiline="true"
+                          className={`w-full px-2 py-1.5 text-sm ${tc.fontClass} ${tc.bg} ${tc.text} border ${tc.border} rounded-lg focus:outline-none whitespace-pre-wrap break-words leading-relaxed min-h-[48px] max-h-[120px] overflow-y-auto`}
                         />
                         <div className="flex justify-end gap-1.5">
                           <button
@@ -941,54 +885,22 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
                         </div>
                       </div>
                     ) : (
-                    <>
-                    {/* Attachment cards */}
-                    {tagParts.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5 mb-1">
-                        {tagParts.map((part, i) => {
-                          const dropExists = drops?.some(d => d.id === part.dropId);
-                          return (
-                            <button
-                              key={i}
-                              onClick={() => {
-                                if (dropExists && onPreviewDrop && workspaceId) {
-                                  onPreviewDrop(part.dropId!, workspaceId);
-                                }
-                              }}
-                              disabled={!dropExists}
-                              className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-opacity ${
-                                dropExists
-                                  ? `${tc.activePillBg} ${tc.activePillText} hover:opacity-80 cursor-pointer`
-                                  : 'bg-gray-500/20 text-gray-500 cursor-not-allowed opacity-50'
-                              }`}
-                            >
-                              {dropExists && drops?.find(d => d.id === part.dropId)?.type === 'file' ? (
-                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 10.5V6.75a4.5 4.5 0 119 0v3.75M3.75 21.75h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H3.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
-                                </svg>
-                              ) : (
-                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12" />
-                                </svg>
-                              )}
-                              {part.name}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                    {/* Text content */}
-                    {textParts.length > 0 && (
-                      <div className={`whitespace-pre-wrap break-words ${tc.fontClass}`}>
-                        {textParts.map((part, i) => (
-                          <span key={i}>{part.value}</span>
-                        ))}
-                      </div>
-                    )}
-                    {msg.edited && (
-                      <span className="block text-[10px] opacity-60 mt-0.5">(edited)</span>
-                    )}
-                    </>
+                      <>
+                        {/* Inline render: text → <span>, #[name](id) → clickable chip, in sentence
+                            order. whitespace-pre-wrap preserves newlines in text parts. */}
+                        <div className={`whitespace-pre-wrap break-words leading-relaxed ${tc.fontClass}`}>
+                          <DropMentionContent
+                            content={msg.content}
+                            allDrops={workspaceDrops}
+                            onPreview={(d) => { if (onPreviewDrop && workspaceId) onPreviewDrop(d.id, workspaceId); }}
+                            foundClassName={displayFoundClass}
+                            deletedClassName={displayDeletedClass}
+                          />
+                        </div>
+                        {msg.edited && (
+                          <span className="block text-[10px] opacity-60 mt-0.5">(edited)</span>
+                        )}
+                      </>
                     )}
                   </div>
                   {showSender && (
@@ -1075,95 +987,73 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
 
       {/* Input area with staggered fade-in */}
       <div className={`border-t ${tc.border} p-4 shrink-0 relative transition-all duration-300 ease-out ${showInputArea ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-[10px]'}`} style={{ touchAction: 'none' }}>
-        {/* Dropdown */}
-        {showDropPicker && filteredDrops.length > 0 && (
+        {/* Group #-mention dropdown — anchored to this input-area wrapper (its existing `relative`),
+            floats above the editor. Reuses the prior anchoring (left-4 right-14). Group-only. */}
+        {chatMode === 'group' && groupMention.showMention && groupMention.filteredMentionDrops.length > 0 && (
           <div
-            ref={dropdownRef}
-            className={`absolute bottom-full left-4 right-14 mb-1 z-50 max-h-[320px] overflow-y-auto rounded-md border ${tc.border} ${tc.bg} shadow-lg`}
+            ref={groupMention.dropdownRef}
+            className={`absolute bottom-full left-4 right-14 mb-1 z-50 max-h-[240px] overflow-y-auto rounded-md border ${tc.border} ${tc.bg} shadow-lg`}
             style={{ touchAction: 'pan-y' }}
           >
-            {filteredDrops.map((drop, idx) => (
+            {groupMention.filteredMentionDrops.map((drop, idx) => (
               <EditorialDropPickerRow
                 key={drop.id}
                 drop={drop}
-                selected={idx === pickerSelectedIndex}
-                attached={attachments.some(a => a.id === drop.id)}
-                onSelect={attachDrop}
+                selected={idx === groupMention.mentionIndex}
+                attached={false}
+                onSelect={groupMention.insertMention}
                 theme={theme}
               />
             ))}
           </div>
         )}
-        {/* Attachment cards */}
-        {chatMode === 'group' && attachments.length > 0 && (
-          <div className="flex flex-wrap gap-2 mb-2 px-4">
-            {attachments.map((drop) => (
-              <div
-                key={drop.id}
-                className={`inline-flex items-center gap-1.5 px-2 py-1 rounded text-[14px] ${tc.activePillBg} ${tc.activePillText}`}
-              >
-                {drop.type === 'file' ? (
-                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 10.5V6.75a4.5 4.5 0 119 0v3.75M3.75 21.75h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H3.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
-                  </svg>
-                ) : (
-                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12" />
-                  </svg>
-                )}
-                <span className="truncate max-w-[120px]">{drop.name}</span>
-                <button
-                  onClick={() => removeAttachment(drop.id)}
-                  className="opacity-60 hover:opacity-100 ml-1"
-                >
-                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-            ))}
-          </div>
+        {/* Group composer placeholder — shown only when empty + no picker. Anchored to the wrapper;
+            left-8 top-7 lines up with the contentEditable's px-4 py-3 text inside the one-line
+            min-h-[48px] mount height. */}
+        {chatMode === 'group' && groupInput === '' && !groupMention.showMention && (
+          <span className={`pointer-events-none absolute left-8 top-7 text-[14px] ${tc.fontClass} ${theme === 'dark' ? 'text-white/30' : 'text-[#1A1A1A]/30'}`}>
+            Message workspace...
+          </span>
         )}
         <div className="flex gap-2 items-end">
-          <textarea
-            ref={textareaRef}
-            value={chatMode === 'group' ? groupInput : input}
-            onChange={(e) => {
-              const value = e.target.value;
-              if (chatMode === 'group') {
-                setGroupInput(value);
-                const cursor = e.target.selectionStart;
-                const textBeforeCursor = value.slice(0, cursor ?? 0);
-                const trigger = detectHashtagTrigger(textBeforeCursor);
-                if (trigger && trigger.query.length > 0) {
-                  setShowDropPicker(true);
-                  setHashtagQuery(trigger.query);
-                  setTagReplaceRange({ start: trigger.startIndex, end: cursor ?? 0 });
-                } else {
-                  setShowDropPicker(false);
-                  setHashtagQuery('');
-                  setTagReplaceRange(null);
+          {chatMode === 'group' ? (
+            // contentEditable mention editor — a DIRECT flex child of this row (NO wrapper div), so
+            // the emerge animation on the input-area wrapper is unaffected. Chips render inline; the
+            // saved value stays the plain #[name](id) token string (useMentionEditor).
+            <div
+              ref={groupMention.setEditorRef}
+              contentEditable
+              suppressContentEditableWarning
+              onInput={groupMention.handleInput}
+              onKeyDown={(e) => {
+                // Hook handles picker nav + Enter-to-pick when open; closed + Enter (no shift) sends.
+                groupMention.handleKeyDown(e);
+                if (!e.defaultPrevented && e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleGroupSend();
                 }
-              } else {
-                setInput(value);
-              }
-            }}
-            onKeyDown={chatMode === 'group' ? handleGroupKeyDown : handleKeyDown}
-            onBlur={(e) => {
-              if (dropdownRef.current?.contains(e.relatedTarget as Node)) {
-                return;
-              }
-              setShowDropPicker(false);
-            }}
-            placeholder={chatMode === 'group' ? 'Message workspace...' : 'Type a message...'}
-            disabled={chatMode === 'group' ? false : loading}
-            rows={1}
-            className={`flex-1 px-4 py-3 text-[14px] ${tc.fontClass} ${tc.bg} ${tc.text} border ${tc.border} rounded-lg resize-none focus:outline-none focus:border-[#1a1a1a] disabled:opacity-50 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] ${theme === 'dark' ? 'placeholder:text-white/30' : 'placeholder:text-[#1A1A1A]/30'}`}
-            style={{ maxHeight: '120px', touchAction: 'none' }}
-          />
+              }}
+              onBlur={groupMention.handleBlur}
+              role="textbox"
+              aria-multiline="true"
+              className={`flex-1 px-4 py-3 text-[14px] ${tc.fontClass} ${tc.bg} ${tc.text} border ${tc.border} rounded-lg focus:outline-none focus:border-[#1a1a1a] whitespace-pre-wrap break-words leading-relaxed min-h-[48px] max-h-[120px] overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]`}
+            />
+          ) : (
+            <textarea
+              ref={aiTextareaRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Type a message..."
+              disabled={loading}
+              rows={1}
+              className={`flex-1 px-4 py-3 text-[14px] ${tc.fontClass} ${tc.bg} ${tc.text} border ${tc.border} rounded-lg resize-none focus:outline-none focus:border-[#1a1a1a] disabled:opacity-50 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] ${theme === 'dark' ? 'placeholder:text-white/30' : 'placeholder:text-[#1A1A1A]/30'}`}
+              style={{ maxHeight: '120px', touchAction: 'none' }}
+            />
+          )}
           <button
             onClick={chatMode === 'group' ? handleGroupSend : handleSend}
-            disabled={chatMode === 'group' ? (groupSending || (!groupInput.trim() && attachments.length === 0)) : (loading || !input.trim())}
+            disabled={chatMode === 'group' ? (groupSending || !groupInput.trim()) : (loading || !input.trim())}
             className="w-10 h-10 shrink-0 flex items-center justify-center bg-[#1a1a1a] text-white rounded-lg hover:bg-[#333] disabled:opacity-30 transition-colors"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
