@@ -948,7 +948,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
 
           {/* Confirm card — always mounted; height + opacity animate for a smooth slide */}
           <div className={`grid transition-[grid-template-rows] duration-[300ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${clearConfirm ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
-            <div className={`min-h-0 transition-opacity duration-[300ms] ${clearConfirm ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+            <div className={`min-h-0 overflow-hidden transition-opacity duration-[300ms] ${clearConfirm ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
               <div ref={clearConfirm ? systemNoticeRef : undefined} className="flex justify-center py-4">
                 <div className={`max-w-[85%] px-4 py-3 rounded-lg border ${s.borderColor} ${s.panelBg} shadow-sm`}>
                   <div className={`flex items-center gap-1.5 mb-2 ${s.muted}`}>
@@ -986,7 +986,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
 
           {/* Text notice — subtle divider; always mounted; height + opacity animate */}
           <div className={`grid transition-[grid-template-rows] duration-[300ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${(!clearConfirm && systemNotice) ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
-            <div className={`min-h-0 transition-opacity duration-[300ms] ${(!clearConfirm && systemNotice && !noticeLeaving) ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+            <div className={`min-h-0 overflow-hidden transition-opacity duration-[300ms] ${(!clearConfirm && systemNotice && !noticeLeaving) ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
               <div ref={!clearConfirm && systemNotice ? systemNoticeRef : undefined} className="flex items-center justify-center gap-3 py-3">
                 <div className={`h-0.5 w-8 sm:w-12 ${s.borderColor}`} />
                 <span className={`text-[11px] ${s.fontClass} ${s.muted} uppercase tracking-wider text-center min-w-0 font-medium`}>
