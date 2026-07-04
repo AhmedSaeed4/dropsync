@@ -41,12 +41,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const handleSignIn = async () => {
-    setLoading(true);
     const user = await signInWithGoogle();
     if (user) {
       setUser(user);
     }
-    setLoading(false);
   };
 
   const handleSignOut = async () => {
