@@ -81,10 +81,13 @@ service cloud.firestore {
       }
     }
 
-    // Config collection (config/owner holds the owner uid). Readable by any authenticated user
-    // (the /admin page reads it client-side); never client-writable — only the console / Admin SDK.
+    // Config collection (config/owner holds the owner uid). config/owner is readable by the OWNER
+    // only (closes owner de-anonymization); other config docs stay readable by any authenticated
+    // user. Never client-writable — only the console / Admin SDK. NOTE: the isOwner()/isTrusted()
+    // helpers read config/owner SERVER-SIDE via get(), which is NOT gated by this client read rule,
+    // so those (and the drops create forever/trusted check) keep working unchanged.
     match /config/{docId} {
-      allow read: if request.auth != null;
+      allow read: if request.auth != null && (isOwner() || docId != 'owner');
       allow write: if false;
     }
 
@@ -100,15 +103,37 @@ service cloud.firestore {
     match /workspaces/{workspaceId} {
       allow create: if request.auth != null;
       allow read: if request.auth != null;
+      // Owner = full control. A non-owner may touch `members` ONLY by adding/removing their OWN uid
+      // (join = self-add, leave = self-remove); ownerId/name/inviteCode are immutable for non-owners.
+      // The size() + hasOnly() guards make the array delta AIRTIGHT (set-equality in disguise):
+      //   self-add:   old ⊆ new (hasOnly) AND |new|==|old|+1 AND caller∉old AND caller∈new
+      //                => new = old ∪ {caller} exactly — no other uid can be smuggled in or kicked.
+      //   self-remove: new ⊆ old (hasOnly) AND |new|==|old|-1 AND caller∈old AND caller∉new
+      //                => new = old \ {caller} exactly — no other uid can be kicked or smuggled in.
+      // (size() alone only checked the NET delta, which a kick-one-add-two swap could satisfy.)
+      // accountDeletion's owner-transfer path is covered by the owner branch; its member-leave path
+      // is a self-remove of exactly size-1 with nothing else changed.
       allow update: if request.auth != null && (
-        request.auth.uid in resource.data.members ||
-        request.auth.uid in request.resource.data.members ||
         resource.data.ownerId == request.auth.uid
+        || (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members'])
+          && request.resource.data.ownerId == resource.data.ownerId
+          && (
+            // self-remove (leave): new ⊆ old, exactly one uid (the caller) dropped
+            (request.auth.uid in resource.data.members
+              && !(request.auth.uid in request.resource.data.members)
+              && request.resource.data.members.hasOnly(resource.data.members)
+              && request.resource.data.members.size() == resource.data.members.size() - 1)
+            ||
+            // self-add (join): old ⊆ new, exactly one uid (the caller) added
+            (!(request.auth.uid in resource.data.members)
+              && request.auth.uid in request.resource.data.members
+              && resource.data.members.hasOnly(request.resource.data.members)
+              && request.resource.data.members.size() == resource.data.members.size() + 1)
+          )
+        )
       );
-      allow delete: if request.auth != null && (
-        request.auth.uid in resource.data.members ||
-        resource.data.ownerId == request.auth.uid
-      );
+      allow delete: if request.auth != null && resource.data.ownerId == request.auth.uid;
 
       // Group chat messages - only workspace members can read/write
       match /messages/{messageId} {
@@ -171,19 +196,29 @@ service cloud.firestore {
       }
     }
 
-    // Workspace encryption keys - only workspace members can access
+    // Workspace encryption keys. Read -> workspace MEMBER only (members decrypt drops + group chat
+    // with the key via getWorkspaceKey). Create/update -> workspace OWNER only (the key is written
+    // once by the workspace creator at creation time; no legitimate flow ever rewrites it). Stops any
+    // authenticated user bricking a key (a permanent "[Decryption failed]" DoS for the whole
+    // workspace) or reading keySecret for a workspace they are not a member of.
     match /workspaceKeys/{workspaceId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null;
-      allow update: if request.auth != null;
+      allow read: if request.auth != null
+        && exists(/databases/$(database)/documents/workspaces/$(workspaceId))
+        && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members;
+      allow create, update: if request.auth != null
+        && exists(/databases/$(database)/documents/workspaces/$(workspaceId))
+        && get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId == request.auth.uid;
     }
 
     // Drops collection
     match /drops/{dropId} {
-      // Create - must be authenticated, own the drop, and be trusted to make it last forever
+      // Create - must be authenticated, own the drop, be trusted to make it last forever, AND be a
+      // member of the target workspace. Personal drops (workspaceId == null) are unaffected.
       allow create: if request.auth != null
         && request.auth.uid == request.resource.data.userId
-        && (!isForeverWrite() || isTrusted());
+        && (!isForeverWrite() || isTrusted())
+        && (request.resource.data.workspaceId == null
+            || request.auth.uid in get(/databases/$(database)/documents/workspaces/$(request.resource.data.workspaceId)).data.members);
 
       // Read - authenticated users can read their own drops or workspace drops they're a member of
       allow read: if request.auth != null && (
@@ -208,14 +243,25 @@ service cloud.firestore {
       );
     }
 
-    // Categories collection - users can only access their own personal categories or workspace categories
+    // Categories collection. Read/create -> the creator OR, for workspace categories, a member of
+    // that workspace. Delete -> the creator OR the workspace owner (so an injected category can be
+    // cleaned up). Closes non-member reads/creates of a workspace's category list and indestructible
+    // injected categories. Personal categories (workspaceId == null) stay creator-only.
     match /categories/{categoryId} {
       allow read: if request.auth != null && (
-        request.auth.uid == resource.data.createdBy ||
-        resource.data.workspaceId != null
+        request.auth.uid == resource.data.createdBy
+        || (resource.data.workspaceId != null
+            && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(resource.data.workspaceId)).data.members)
       );
-      allow create: if request.auth != null && request.auth.uid == request.resource.data.createdBy;
-      allow delete: if request.auth != null && request.auth.uid == resource.data.createdBy;
+      allow create: if request.auth != null
+        && request.auth.uid == request.resource.data.createdBy
+        && (request.resource.data.workspaceId == null
+            || request.auth.uid in get(/databases/$(database)/documents/workspaces/$(request.resource.data.workspaceId)).data.members);
+      allow delete: if request.auth != null && (
+        request.auth.uid == resource.data.createdBy
+        || (resource.data.workspaceId != null
+            && get(/databases/$(database)/documents/workspaces/$(resource.data.workspaceId)).data.ownerId == request.auth.uid)
+      );
     }
 
     // Chat conversations - users can only access their own
