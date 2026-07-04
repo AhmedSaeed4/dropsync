@@ -1036,6 +1036,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
             />
             <button
               type="submit"
+              onPointerDown={(e) => e.preventDefault()}
               disabled={loading || !input.trim()}
               className={`px-3 py-2 text-white text-xs disabled:opacity-30 transition-colors flex items-center justify-center ${s.sendBtn} ${s.roundedClass}`}
             >
@@ -1098,6 +1099,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
               </div>
               <button
                 type="submit"
+                onPointerDown={(e) => e.preventDefault()}
                 disabled={groupSending || !groupInput.trim()}
                 className={`px-3 py-2 text-white text-xs disabled:opacity-30 transition-colors flex items-center justify-center ${s.sendBtn} ${s.roundedClass}`}
               >

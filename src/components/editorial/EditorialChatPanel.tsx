@@ -167,14 +167,27 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
     return () => clearTimeout(timer);
   }, []);
 
-  // Scroll to bottom when keyboard opens/closes (visual viewport resize)
+  // Scroll to bottom when keyboard opens/closes (visual viewport resize).
+  // Keyboard open/close produces a LARGE height delta (>=150px) — snap unconditionally to keep
+  // stick-to-bottom for that transition (the user is already pinned to it). Small / width-only
+  // resizes — e.g. the desktop scrollbar removed by useBodyScrollLock when a preview modal opens —
+  // keep the 120px near-bottom guard so a scrolled-up user is NOT yanked to the bottom on chip-click.
   useEffect(() => {
     if (typeof window === 'undefined' || !window.visualViewport) return;
     const viewport = window.visualViewport;
+    const KEYBOARD_THRESHOLD = 150;
+    const prevHeight = { current: viewport.height };
     const scrollToBottom = () => {
-      if (scrollRef.current) {
-        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      const el = scrollRef.current;
+      if (!el) return;
+      const heightDelta = Math.abs(viewport.height - prevHeight.current);
+      prevHeight.current = viewport.height;
+      if (heightDelta > KEYBOARD_THRESHOLD) {
+        el.scrollTop = el.scrollHeight;
+        return;
       }
+      const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= 120;
+      if (nearBottom) el.scrollTop = el.scrollHeight;
     };
     viewport.addEventListener('resize', scrollToBottom);
     return () => viewport.removeEventListener('resize', scrollToBottom);
@@ -1052,6 +1065,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
             />
           )}
           <button
+            onPointerDown={(e) => e.preventDefault()}
             onClick={chatMode === 'group' ? handleGroupSend : handleSend}
             disabled={chatMode === 'group' ? (groupSending || !groupInput.trim()) : (loading || !input.trim())}
             className="w-10 h-10 shrink-0 flex items-center justify-center bg-[#1a1a1a] text-white rounded-lg hover:bg-[#333] disabled:opacity-30 transition-colors"

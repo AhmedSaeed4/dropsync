@@ -78,6 +78,7 @@ export function EditorialDropPickerRow({ drop, selected, attached, onSelect, the
 
   return (
     <button
+      onPointerDown={(e) => e.preventDefault()}
       type="button"
       disabled={attached}
       onClick={() => !attached && onSelect(drop)}
