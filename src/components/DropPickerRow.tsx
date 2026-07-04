@@ -84,6 +84,7 @@ export function DropPickerRow({ drop, selected, attached, onSelect, theme }: Dro
 
   return (
     <button
+      onPointerDown={(e) => e.preventDefault()}
       type="button"
       disabled={attached}
       onClick={() => !attached && onSelect(drop)}
