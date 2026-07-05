@@ -189,8 +189,12 @@ export async function createTextDrop(
         iv = encryptedData.iv;
         encrypted = true;
 
-        // Encrypt DEK with user's own key
-        const publicKey = await getUserPublicKey(userId);
+        // Encrypt DEK with user's own key. Use keys.publicKey (already in hand from getUserKeys
+        // above) instead of a redundant getUserPublicKey(self) read of userPublicKeys — that
+        // separate read can return null during the ~1-2s login window before
+        // ensurePublicKeyPublished publishes the doc, silently saving the drop encrypted with no
+        // DEK (permanently undecryptable). keys.publicKey is always present when keys is non-null.
+        const publicKey = keys.publicKey;
         if (publicKey) {
           const { encryptedDEK: encDEK, iv: dekIv } = await encryptDEKForUser(
             dek,
@@ -378,8 +382,12 @@ export async function createFileDrop(
           iv = encryptedData.iv;
           encrypted = true;
 
-          // Encrypt DEK with user's own key
-          const publicKey = await getUserPublicKey(userId);
+          // Encrypt DEK with user's own key. Use keys.publicKey (already in hand from getUserKeys
+          // above) instead of a redundant getUserPublicKey(self) read of userPublicKeys — that
+          // separate read can return null during the ~1-2s login window before
+          // ensurePublicKeyPublished publishes the doc, silently saving the drop encrypted with no
+          // DEK (permanently undecryptable). keys.publicKey is always present when keys is non-null.
+          const publicKey = keys.publicKey;
           if (publicKey) {
             const { encryptedDEK: encDEK, iv: dekIv } = await encryptDEKForUser(
               dek,
@@ -648,7 +656,9 @@ export async function updateTextDrop(
         updateData.iv = encContent.iv;
         updateData.encrypted = true;
 
-        const publicKey = await getUserPublicKey(currentUserId);
+        // Use keys.publicKey (already in hand) — a separate getUserPublicKey(self) read can return
+        // null during the login publish window, which here would brick an existing drop.
+        const publicKey = keys.publicKey;
         if (publicKey) {
           const { encryptedDEK: encDEK, iv: dekIv } = await encryptDEKForUser(
             dek, publicKey, keys.privateKey
@@ -1012,7 +1022,9 @@ export async function moveDrop(
         newIv = enc.iv;
         newEncrypted = true;
 
-        const publicKey = await getUserPublicKey(currentUserId);
+        // Use keys.publicKey (already in hand) — a separate getUserPublicKey(self) read can return
+        // null during the login publish window, which here would brick an existing drop.
+        const publicKey = keys.publicKey;
         if (publicKey) {
           const { encryptedDEK: encDEK, iv: dekIv } = await encryptDEKForUser(
             dek, publicKey, keys.privateKey
@@ -1057,7 +1069,9 @@ export async function moveDrop(
         newIv = enc.iv;
         newEncrypted = true;
 
-        const publicKey = await getUserPublicKey(currentUserId);
+        // Use keys.publicKey (already in hand) — a separate getUserPublicKey(self) read can return
+        // null during the login publish window, which here would brick an existing drop.
+        const publicKey = keys.publicKey;
         if (publicKey) {
           const { encryptedDEK: encDEK, iv: dekIv } = await encryptDEKForUser(
             dek, publicKey, keys.privateKey
@@ -1328,7 +1342,9 @@ export async function copyDrop(
         newIv = enc.iv;
         newEncrypted = true;
 
-        const publicKey = await getUserPublicKey(currentUserId);
+        // Use keys.publicKey (already in hand) — a separate getUserPublicKey(self) read can return
+        // null during the login publish window, which here would brick an existing drop.
+        const publicKey = keys.publicKey;
         if (publicKey) {
           const { encryptedDEK: encDEK, iv: dekIv } = await encryptDEKForUser(
             dek, publicKey, keys.privateKey
@@ -1384,7 +1400,9 @@ export async function copyDrop(
         newIv = enc.iv;
         newEncrypted = true;
 
-        const publicKey = await getUserPublicKey(currentUserId);
+        // Use keys.publicKey (already in hand) — a separate getUserPublicKey(self) read can return
+        // null during the login publish window, which here would brick an existing drop.
+        const publicKey = keys.publicKey;
         if (publicKey) {
           const { encryptedDEK: encDEK, iv: dekIv } = await encryptDEKForUser(
             dek, publicKey, keys.privateKey

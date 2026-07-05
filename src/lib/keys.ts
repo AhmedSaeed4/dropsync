@@ -9,6 +9,7 @@ import {
   doc,
   setDoc,
   getDoc,
+  writeBatch,
 } from 'firebase/firestore';
 import { db } from './firebase';
 import {
@@ -31,6 +32,7 @@ import {
 } from './crypto';
 
 const KEYS_COLLECTION = 'userKeys';
+const USER_PUBLIC_KEYS_COLLECTION = 'userPublicKeys';
 
 export interface UserKey {
   userId: string;
@@ -63,8 +65,12 @@ export async function initializeUserKeys(userId: string): Promise<{
   // Export master key for cloud backup
   const masterKeyData = await exportKey(masterKey);
 
-  // Store in Firestore (including master key for cross-device access)
-  await setDoc(doc(db, KEYS_COLLECTION, userId), {
+  // Store in Firestore (including master key for cross-device access). publicKey is MIRRORED into
+  // the world-readable userPublicKeys collection so other users can encrypt personal drops to this
+  // user without ever reading this (self-only) doc. publicKey STAYS in userKeys too (getUserKeys and
+  // the agent-backend Admin SDK both still read it from there). Both docs write atomically in one batch.
+  const batch = writeBatch(db);
+  batch.set(doc(db, KEYS_COLLECTION, userId), {
     userId,
     publicKey: publicKeyData,
     encryptedPrivateKey,
@@ -72,6 +78,12 @@ export async function initializeUserKeys(userId: string): Promise<{
     masterKey: masterKeyData, // Cloud backup of master key
     createdAt: new Date(),
   });
+  batch.set(doc(db, USER_PUBLIC_KEYS_COLLECTION, userId), {
+    userId,
+    publicKey: publicKeyData,
+    createdAt: new Date(),
+  });
+  await batch.commit();
 
   // Store master key in IndexedDB for faster local access
   await storeMasterKeySecurely(userId, masterKey);
@@ -118,16 +130,19 @@ export async function getUserKeys(userId: string): Promise<{
   return { publicKey, privateKey };
 }
 
-// Get just the public key for a user (for encryption)
+// Get just the public key for a user (for encryption). Reads from the world-readable
+// userPublicKeys collection (NOT the self-only userKeys doc) so any logged-in user can fetch
+// another user's ECDH public key to encrypt a personal drop to them. The userKeys read rule is
+// self-only, so reading userKeys for a non-self uid would throw permission-denied.
 export async function getUserPublicKey(userId: string): Promise<CryptoKey | null> {
-  const docRef = doc(db, KEYS_COLLECTION, userId);
+  const docRef = doc(db, USER_PUBLIC_KEYS_COLLECTION, userId);
   const docSnap = await getDoc(docRef);
 
   if (!docSnap.exists()) {
     return null;
   }
 
-  const data = docSnap.data() as UserKey;
+  const data = docSnap.data() as { publicKey: string };
   return await importPublicKey(data.publicKey);
 }
 
@@ -202,6 +217,17 @@ export async function hasUserKeys(userId: string): Promise<boolean> {
 // Check if user has master key stored in IndexedDB
 export async function hasLocalMasterKey(userId: string): Promise<boolean> {
   return await hasMasterKey(userId);
+}
+
+// Ensure this user's publicKey is in the world-readable collection.
+// Idempotent (no-op if already published). Self-only read + self-only write.
+export async function ensurePublicKeyPublished(userId: string): Promise<void> {
+  const pubRef = doc(db, USER_PUBLIC_KEYS_COLLECTION, userId);
+  if ((await getDoc(pubRef)).exists()) return;
+  const keySnap = await getDoc(doc(db, KEYS_COLLECTION, userId));
+  const data = keySnap.data() as UserKey | undefined;
+  if (!data?.publicKey) return;
+  await setDoc(pubRef, { userId, publicKey: data.publicKey, createdAt: new Date() });
 }
 
 // ============ WORKSPACE KEY MANAGEMENT ============

@@ -15,7 +15,7 @@ import { getEditorialThemeColors } from '@/components/editorial/editorialTheme';
 import { AuthModal } from '@/components/AuthModal';
 import { VerifyEmailModal } from '@/components/VerifyEmailModal';
 import { Drop, Workspace, ExpirationOption } from '@/types';
-import { initializeUserKeys, hasUserKeys, getUserKeys } from '@/lib/keys';
+import { initializeUserKeys, hasUserKeys, getUserKeys, ensurePublicKeyPublished } from '@/lib/keys';
 import { decryptDrop, updateTextDrop, updateDropMetadata, moveDrop } from '@/lib/drops';
 import { getWorkspaceMembers, MemberInfo } from '@/lib/workspaces';
 import { getLastRead, initReadState, markWorkspaceChatRead } from '@/lib/groupChat';
@@ -169,6 +169,16 @@ export default function Home() {
           setEncryptionInitializing(false);
         }
       }
+    }
+
+    // Lazy self-migration: ensure this user's publicKey is mirrored into the world-readable
+    // userPublicKeys collection. Idempotent + rule-safe (self-only read/write). Covers any
+    // pre-split user on their first login after deploy. Wrapped so a transient Firestore write
+    // failure logs a warning instead of aborting the session (next login retries idempotently).
+    try {
+      await ensurePublicKeyPublished(user.uid);
+    } catch (error) {
+      console.warn('ensurePublicKeyPublished failed this session; will retry on next login', error);
     }
   };
 

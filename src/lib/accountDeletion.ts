@@ -6,6 +6,7 @@ import { deleteSharesForDrop } from './shares';
 
 const USERS_COLLECTION = 'users';
 const USER_KEYS_COLLECTION = 'userKeys';
+const USER_PUBLIC_KEYS_COLLECTION = 'userPublicKeys';
 const WORKSPACES_COLLECTION = 'workspaces';
 const DROPS_COLLECTION = 'drops';
 
@@ -230,6 +231,8 @@ export async function deleteAccount(
     // Step 4: Delete user keys from Firestore
     onProgress?.({ step: 'Deleting encryption keys', current: ++currentStep, total: totalSteps });
     await deleteDoc(doc(db, USER_KEYS_COLLECTION, userId));
+    // Also delete the mirrored world-readable publicKey doc so it isn't orphaned.
+    await deleteDoc(doc(db, USER_PUBLIC_KEYS_COLLECTION, userId));
 
     // Step 5: Delete IndexedDB master key
     onProgress?.({ step: 'Cleaning up local data', current: ++currentStep, total: totalSteps });
