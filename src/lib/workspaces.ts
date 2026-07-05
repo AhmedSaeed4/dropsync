@@ -8,17 +8,16 @@ import {
   where,
   onSnapshot,
   getDocs,
-  getDoc,
   serverTimestamp,
   Timestamp
 } from 'firebase/firestore';
 import { db } from './firebase';
 import { Workspace } from '@/types';
 import { createWorkspaceKey, addMemberToWorkspaceKey, removeMemberFromWorkspaceKey } from './keys';
+import { getProfile } from './profiles';
 import { deleteSharesForDrop } from './shares';
 
 const WORKSPACES_COLLECTION = 'workspaces';
-const USERS_COLLECTION = 'users';
 
 export interface MemberInfo {
   uid: string;
@@ -33,13 +32,11 @@ export async function getWorkspaceMembers(
 ): Promise<MemberInfo[]> {
   const members: MemberInfo[] = [];
 
+  // Read each member's display name from the world-readable profiles collection (NOT users/{uid},
+  // which is self/owner-only after the lock). Falls back to uid if no profile doc / no displayName.
   const fetchPromises = memberIds.map(async (uid) => {
-    const userSnap = await getDoc(doc(db, USERS_COLLECTION, uid));
-    let displayName = uid;
-    if (userSnap.exists()) {
-      const data = userSnap.data();
-      displayName = data.displayName || data.email?.split('@')[0] || uid;
-    }
+    const profile = await getProfile(uid);
+    const displayName = profile?.displayName || uid;
     return { uid, displayName, isOwner: uid === ownerId };
   });
 

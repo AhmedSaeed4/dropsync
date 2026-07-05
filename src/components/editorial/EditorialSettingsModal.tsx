@@ -203,7 +203,7 @@ export function EditorialSettingsModal({
                     >
                       <option value="">Select new owner...</option>
                       {w.members.map((m) => (
-                        <option key={m.uid} value={m.uid}>{m.email}</option>
+                        <option key={m.uid} value={m.uid}>{m.displayName || m.email || m.uid}</option>
                       ))}
                     </select>
                   )}

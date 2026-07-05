@@ -53,10 +53,15 @@ service cloud.firestore {
         && resource.data.expiresAt <= request.time;
     }
 
-    // Users collection - field-guarded: read all users; create your own with tier 'standard';
-    // update any of your own fields EXCEPT tier; the owner may update ONLY tier.
+    // Users collection - field-guarded + SELF/OWNER-ONLY read (closes the "any authed user reads
+    // any user's email + tier" leak — audit critical #5). Display fields (displayName, photoURL)
+    // moved to the world-readable profiles collection below; email + tier stay here. isTrusted()
+    // keeps reading SELF tier via the server-side get() in the helper above (bypasses this client
+    // read rule), so the trusted/forever-drop feature is unaffected. Create your own with tier
+    // 'standard'; update any of your own fields EXCEPT tier; the owner may update ONLY tier.
     match /users/{userId} {
-      allow read: if request.auth != null;
+      allow read: if request.auth != null
+        && (request.auth.uid == userId || isOwner());
       allow create: if request.auth != null
         && request.auth.uid == userId
         && (request.resource.data.tier == 'standard' || !('tier' in request.resource.data));
@@ -79,6 +84,19 @@ service cloud.firestore {
         allow delete: if request.auth != null && request.auth.uid == userId;
         allow update: if false;
       }
+    }
+
+    // User PROFILES — world-readable display fields (displayName, photoURL). Any logged-in user
+    // needs another user's display name to render workspace member lists + the account-deletion
+    // peer picker. Only the owner may create/update/delete their own. Sensitive fields (email,
+    // tier) stay in users/{uid} above, which is now self/owner-only-read. Mirrors the
+    // userPublicKeys pattern. SIGNUPS WRITE THIS DOC ATOMICALLY WITH users/{uid} via writeBatch —
+    // it MUST exist before any signup batch commits, hence it ships in this same PR.
+    match /profiles/{userId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.auth.uid == userId;
+      allow update: if request.auth != null && request.auth.uid == userId;
+      allow delete: if request.auth != null && request.auth.uid == userId;
     }
 
     // Config collection (config/owner holds the owner uid). config/owner is readable by the OWNER

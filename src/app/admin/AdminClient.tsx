@@ -1,8 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { collection, doc, getDoc, getDocs, query, updateDoc, where } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { auth, db } from '@/lib/firebase';
 import { useAuth } from '@/hooks/useAuth';
 import { getEditorialThemeColors } from '@/components/editorial/editorialTheme';
 
@@ -74,12 +74,17 @@ export function AdminClient({ initialTheme }: AdminClientProps) {
   const loadTrusted = useCallback(async () => {
     setTrustedLoading(true);
     try {
-      const snap = await getDocs(query(collection(db, 'users'), where('tier', '==', 'trusted')));
-      const rows: UserRow[] = [];
-      snap.forEach((d) => {
-        const data = d.data();
-        rows.push({ uid: d.id, email: data.email, displayName: data.displayName, tier: data.tier });
+      // users/{uid} is self/owner-only-read after the lock, so list queries can't run client-side —
+      // route through the owner-gated Admin SDK route (joins users email/tier + profiles displayName).
+      // Route is Bearer-gated; attach the Firebase ID token (matches shares.ts/drops.ts/groupChat).
+      const currentUser = auth.currentUser;
+      if (!currentUser) return;
+      const idToken = await currentUser.getIdToken();
+      const res = await fetch('/api/admin/list-users?tier=trusted', {
+        headers: { Authorization: `Bearer ${idToken}` },
       });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      const rows: UserRow[] = await res.json();
       setTrusted(rows);
     } catch (e) {
       console.error('admin: failed to load trusted', e);
@@ -100,14 +105,20 @@ export function AdminClient({ initialTheme }: AdminClientProps) {
     setSearchResult(null);
     setActionError(null);
     try {
-      const snap = await getDocs(query(collection(db, 'users'), where('email', '==', term)));
-      if (snap.empty) {
+      const currentUser = auth.currentUser;
+      if (!currentUser) throw new Error('not signed in');
+      const idToken = await currentUser.getIdToken();
+      const res = await fetch('/api/admin/list-users?email=' + encodeURIComponent(term), {
+        headers: { Authorization: `Bearer ${idToken}` },
+      });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      const rows: UserRow[] = await res.json();
+      if (rows.length === 0) {
         setSearchResult({ notFound: true });
       } else {
-        const d = snap.docs[0];
-        const data = d.data();
+        const u = rows[0];
         setSearchResult({
-          user: { uid: d.id, email: data.email ?? term, displayName: data.displayName, tier: data.tier },
+          user: { uid: u.uid, email: u.email ?? term, displayName: u.displayName, tier: u.tier },
         });
       }
     } catch (err) {
