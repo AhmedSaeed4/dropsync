@@ -16,6 +16,7 @@ import { AuthModal } from '@/components/AuthModal';
 import { VerifyEmailModal } from '@/components/VerifyEmailModal';
 import { Drop, Workspace, ExpirationOption } from '@/types';
 import { initializeUserKeys, hasUserKeys, getUserKeys, ensurePublicKeyPublished } from '@/lib/keys';
+import { ensureProfilePublished } from '@/lib/profiles';
 import { decryptDrop, updateTextDrop, updateDropMetadata, moveDrop } from '@/lib/drops';
 import { getWorkspaceMembers, MemberInfo } from '@/lib/workspaces';
 import { getLastRead, initReadState, markWorkspaceChatRead } from '@/lib/groupChat';
@@ -177,8 +178,12 @@ export default function Home() {
     // failure logs a warning instead of aborting the session (next login retries idempotently).
     try {
       await ensurePublicKeyPublished(user.uid);
+      // Lazy self-migration for the profile split — MOVE displayName/photoURL from this user's own
+      // users doc into the world-readable profiles doc. Same idempotent + best-effort contract as
+      // ensurePublicKeyPublished above (reads source from users/{uid}, not Firebase Auth).
+      await ensureProfilePublished(user.uid);
     } catch (error) {
-      console.warn('ensurePublicKeyPublished failed this session; will retry on next login', error);
+      console.warn('self-migration (publicKey/profile) failed this session; will retry on next login', error);
     }
   };
 

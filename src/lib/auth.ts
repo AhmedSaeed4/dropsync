@@ -13,9 +13,10 @@ import {
   EmailAuthProvider,
   updateProfile
 } from 'firebase/auth';
-import { doc, setDoc, serverTimestamp, getDoc } from 'firebase/firestore';
+import { doc, setDoc, serverTimestamp, getDoc, writeBatch } from 'firebase/firestore';
 import { auth, db } from './firebase';
 import { clearFcmToken } from './notifications';
+import { PROFILES_COLLECTION } from './profiles';
 import { User } from '@/types';
 
 const provider = new GoogleAuthProvider();
@@ -30,14 +31,20 @@ export async function signInWithGoogle(): Promise<User | null> {
     const userSnap = await getDoc(userRef);
 
     if (!userSnap.exists()) {
-      await setDoc(userRef, {
+      // New user — write users/{uid} (sensitive: email + tier + activity) and profiles/{uid}
+      // (world-readable displayName/photoURL) atomically via writeBatch. Mirrors initializeUserKeys.
+      const batch = writeBatch(db);
+      batch.set(userRef, {
         email: firebaseUser.email,
-        displayName: firebaseUser.displayName,
-        photoURL: firebaseUser.photoURL,
         createdAt: serverTimestamp(),
         lastActive: serverTimestamp(),
         tier: 'standard',
       });
+      batch.set(doc(db, PROFILES_COLLECTION, firebaseUser.uid), {
+        displayName: firebaseUser.displayName,
+        photoURL: firebaseUser.photoURL,
+      });
+      await batch.commit();
     } else {
       await setDoc(userRef, {
         lastActive: serverTimestamp(),
@@ -108,17 +115,23 @@ export async function signUpWithEmail(email: string, password: string): Promise<
     // Send verification email
     await sendEmailVerification(firebaseUser);
 
-    // Create user document in Firestore
+    // Create user document + profile atomically. users/{uid} holds sensitive fields (email, tier,
+    // verification, activity); profiles/{uid} holds the world-readable displayName/photoURL.
+    // Mirrors the signInWithGoogle writeBatch above + initializeUserKeys.
     const userRef = doc(db, 'users', firebaseUser.uid);
-    await setDoc(userRef, {
+    const batch = writeBatch(db);
+    batch.set(userRef, {
       email: firebaseUser.email,
-      displayName: firebaseUser.displayName || email.split('@')[0],
-      photoURL: firebaseUser.photoURL,
       createdAt: serverTimestamp(),
       lastActive: serverTimestamp(),
       emailVerified: false,
       tier: 'standard',
     });
+    batch.set(doc(db, PROFILES_COLLECTION, firebaseUser.uid), {
+      displayName: firebaseUser.displayName || email.split('@')[0],
+      photoURL: firebaseUser.photoURL,
+    });
+    await batch.commit();
 
     // Return success - user stays logged in but unverified
     return { success: true };
@@ -224,12 +237,16 @@ export async function resendVerificationEmail(): Promise<{ success: boolean; err
 // Update user's display name in Firestore and Firebase Auth
 export async function updateUserDisplayName(userId: string, displayName: string): Promise<{ success: boolean; error?: string }> {
   try {
-    // Update in Firestore
+    // Firestore-first: atomically write the world-readable profile name + stamp activity on the
+    // user doc, THEN sync Firebase Auth. If the batch fails we bail before touching Auth, so the
+    // cross-user-visible name and the self-UI name can't drift apart. displayName now lives ONLY in
+    // profiles/{uid} (moved out of users/{uid}); lastActive stays on the user doc. Mirrors Piece B.
     const userRef = doc(db, 'users', userId);
-    await setDoc(userRef, {
-      displayName,
-      lastActive: serverTimestamp(),
-    }, { merge: true });
+    const profileRef = doc(db, PROFILES_COLLECTION, userId);
+    const batch = writeBatch(db);
+    batch.set(profileRef, { displayName }, { merge: true });
+    batch.set(userRef, { lastActive: serverTimestamp() }, { merge: true });
+    await batch.commit();
 
     // Also update Firebase Auth profile so it persists on refresh
     const currentUser = auth.currentUser;

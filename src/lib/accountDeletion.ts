@@ -1,7 +1,8 @@
 import { auth, db } from './firebase';
-import { deleteDoc, doc, collection, query, where, getDocs, updateDoc, getDoc, QueryDocumentSnapshot } from 'firebase/firestore';
+import { deleteDoc, doc, collection, query, where, getDocs, updateDoc, QueryDocumentSnapshot } from 'firebase/firestore';
 import { deleteMasterKey } from './crypto';
 import { deleteFromR2 } from './drops';
+import { PROFILES_COLLECTION, getProfile } from './profiles';
 import { deleteSharesForDrop } from './shares';
 
 const USERS_COLLECTION = 'users';
@@ -66,27 +67,18 @@ export async function previewAccountDeletion(userId: string): Promise<DeletionPr
     });
   });
 
-  // Fetch member details
+  // Fetch member display names from the world-readable profiles collection (NOT users/{uid},
+  // which is self/owner-only after the lock — peer email is no longer readable cross-user, by
+  // design). email is null for co-members; the transfer-ownership picker falls back to uid.
   const memberDetails: Record<string, WorkspaceMember> = {};
   if (allMemberIds.size > 0) {
-    // Fetch each user document individually
     const fetchPromises = Array.from(allMemberIds).map(async (memberId) => {
-      const userRef = doc(db, USERS_COLLECTION, memberId);
-      const userSnap = await getDoc(userRef);
-      if (userSnap.exists()) {
-        const data = userSnap.data();
-        memberDetails[memberId] = {
-          uid: memberId,
-          displayName: data.displayName || null,
-          email: data.email || null,
-        };
-      } else {
-        memberDetails[memberId] = {
-          uid: memberId,
-          displayName: null,
-          email: memberId,
-        };
-      }
+      const profile = await getProfile(memberId);
+      memberDetails[memberId] = {
+        uid: memberId,
+        displayName: profile?.displayName || null,
+        email: null,
+      };
     });
     await Promise.all(fetchPromises);
   }
@@ -227,6 +219,9 @@ export async function deleteAccount(
     // Step 3: Delete user document
     onProgress?.({ step: 'Deleting user data', current: ++currentStep, total: totalSteps });
     await deleteDoc(doc(db, USERS_COLLECTION, userId));
+    // Also delete the world-readable profile doc so it isn't orphaned (displayName/photoURL moved
+    // here). Mirrors the userPublicKeys delete below.
+    await deleteDoc(doc(db, PROFILES_COLLECTION, userId));
 
     // Step 4: Delete user keys from Firestore
     onProgress?.({ step: 'Deleting encryption keys', current: ++currentStep, total: totalSteps });
