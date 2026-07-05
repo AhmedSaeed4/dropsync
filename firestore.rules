@@ -91,12 +91,24 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // User encryption keys - users can only access their own keys
+    // User encryption keys - SELF-ONLY read (closes the "any authed user reads any user's
+    // masterKey/encryptedPrivateKey/iv/publicKey" leak — audit critical #4). Other users read
+    // publicKey from the separate world-readable userPublicKeys collection below. create/update/
+    // delete were already self-only.
     match /userKeys/{userId} {
-      allow read: if request.auth != null;
+      allow read: if request.auth != null && request.auth.uid == userId;
       allow create: if request.auth != null && request.auth.uid == userId;
       allow update: if request.auth != null && request.auth.uid == userId;
       allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // User PUBLIC keys — world-readable. Any logged-in user needs another user's ECDH
+    // publicKey to encrypt/view personal drops. Only the owner may write/delete their own.
+    // (publicKey is also still stored in userKeys, but that doc is now self-only-read, so it is
+    // unreachable to other users — they fetch the key from here instead.)
+    match /userPublicKeys/{userId} {
+      allow read: if request.auth != null;
+      allow create, update, delete: if request.auth != null && request.auth.uid == userId;
     }
 
     // Workspaces collection
