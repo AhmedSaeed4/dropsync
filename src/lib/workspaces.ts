@@ -2,6 +2,7 @@ import { getAuth } from 'firebase/auth';
 import {
   collection,
   addDoc,
+  arrayRemove,
   doc,
   updateDoc,
   deleteDoc,
@@ -187,6 +188,44 @@ export async function leaveWorkspace(userId: string, workspaceId: string, newOwn
     return true;
   } catch (error) {
     console.error('Error leaving workspace:', error);
+    return false;
+  }
+}
+
+// Owner removes another member. Client-side (rule-legal via the owner update branch:
+// resource.data.ownerId == request.auth.uid is an unrestricted standalone disjunct, so a single
+// updateDoc by the owner passes as-is — NO firestore.rules change).
+// Revocation is rules-level only: the kicked uid instantly loses all live + future reads
+// (workspaces/messages/readState/workspaceKeys/drops/categories all re-check membership on every
+// read), so their listeners degrade to empty — no crash, no key work needed.
+// removeMemberFromWorkspaceKey is a deliberate no-op (return true), called for parity with
+// leaveWorkspace only — it rotates nothing and re-encrypts nothing (the shared workspace key is
+// unchanged; remaining members keep decrypting as before).
+// The invite code is rotated so the kicked member cannot rejoin with the old code.
+export async function kickWorkspaceMember(
+  ownerId: string,
+  workspaceId: string,
+  memberUid: string
+): Promise<boolean> {
+  try {
+    const workspaceRef = doc(db, WORKSPACES_COLLECTION, workspaceId);
+    const snapshot = await getDoc(workspaceRef);
+
+    if (!snapshot.exists()) return false;
+
+    const data = snapshot.data();
+    if (data.ownerId !== ownerId) return false;         // only the owner kicks
+    if (ownerId === memberUid) return false;             // self-remove is leave, not kick
+    if (!data.members.includes(memberUid)) return true;  // idempotent short-circuit
+
+    await updateDoc(workspaceRef, {
+      members: arrayRemove(memberUid),
+      inviteCode: generateInviteCode(),                  // rotate → blocks rejoin via old code
+    });
+    await removeMemberFromWorkspaceKey(workspaceId, memberUid); // no-op, parity with leave
+    return true;
+  } catch (error) {
+    console.error('Error kicking member:', error);
     return false;
   }
 }

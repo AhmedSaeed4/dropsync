@@ -73,6 +73,8 @@ interface ClassicLayoutProps {
   setWorkspaceToLeave: (v: Workspace | null) => void;
   isDeletingWorkspace: boolean;
   isLeavingWorkspace: boolean;
+  isKicking: boolean;
+  onKick: (memberUid: string) => void;
   previewDrop: Drop | null;
   setPreviewDrop: (v: Drop | null) => void;
   previewLoading: boolean;
@@ -130,7 +132,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
     createdWorkspace, setCreatedWorkspace,
     workspaceToDelete, setWorkspaceToDelete,
     workspaceToLeave, setWorkspaceToLeave,
-    isDeletingWorkspace, isLeavingWorkspace,
+    isDeletingWorkspace, isLeavingWorkspace, isKicking, onKick,
     previewDrop, setPreviewDrop,
     previewLoading, setPreviewLoading,
     encryptionInitializing,
@@ -442,7 +444,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
         />
       )}
 
-      {/* Workspace Options Modal (owner: delete or leave & transfer) */}
+      {/* Workspace Options Modal (owner: delete, leave & transfer, or kick a member) */}
       {workspaceToDelete && (
         <WorkspaceOptionsModal
           workspace={workspaceToDelete}
@@ -450,6 +452,9 @@ export function ClassicLayout(props: ClassicLayoutProps) {
           variant="classic"
           isDeleting={isDeletingWorkspace}
           isLeaving={isLeavingWorkspace}
+          isKicking={isKicking}
+          onKick={onKick}
+          currentUserId={user?.uid || null}
           onDelete={handleDeleteWorkspace}
           onLeaveAndTransfer={handleLeaveAndTransfer}
           onClose={() => setWorkspaceToDelete(null)}

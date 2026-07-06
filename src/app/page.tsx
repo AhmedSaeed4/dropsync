@@ -14,6 +14,7 @@ import { EditorialVerifyEmailModal } from '@/components/editorial/EditorialVerif
 import { getEditorialThemeColors } from '@/components/editorial/editorialTheme';
 import { AuthModal } from '@/components/AuthModal';
 import { VerifyEmailModal } from '@/components/VerifyEmailModal';
+import { Toast } from '@/components/Toast';
 import { Drop, Workspace, ExpirationOption } from '@/types';
 import { initializeUserKeys, hasUserKeys, getUserKeys, ensurePublicKeyPublished } from '@/lib/keys';
 import { ensureProfilePublished } from '@/lib/profiles';
@@ -66,8 +67,14 @@ export default function Home() {
     join: joinWorkspace,
     leave: leaveWorkspace,
     deleteWS,
+    kick,
     loading: workspacesLoading
-  } = useWorkspaces(user?.uid || null);
+  } = useWorkspaces(user?.uid || null, {
+    // Server-side removal notice: fires when a workspace the user belonged to disappears and it
+    // was NOT a locally-initiated leave/delete (i.e. the owner kicked them, or the owner deleted
+    // the workspace). Honest in both cases. Empty initial list → no false fire on load/refresh.
+    onWorkspaceRemoved: (ws) => setRemovedNotice(`You no longer have access to "${ws.name}".`),
+  });
 
   // Pass currentWorkspaceId to useDrops
   const { drops, loading: dropsLoading, refreshDrops } = useDrops(currentWorkspaceId);
@@ -84,6 +91,8 @@ export default function Home() {
   const [workspaceToLeave, setWorkspaceToLeave] = useState<Workspace | null>(null);
   const [isDeletingWorkspace, setIsDeletingWorkspace] = useState(false);
   const [isLeavingWorkspace, setIsLeavingWorkspace] = useState(false);
+  const [isKickingMember, setIsKickingMember] = useState(false);
+  const [removedNotice, setRemovedNotice] = useState<string | null>(null);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [chatMode, setChatMode] = useState<'ai' | 'group'>('ai');
@@ -299,6 +308,25 @@ export default function Home() {
       }
     }
   };
+
+  // Owner removes (kicks) a member. The owner STAYS in the workspace — no switchWorkspace(null)
+  // (unlike delete/leave). Modal closes on success (matches delete/leave).
+  const handleKickMember = async (memberUid: string) => {
+    if (!workspaceToDelete) return;
+    setIsKickingMember(true);
+    try {
+      await kick(workspaceToDelete.id, memberUid);
+      setWorkspaceToDelete(null);
+    } finally {
+      setIsKickingMember(false);
+    }
+  };
+
+  // Stable callback for the removal-notice Toast. Toast's dismiss effect depends on onDone, so a
+  // fresh inline arrow per render would reset its 3s timer on every re-render the kick flow
+  // triggers (listener emission, currentWorkspaceId reset, drops reload) and the notice would
+  // linger. useCallback keeps the identity stable so the timer runs exactly once.
+  const handleRemovedNoticeDone = useCallback(() => setRemovedNotice(null), []);
 
   // Auth handlers
   const handleShowVerifyModal = (email: string) => {
@@ -603,6 +631,9 @@ export default function Home() {
           () => { setChatMode('group'); setShowChat(true); },
         );
       }
+    }, (err) => {
+      // permission-denied fires when the user loses workspace access (kick/leave/delete).
+      // Benign — the workspaces listener redirects them and this effect's cleanup unsubscribes.
     });
 
     return () => {
@@ -1527,6 +1558,7 @@ export default function Home() {
     categories, handleCreateCategory, handleDeleteCategory,
     handleCreateWorkspace, handleJoinWorkspace,
     handleDeleteWorkspace, handleLeaveWorkspace, handleLeaveAndTransfer,
+    onKick: handleKickMember, isKicking: isKickingMember,
     handlePreview, handleShowVerifyModal, handleCheckVerification,
     signIn, emailSignIn, signUp, resetPassword, resendVerification,
     signOutUser, updateDisplayName, reauthenticateUser,
@@ -1539,17 +1571,17 @@ export default function Home() {
       ? 'layout-fade-in'
       : '';
 
-  if (layoutMode === 'editorial') {
-    return (
-      <div className={transitionClass}>
-        <EditorialLayout {...layoutProps} />
-      </div>
-    );
-  }
-
   return (
     <div className={transitionClass}>
-      <ClassicLayout {...layoutProps} />
+      {layoutMode === 'editorial' ? <EditorialLayout {...layoutProps} /> : <ClassicLayout {...layoutProps} />}
+      {removedNotice && (
+        <Toast
+          message={removedNotice}
+          theme={theme}
+          editorial={layoutMode === 'editorial'}
+          onDone={handleRemovedNoticeDone}
+        />
+      )}
     </div>
   );
 }
