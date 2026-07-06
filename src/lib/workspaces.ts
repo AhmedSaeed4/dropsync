@@ -1,3 +1,4 @@
+import { getAuth } from 'firebase/auth';
 import {
   collection,
   addDoc,
@@ -13,7 +14,7 @@ import {
 } from 'firebase/firestore';
 import { db } from './firebase';
 import { Workspace } from '@/types';
-import { createWorkspaceKey, addMemberToWorkspaceKey, removeMemberFromWorkspaceKey } from './keys';
+import { createWorkspaceKey, removeMemberFromWorkspaceKey } from './keys';
 import { getProfile } from './profiles';
 import { deleteSharesForDrop } from './shares';
 
@@ -91,47 +92,54 @@ export async function createWorkspace(userId: string, name: string): Promise<Wor
   }
 }
 
-// Join a workspace using invite code
+// Join a workspace using an invite code. Routes through the server-side Admin SDK endpoint
+// /api/workspaces/join (Release 1 of server-side invite-code enforcement) — the Admin SDK bypasses
+// firestore.rules, so the membership add is enforced server-side rather than via a client write.
+// The route is USER-gated (any authenticated user holding a valid code), normalizes the code, does
+// the membership add atomically via FieldValue.arrayUnion, and returns the joined workspace.
+//
+// Signature + the { workspace, error? } return shape are unchanged so useWorkspaces.join,
+// handleJoinWorkspace, and both JoinWorkspaceModals stay untouched. The three server error strings
+// ("Invalid invite code" / "You are already a member of this workspace" / "Failed to join
+// workspace") pass through verbatim.
+//
+// NOTE: `userId` is no longer used in the body — the server derives the joining uid from the
+// verified ID token, so the client-passed value is intentionally not trusted for the write. The
+// parameter is kept to preserve the call-site signature (noUnusedParameters is off).
 export async function joinWorkspace(userId: string, inviteCode: string): Promise<{ workspace: Workspace | null; error?: string }> {
   try {
-    // Find workspace with this invite code
-    const q = query(
-      collection(db, WORKSPACES_COLLECTION),
-      where('inviteCode', '==', inviteCode.toUpperCase())
-    );
-
-    const snapshot = await getDocs(q);
-
-    if (snapshot.empty) {
-      return { workspace: null, error: 'Invalid invite code' };
+    const token = await getAuth().currentUser?.getIdToken();
+    if (!token) {
+      return { workspace: null, error: 'Failed to join workspace' };
     }
 
-    const workspaceDoc = snapshot.docs[0];
-    const data = workspaceDoc.data();
-
-    // Check if already a member
-    if (data.members.includes(userId)) {
-      return { workspace: null, error: 'You are already a member of this workspace' };
-    }
-
-    // Add user to members
-    const updatedMembers = [...data.members, userId];
-    await updateDoc(doc(db, WORKSPACES_COLLECTION, workspaceDoc.id), {
-      members: updatedMembers
+    const res = await fetch('/api/workspaces/join', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer ' + token,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ inviteCode }),
     });
 
-    // Add new member to workspace encryption key (use owner's access to share)
-    await addMemberToWorkspaceKey(workspaceDoc.id, userId, data.ownerId);
+    const json = await res.json();
+    if (!res.ok || json.error) {
+      return { workspace: null, error: json.error ?? 'Failed to join workspace' };
+    }
 
     return {
       workspace: {
-        id: workspaceDoc.id,
-        name: data.name,
-        ownerId: data.ownerId,
-        members: updatedMembers,
-        inviteCode: data.inviteCode,
-        createdAt: data.createdAt?.toDate() || new Date(),
-      }
+        id: json.workspaceId,
+        name: json.name,
+        ownerId: json.ownerId,
+        members: json.members,
+        inviteCode: json.inviteCode,
+        // The route deliberately omits createdAt. Synthesize the client-side fallback the original
+        // code already tolerated (|| new Date()): neither consumer (useWorkspaces.join /
+        // handleJoinWorkspace) reads createdAt, and the live createWorkspacesListener onSnapshot
+        // re-emits the real value the instant the membership write lands — so this is invisible.
+        createdAt: new Date(),
+      },
     };
   } catch (error) {
     console.error('Error joining workspace:', error);
