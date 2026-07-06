@@ -8,6 +8,7 @@ import {
   query,
   where,
   onSnapshot,
+  getDoc,
   getDocs,
   serverTimestamp,
   Timestamp
@@ -151,13 +152,11 @@ export async function joinWorkspace(userId: string, inviteCode: string): Promise
 export async function leaveWorkspace(userId: string, workspaceId: string, newOwnerId?: string): Promise<boolean> {
   try {
     const workspaceRef = doc(db, WORKSPACES_COLLECTION, workspaceId);
-    const snapshot = await getDocs(
-      query(collection(db, WORKSPACES_COLLECTION), where('__name__', '==', workspaceId))
-    );
+    const snapshot = await getDoc(workspaceRef);
 
-    if (snapshot.empty) return false;
+    if (!snapshot.exists()) return false;
 
-    const data = snapshot.docs[0].data();
+    const data = snapshot.data();
     const updatedMembers = data.members.filter((id: string) => id !== userId);
 
     // If owner leaves, transfer ownership or delete if last member
@@ -230,13 +229,11 @@ export function createWorkspacesListener(
 export async function deleteWorkspace(userId: string, workspaceId: string): Promise<boolean> {
   try {
     const workspaceRef = doc(db, WORKSPACES_COLLECTION, workspaceId);
-    const snapshot = await getDocs(
-      query(collection(db, WORKSPACES_COLLECTION), where('__name__', '==', workspaceId))
-    );
+    const snapshot = await getDoc(workspaceRef);
 
-    if (snapshot.empty) return false;
+    if (!snapshot.exists()) return false;
 
-    const data = snapshot.docs[0].data();
+    const data = snapshot.data();
 
     // Only owner can delete
     if (data.ownerId !== userId) return false;
@@ -301,13 +298,11 @@ export async function deleteWorkspace(userId: string, workspaceId: string): Prom
 // Get workspace by ID
 export async function getWorkspace(workspaceId: string): Promise<Workspace | null> {
   try {
-    const snapshot = await getDocs(
-      query(collection(db, WORKSPACES_COLLECTION), where('__name__', '==', workspaceId))
-    );
+    const snapshot = await getDoc(doc(db, WORKSPACES_COLLECTION, workspaceId));
 
-    if (snapshot.empty) return null;
+    if (!snapshot.exists()) return null;
 
-    const data = snapshot.docs[0].data();
+    const data = snapshot.data();
     return {
       id: workspaceId,
       name: data.name,
