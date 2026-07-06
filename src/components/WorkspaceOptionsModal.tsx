@@ -25,6 +25,9 @@ interface Props {
   theme: string; // 'dark' | 'minimal' | default('light')
   isDeleting: boolean;
   isLeaving: boolean;
+  isKicking: boolean;
+  onKick: (memberUid: string) => void;
+  currentUserId: string | null;
   onDelete: () => void;
   onLeaveAndTransfer: (newOwnerId: string) => void;
   onClose: () => void;
@@ -36,6 +39,9 @@ export default function WorkspaceOptionsModal({
   theme,
   isDeleting,
   isLeaving,
+  isKicking,
+  onKick,
+  currentUserId,
   onDelete,
   onLeaveAndTransfer,
   onClose,
@@ -43,9 +49,10 @@ export default function WorkspaceOptionsModal({
 }: Props) {
   const [members, setMembers] = useState<MemberInfo[] | null>(null);
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
-  const [confirming, setConfirming] = useState<null | 'delete' | 'transfer'>(null);
-  // Back closes only when not mid delete/transfer (matches the disabled X/backdrop).
-  useModalBackClose(true, () => { if (!(isDeleting || isLeaving)) onClose(); });
+  const [confirming, setConfirming] = useState<null | 'delete' | 'transfer' | 'kick'>(null);
+  const [kickTargetId, setKickTargetId] = useState<string | null>(null);
+  // Back closes only when not mid delete/transfer/kick (matches the disabled X/backdrop).
+  useModalBackClose(true, () => { if (!(isDeleting || isLeaving || isKicking)) onClose(); });
 
   // Fetch members on mount / when the workspace changes. `cancelled` prevents setState after
   // unmount; the modal is dismissed once a transfer/delete resolves, so this guards the race.
@@ -54,6 +61,7 @@ export default function WorkspaceOptionsModal({
     setMembers(null);
     setSelectedMemberId(null);
     setConfirming(null);
+    setKickTargetId(null);
     getWorkspaceMembers(workspace.members, workspace.ownerId)
       .then((fetched) => {
         if (cancelled) return;
@@ -70,7 +78,7 @@ export default function WorkspaceOptionsModal({
     };
   }, [workspace]);
 
-  const busy = isDeleting || isLeaving;
+  const busy = isDeleting || isLeaving || isKicking;
   const isDark = theme === 'dark';
   const isMinimal = theme === 'minimal';
   const isEditorial = variant === 'editorial';
@@ -145,6 +153,7 @@ export default function WorkspaceOptionsModal({
 
   const otherMembers = members.filter((m) => !m.isOwner);
   const selectedMember = otherMembers.find((m) => m.uid === selectedMemberId) || null;
+  const kickTarget = members.find((m) => m.uid === kickTargetId) || null;
   const isSolo = otherMembers.length === 0;
 
   // Returns the chrome (no width) for a given action, branching on variant + mode. Roles:
@@ -164,11 +173,12 @@ export default function WorkspaceOptionsModal({
 
   // Confirm-view button is always the EMPHASIZED treatment (the confirm step is the primary
   // action, unlike the options view where delete is de-emphasized).
-  const confirmBtnChrome = (action: 'delete' | 'transfer') => {
+  const confirmBtnChrome = (action: 'delete' | 'transfer' | 'kick') => {
     if (!isEditorial) {
-      return action === 'delete' ? classicChrome('danger') : classicChrome('primary');
+      // delete + kick → red danger; transfer → #FF5A47 primary.
+      return action === 'transfer' ? classicChrome('primary') : classicChrome('danger');
     }
-    return editorialPrimary; // editorial: black primary for both
+    return editorialPrimary; // editorial: black primary for all
   };
 
   return (
@@ -182,6 +192,8 @@ export default function WorkspaceOptionsModal({
               ? L('Delete workspace', 'DELETE_WORKSPACE')
               : confirming === 'transfer'
               ? L('Leave & transfer', 'LEAVE_&_TRANSFER')
+              : confirming === 'kick'
+              ? L('Remove member', 'REMOVE_MEMBER')
               : L('Workspace options', 'WORKSPACE_OPTIONS')}
           </h3>
           <button
@@ -202,20 +214,30 @@ export default function WorkspaceOptionsModal({
               <p className={`${bodyText} mb-4`}>
                 {confirming === 'delete'
                   ? `Delete "${workspace.name}"? This permanently deletes the workspace and ALL its drops for everyone. This cannot be undone.`
-                  : `Leave "${workspace.name}" and make ${selectedMember?.displayName ?? 'the selected member'} the owner? You'll be removed from the workspace; the workspace and all its drops stay intact for remaining members.`}
+                  : confirming === 'transfer'
+                  ? `Leave "${workspace.name}" and make ${selectedMember?.displayName ?? 'the selected member'} the owner? You'll be removed from the workspace; the workspace and all its drops stay intact for remaining members.`
+                  : `Remove ${kickTarget?.displayName ?? 'this member'} from "${workspace.name}"? They'll immediately lose access. The invite code will be rotated so they can't rejoin with the old code. Their existing drops and messages stay.`}
               </p>
               <div className="flex gap-2 mt-4">
                 <button onClick={() => setConfirming(null)} disabled={busy} className={`flex-1 ${actionBtnChrome('cancel')}`}>
                   {L('Back', 'BACK')}
                 </button>
                 <button
-                  onClick={confirming === 'delete' ? onDelete : () => selectedMemberId && onLeaveAndTransfer(selectedMemberId)}
-                  disabled={confirming === 'delete' ? isDeleting : isLeaving}
+                  onClick={
+                    confirming === 'delete'
+                      ? onDelete
+                      : confirming === 'transfer'
+                        ? () => selectedMemberId && onLeaveAndTransfer(selectedMemberId)
+                        : () => kickTargetId && onKick(kickTargetId)
+                  }
+                  disabled={confirming === 'delete' ? isDeleting : confirming === 'transfer' ? isLeaving : isKicking}
                   className={`flex-1 ${confirmBtnChrome(confirming)}`}
                 >
                   {confirming === 'delete'
                     ? (isDeleting ? (<><div className={spinner} />{L('Deleting...', 'DELETING...')}</>) : L('Confirm delete', 'CONFIRM_DELETE'))
-                    : (isLeaving ? (<><div className={spinner} />{L('Leaving...', 'LEAVING...')}</>) : L('Confirm transfer', 'CONFIRM_TRANSFER'))}
+                    : confirming === 'transfer'
+                    ? (isLeaving ? (<><div className={spinner} />{L('Leaving...', 'LEAVING...')}</>) : L('Confirm transfer', 'CONFIRM_TRANSFER'))
+                    : (isKicking ? (<><div className={spinner} />{L('Removing...', 'REMOVING...')}</>) : L('Confirm remove', 'CONFIRM_REMOVE'))}
                 </button>
               </div>
             </>
@@ -253,11 +275,18 @@ export default function WorkspaceOptionsModal({
                 {otherMembers.map((member) => {
                   const selected = member.uid === selectedMemberId;
                   return (
-                    <button
+                    <div
                       key={member.uid}
-                      type="button"
+                      role="button"
+                      tabIndex={busy ? -1 : 0}
                       onClick={() => setSelectedMemberId(member.uid)}
-                      disabled={busy}
+                      onKeyDown={(e) => {
+                        if (busy) return;
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          setSelectedMemberId(member.uid);
+                        }
+                      }}
                       className={isEditorial && tc
                         ? `w-full flex items-center gap-2 px-3 py-2 text-left transition-colors ${tc.fontClass} ${selected ? (isDark ? 'bg-white/10' : 'bg-[#1a1a1a]/10') : tc.inactivePillHoverBg}`
                         : `w-full flex items-center gap-2 px-2 py-1.5 text-left transition-colors ${
@@ -273,10 +302,39 @@ export default function WorkspaceOptionsModal({
                           }`}>
                         <span className={`text-[10px] font-medium ${isEditorial && tc ? (selected ? 'text-white' : tc.text) : 'text-white'}`}>{member.displayName.charAt(0).toUpperCase()}</span>
                       </div>
-                      <span className={isEditorial && tc ? `truncate text-sm ${tc.text}` : `truncate text-sm ${isDark ? 'text-white/90' : 'text-[#1A1A1A]/90'}`}>
+                      <span className={isEditorial && tc ? `flex-1 min-w-0 truncate text-sm ${tc.text}` : `flex-1 min-w-0 truncate text-sm ${isDark ? 'text-white/90' : 'text-[#1A1A1A]/90'}`}>
                         {member.displayName}
                       </span>
-                    </button>
+                      {member.uid !== currentUserId && (
+                        // Defense-in-depth: owner is already filtered out of otherMembers, so this
+                        // row is never the current user — but hide Remove for the current uid
+                        // regardless. stopPropagation so picking Remove does NOT change the
+                        // transfer radio selection. (Row is a div role=button so a real <button>
+                        // can validly nest here — invalid nested-button HTML was the reason for
+                        // converting the row off <button>.)
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setKickTargetId(member.uid);
+                            setConfirming('kick');
+                          }}
+                          // Mirror the onClick stopPropagation on the KEYDOWN path too. Without this,
+                          // Enter/Space on the focused button bubbles to the row <div role=button>
+                          // whose onKeyDown calls e.preventDefault() — that cancels the button's
+                          // synthesized activation click (kick unreachable by keyboard) AND runs
+                          // setSelectedMemberId (silently re-points the transfer radio). Stopping
+                          // propagation here lets the button activate normally; do NOT preventDefault.
+                          onKeyDown={(e) => e.stopPropagation()}
+                          disabled={busy}
+                          className={isEditorial && tc
+                            ? `shrink-0 px-2.5 py-1 text-xs ${tc.fontClass} border ${tc.border} rounded ${tc.muted} hover:bg-[#1a1a1a] hover:text-white transition-colors disabled:opacity-50`
+                            : `shrink-0 px-2.5 py-1 ${btnFont} ${isDark ? 'text-red-300 hover:text-red-200' : isMinimal ? 'text-red-600 hover:text-red-700' : 'text-red-500 hover:text-red-600'} transition-colors disabled:opacity-50`}
+                        >
+                          {L('Remove', 'REMOVE')}
+                        </button>
+                      )}
+                    </div>
                   );
                 })}
               </div>
