@@ -86,6 +86,7 @@ export function subscribeToGroupMessages(
           edited: !!data.edited,
           editedAt: data.editedAt?.toDate() ?? null,
           editCount: typeof data.editCount === 'number' ? data.editCount : 0,
+          replyToMessageId: data.replyToMessageId || undefined,
         });
         continue;
       }
@@ -103,6 +104,7 @@ export function subscribeToGroupMessages(
           edited: !!data.edited,
           editedAt: data.editedAt?.toDate() ?? null,
           editCount: typeof data.editCount === 'number' ? data.editCount : 0,
+          replyToMessageId: data.replyToMessageId || undefined,
         });
       } catch {
         messages.push({
@@ -116,6 +118,7 @@ export function subscribeToGroupMessages(
           edited: !!data.edited,
           editedAt: data.editedAt?.toDate() ?? null,
           editCount: typeof data.editCount === 'number' ? data.editCount : 0,
+          replyToMessageId: data.replyToMessageId || undefined,
         });
       }
     }
@@ -142,6 +145,7 @@ export async function sendGroupMessage(
   userId: string,
   senderName: string,
   content: string,
+  replyToMessageId?: string,
 ): Promise<string | null> {
   try {
     const workspaceKey = await getWorkspaceKey(workspaceId, userId);
@@ -152,6 +156,10 @@ export async function sendGroupMessage(
 
     const { encrypted, iv } = await encryptData(content, workspaceKey);
 
+    // Reply is a CREATE: it gets a fresh serverTimestamp() createdAt. replyToMessageId is a plaintext
+    // pointer (NEVER encrypted) written ONLY when present — omit the key entirely when undefined so
+    // we never store null. The create rule has no hasOnly allowlist, so the extra field passes; the
+    // update rule's hasOnly excludes it, making it immutable after create.
     const docRef = await addDoc(
       collection(db, 'workspaces', workspaceId, 'messages'),
       {
@@ -163,6 +171,7 @@ export async function sendGroupMessage(
         editCount: 0,            // baseline so the update rule's editCount math never hits the
                                  // missing-field branch for new messages
         createdAt: serverTimestamp(),
+        ...(replyToMessageId ? { replyToMessageId } : {}),
       },
     );
 

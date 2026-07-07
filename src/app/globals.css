@@ -576,3 +576,27 @@ body {
 .story-card:hover .card-back-list li:nth-child(4) { transition-delay: 0.2s; }
 .story-card:hover .card-back-list li:nth-child(5) { transition-delay: 0.25s; }
 .story-card:hover .card-back-list li:nth-child(6) { transition-delay: 0.3s; }
+
+/* Quote-reply jump-target highlight flash. Applied to the INNER bubble div (NOT the outer row, which
+   carries the entrance animate-fade-in-up). A ring that fades — chosen over a background tint so it
+   reads on EVERY bubble color. Theme-aware: WHITE ring on the dark theme, BLACK ring on light +
+   minimal (so it contrasts with the bubble regardless of theme). Re-triggerable on repeated taps:
+   useMessageScroll.jumpToMessage clears flashId then sets it ~260ms later, so React renders the
+   class-absent state before re-adding it and the animation restarts. */
+@keyframes msg-flash-dark {
+  0%   { box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.70); }
+  100% { box-shadow: 0 0 0 3px rgba(255, 255, 255, 0); }
+}
+
+@keyframes msg-flash-light {
+  0%   { box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.45); }
+  100% { box-shadow: 0 0 0 3px rgba(0, 0, 0, 0); }
+}
+
+.animate-msg-flash-dark {
+  animation: msg-flash-dark 1.2s ease-out;
+}
+
+.animate-msg-flash-light {
+  animation: msg-flash-light 1.2s ease-out;
+}
