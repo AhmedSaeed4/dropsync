@@ -1,14 +1,8 @@
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import type { Metadata } from 'next';
 import { cache } from 'react';
 import ShareClient from './ShareClient';
 import { getAdminDb } from '@/lib/firebase-admin';
-
-// Production origin for absolute OG URLs (og:url / og:image). Confirmed from the repo's only
-// domain reference (admin-route comments) and CLAUDE.md's CORS example — next.config and vercel.json
-// configure no custom domain, so this is the canonical prod origin. No new env var is introduced;
-// metadataBase is set once on the root layout.
-const SITE_ORIGIN = 'https://dropsync.vercel.app';
 
 // Neutral default Metadata, returned byte-identical for EVERY non-revealing case: missing doc,
 // expired doc (expiresAt <= now), or ANY exception in the read. A crawler/prober cannot
@@ -25,7 +19,9 @@ const NEUTRAL_METADATA: Metadata = {
     description: 'Shared securely via DropSync',
     siteName: 'DropSync',
     type: 'website',
-    url: SITE_ORIGIN,
+    // No og:url: a module constant can't read headers(), and any fixed URL would re-introduce a
+    // hardcoded origin. Omitting it keeps this neutral default shareId-free and byte-identical
+    // across all nonexistent IDs (crawlers fall back to the page URL they fetched).
   },
   twitter: {
     card: 'summary',
@@ -94,6 +90,17 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   try {
     const { shareId } = await params; // Next 16: params is a Promise
+
+    // Derive the real request origin dynamically so og:url + the icon.svg fallback are correct on
+    // prod, on Vercel preview deploys, and on any future custom domain — never a hardcoded guess.
+    // Prod (Vercel) sets x-forwarded-host/x-forwarded-proto; dev exposes `host`. The literal is only
+    // the impossible no-host fallback (the real production origin). headers() opts this into dynamic
+    // rendering (intended — origin is per-request); SharePage (cookies + ShareClient) is untouched.
+    const h = await headers();
+    const host = h.get('x-forwarded-host') || h.get('host');
+    const proto = h.get('x-forwarded-proto')?.split(',')[0] || 'https';
+    const origin = host ? `${proto}://${host}` : 'https://drag-drop-app.vercel.app';
+
     if (!shareId) return NEUTRAL_METADATA;
 
     const og = await readShareForOg(shareId);
@@ -118,7 +125,7 @@ export async function generateMetadata({
     // (SVG OG images aren't rendered by every social platform; those just show no image and the
     // twitter card stays summary — acceptable, and the file already exists for the favicon.)
     if (!ogImage) {
-      ogImage = `${SITE_ORIGIN}/icon.svg`;
+      ogImage = `${origin}/icon.svg`;
     }
 
     // ---- description (generic + branded; NEVER the content body) ----
@@ -135,7 +142,7 @@ export async function generateMetadata({
         description,
         siteName: 'DropSync',
         type: 'website',
-        url: `${SITE_ORIGIN}/s/${shareId}`,
+        url: `${origin}/s/${shareId}`,
         images: ogImageWidth
           ? [{ url: ogImage, width: ogImageWidth, height: ogImageHeight }]
           : [{ url: ogImage }],
