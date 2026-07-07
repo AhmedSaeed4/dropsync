@@ -13,13 +13,11 @@ const raleway = Raleway({
   variable: "--font-raleway",
 });
 
-// Production origin for resolving relative metadata URLs (og:image etc.) and absolute OG URLs.
-// Confirmed from the repo's only domain reference (admin-route comments) + CLAUDE.md's CORS
-// example; next.config/vercel.json configure no custom domain. No new env var is introduced.
-const SITE_ORIGIN = "https://dropsync.vercel.app";
-
+// Real production origin for resolving relative metadata URLs (og:image etc.). This is a static
+// export so it can't read request headers — the share page's generateMetadata derives its origin
+// dynamically from the request instead (correct on prod, preview deploys, and custom domains).
 export const metadata: Metadata = {
-  metadataBase: new URL(SITE_ORIGIN),
+  metadataBase: new URL("https://drag-drop-app.vercel.app"),
   title: "DROPSYNC // OP/INTELLIGENCE",
   description: "Secure file transfer system. Drop anywhere, pickup anywhere. Auto-expire 2hrs.",
   icons: {

@@ -36,7 +36,7 @@ const adminDb = getFirestore();
 // lists instead of their raw uid.
 //
 // Trigger once as the owner (e.g. from the browser console with the owner's ID token):
-//   curl -X POST https://dropsync.vercel.app/api/admin/migrate-profiles \
+//   curl -X POST https://drag-drop-app.vercel.app/api/admin/migrate-profiles \
 //     -H "Authorization: Bearer <owner-id-token>"
 export async function POST(request: NextRequest) {
   try {
