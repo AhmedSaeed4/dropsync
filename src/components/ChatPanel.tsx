@@ -20,6 +20,8 @@ import { Drop, GroupChatMessage } from '@/types';
 import { DropPickerRow } from './DropPickerRow';
 import { DropMentionContent } from './DropMentionContent';
 import { MessageContextMenu } from '@/components/MessageContextMenu';
+import { ReplyQuoteBlock, ReplyPreviewBar } from '@/components/ReplyQuoteBlock';
+import { useMessageScroll } from '@/hooks/useMessageScroll';
 
 interface ChatPanelProps {
   theme: 'light' | 'dark' | 'minimal';
@@ -160,11 +162,12 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
   // Inline message editor — editingMsgId === msg.id swaps that bubble's text node for a textarea.
   const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState('');
+  // Quote-reply draft — replyTo is the message being replied to; cleared on send / Escape / mode or
+  // workspace switch. Display-only context; replyTo?.id is passed as sendGroupMessage's 5th arg.
+  const [replyTo, setReplyTo] = useState<GroupChatMessage | null>(null);
   const groupUnsubRef = useRef<(() => void) | null>(null);
   const systemNoticeRef = useRef<HTMLDivElement>(null);
   const hadNoticeRef = useRef(false);
-  const longPressTimer = useRef<NodeJS.Timeout | null>(null);
-  const touchStartPos = useRef<{ x: number; y: number } | null>(null);
 
   // Inline drop-reference chips — mirrors the drop-note editor (TextModal). The group composer AND
   // the inline edit box back a contentEditable <div> with the shared useMentionEditor hook; chips
@@ -184,6 +187,8 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const unsubRef = useRef<(() => void) | null>(null);
+  // Scroll-to-message + flash-highlight for quote-reply jumps (shared with EditorialChatPanel).
+  const { setMessageRef, jumpToMessage, flashId } = useMessageScroll(scrollRef);
   const s = getThemeStyles(theme);
   const userId = auth.currentUser?.uid;
   const isOwner = !!userId && ownerId === userId;
@@ -454,6 +459,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
 
     if (text === '/clear') {
       setGroupInput('');
+      setReplyTo(null);
       if (isOwner) {
         setClearConfirm(true);
       } else {
@@ -462,14 +468,20 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
       return;
     }
 
-    if (!text) return;
+    if (!text) {
+      setReplyTo(null);
+      return;
+    }
 
     // Chips are already inline in groupInput as #[name](id) tokens (serialized by useMentionEditor),
     // so the message body IS the trimmed input — no separate attachment prepend.
     const senderName = auth.currentUser?.displayName || auth.currentUser?.email?.split('@')[0] || 'Unknown';
     setGroupInput('');
+    setReplyTo(null);
     setGroupSending(true);
-    await sendGroupMessage(workspaceId, userId, senderName, text);
+    // replyTo?.id is the quote pointer (CREATE only; plaintext id, never encrypted). Undefined when
+    // not replying → sendGroupMessage omits the key entirely (never writes null).
+    await sendGroupMessage(workspaceId, userId, senderName, text, replyTo?.id);
     setGroupSending(false);
     setTimeout(() => groupMention.editorRef.current?.focus(), 100);
   };
@@ -500,40 +512,15 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
     }
   };
 
-  const handleMessageContextMenu = (e: React.MouseEvent, msg: GroupChatMessage) => {
+  // WhatsApp-style: the per-message chevron opens the action menu at the BUTTON's rect (just below
+  // it), reusing the existing x/y model + MessageContextMenu's viewport-overflow flip — so NO change
+  // to that component's positioning. stopPropagation so the click never triggers the panel-root
+  // focus-on-click. (Replaces the old right-click / 700ms-long-press trigger, which is removed.)
+  const openMenuFromButton = (e: React.MouseEvent, msg: GroupChatMessage) => {
     e.preventDefault();
-    setMenuMsg({ msg, x: e.clientX, y: e.clientY });
-  };
-
-  const handleMessageTouchStart = (e: React.TouchEvent, msg: GroupChatMessage) => {
-    const touch = e.touches[0];
-    touchStartPos.current = { x: touch.clientX, y: touch.clientY };
-    longPressTimer.current = setTimeout(() => {
-      setMenuMsg({ msg, x: touch.clientX, y: touch.clientY });
-      touchStartPos.current = null;
-    }, 700);
-  };
-
-  const handleMessageTouchMove = (e: React.TouchEvent) => {
-    if (!touchStartPos.current) return;
-    const touch = e.touches[0];
-    const dx = Math.abs(touch.clientX - touchStartPos.current.x);
-    const dy = Math.abs(touch.clientY - touchStartPos.current.y);
-    if (dx > 10 || dy > 10) {
-      if (longPressTimer.current) {
-        clearTimeout(longPressTimer.current);
-        longPressTimer.current = null;
-      }
-      touchStartPos.current = null;
-    }
-  };
-
-  const handleMessageTouchEnd = () => {
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current);
-      longPressTimer.current = null;
-    }
-    touchStartPos.current = null;
+    e.stopPropagation();
+    const r = e.currentTarget.getBoundingClientRect();
+    setMenuMsg({ msg, x: r.left, y: r.bottom });
   };
 
   const handleCopyMessage = async (msg: GroupChatMessage) => {
@@ -556,6 +543,15 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
   // Inline edit lifecycle. editDraft is seeded from the RAW message content (not the parsed parts) so
   // #[name](id) attachment mentions survive the round-trip and re-parse correctly after save. Silent:
   // editGroupMessage never notifies. On failure we revert to the old content (cancel) + log.
+  // Quote-reply lifecycle. startReply closes the action menu, stashes the message being replied to,
+  // and focuses the composer so the user can type immediately. clearReply drops it (✕ / Escape /
+  // send / mode or workspace switch).
+  const startReply = (msg: GroupChatMessage) => {
+    setMenuMsg(null);
+    setReplyTo(msg);
+    groupMention.editorRef.current?.focus();
+  };
+  const clearReply = () => setReplyTo(null);
   const startEditing = (msg: GroupChatMessage) => {
     setMenuMsg(null);
     setEditingMsgId(msg.id);
@@ -579,12 +575,13 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
     }
   };
 
-  // Cancel any open editor when the user leaves this workspace / chat mode — the panel does NOT
-  // remount on a workspace switch (its groupMessages state isn't cleared), so without this an
-  // editingMsgId could outlive the message it points at.
+  // Cancel any open editor / reply draft when the user leaves this workspace / chat mode — the panel
+  // does NOT remount on a workspace switch (its groupMessages state isn't cleared), so without this
+  // an editingMsgId / replyTo could outlive the message it points at.
   useEffect(() => {
     setEditingMsgId(null);
     setEditDraft('');
+    setReplyTo(null);
   }, [workspaceId, chatMode]);
 
   // Scroll a notice into view ONLY when one appears from nothing.
@@ -838,7 +835,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
             const timeStr = msg.createdAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
             return (
-              <div key={msg.id} className={`flex ${isOwn ? 'justify-end' : 'justify-start'} animate-fade-in-up`} style={{ animationDelay: `${Math.min(idx, 10) * 30}ms` }}>
+              <div key={msg.id} className={`group flex ${isOwn ? 'justify-end' : 'justify-start'} animate-fade-in-up`} style={{ animationDelay: `${Math.min(idx, 10) * 30}ms` }}>
                 {/* Avatar for other users */}
                 {!isOwn && showSender && (
                   <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-medium shrink-0 mr-1.5 mt-0.5 ${s.sendBtn} text-white`}>
@@ -846,18 +843,29 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
                   </div>
                 )}
                 {!isOwn && !showSender && <div className="w-6 mr-1.5 shrink-0" />}
-                <div className="max-w-[80%]">
+                <div className="relative max-w-[80%]">
+                  {/* Message-actions chevron (replaces right-click / long-press). Outer side, away from
+                      the screen edge + the incoming avatar: own (right-aligned) → top-LEFT; others
+                      (left-aligned) → top-RIGHT. Hover-reveals on desktop (group-hover), always on
+                      touch ([@media(hover:none)]) + keyboard (focus). Pure CSS, no device sniffing. */}
+                  <button
+                    type="button"
+                    aria-label="Message actions"
+                    onClick={(e) => openMenuFromButton(e, msg)}
+                    className={`absolute top-0 ${isOwn ? 'right-full mr-0.5' : 'left-full ml-0.5'} flex h-5 w-5 items-center justify-center rounded ${s.muted} opacity-0 transition-opacity hover:opacity-100 focus:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100`}
+                  >
+                    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
                   {showSender && !isOwn && (
                     <p className={`text-[10px] ${s.muted} mb-0.5 ml-1 truncate max-w-[160px]`}>{msg.senderName}</p>
                   )}
                   <div
+                    ref={setMessageRef(msg.id)}
                     className={`px-3 py-2 text-xs leading-relaxed ${s.roundedClass} ${
                       isOwn ? s.userBubble : s.assistantBubble
-                    }`}
-                    onContextMenu={(e) => handleMessageContextMenu(e, msg)}
-                    onTouchStart={(e) => handleMessageTouchStart(e, msg)}
-                    onTouchMove={handleMessageTouchMove}
-                    onTouchEnd={handleMessageTouchEnd}
+                    } ${flashId === msg.id ? (theme === 'dark' ? 'animate-msg-flash-dark' : 'animate-msg-flash-light') : ''}`}
                   >
                     {editingMsgId === msg.id ? (
                       <div onClick={(e) => e.stopPropagation()} className={`relative flex flex-col gap-1.5 min-w-[180px] p-1.5 border ${s.inputBorder} ${s.roundedClass} ${s.panelBg}`}>
@@ -919,6 +927,18 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
                       </div>
                     ) : (
                       <>
+                        {/* Quote-reply block — ABOVE the body. Resolved live from groupMessages so
+                            edits/deletes to the parent reflect immediately; tapping jumps + flashes.
+                            (Hidden while this message is being edited — the edit box replaces this
+                            fragment — acceptable; the replyTo pointer survives.) */}
+                        {msg.replyToMessageId && (
+                          <ReplyQuoteBlock
+                            replyToMessageId={msg.replyToMessageId}
+                            groupMessages={groupMessages}
+                            onJump={() => jumpToMessage(msg.replyToMessageId!)}
+                            roundedClassName={s.roundedClass}
+                          />
+                        )}
                         {/* Inline render: text → <span>, #[name](id) → clickable chip, in sentence
                             order. Replaces the old separate card-row so chips stay coherent with
                             inline composing. whitespace-pre-wrap preserves newlines in text parts. */}
@@ -1009,6 +1029,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
                 (menuMsg.msg.editCount ?? 0) < 10
               }
               onEdit={() => startEditing(menuMsg.msg)}
+              onReply={() => startReply(menuMsg.msg)}
               onCopy={() => handleCopyMessage(menuMsg.msg)}
               onDelete={() => handleDeleteMessage(menuMsg.msg)}
               onClose={closeMessageMenu}
@@ -1047,6 +1068,17 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
           </form>
         ) : (
           <>
+            {replyTo && (
+              <ReplyPreviewBar
+                replyTo={replyTo}
+                onClear={clearReply}
+                containerClassName={`${s.activeBg} ${s.roundedClass} ${s.inputText}`}
+                iconClassName={s.muted}
+                nameClassName={s.inputText}
+                snippetClassName={s.muted}
+                closeBtnClassName={`${s.muted} hover:opacity-100`}
+              />
+            )}
             <form
               onSubmit={(e) => { e.preventDefault(); handleGroupSend(); }}
               className="flex gap-2"
@@ -1086,9 +1118,15 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
                   onKeyDown={(e) => {
                     // Hook handles picker nav + Enter-to-pick when open; closed + Enter (no shift) sends.
                     groupMention.handleKeyDown(e);
-                    if (!e.defaultPrevented && e.key === 'Enter' && !e.shiftKey) {
+                    if (e.defaultPrevented) return;
+                    if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault();
                       handleGroupSend();
+                    } else if (e.key === 'Escape' && replyTo) {
+                      // Mirror the inline-edit's Escape→cancel: clear an active reply first; the
+                      // composer has no other Escape behavior, so without a reply this is a no-op.
+                      e.preventDefault();
+                      clearReply();
                     }
                   }}
                   onBlur={groupMention.handleBlur}

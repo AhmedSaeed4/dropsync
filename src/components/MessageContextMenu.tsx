@@ -12,6 +12,7 @@ interface MessageContextMenuProps {
   onDelete: () => void;
   onEdit?: () => void;
   canEdit?: boolean;
+  onReply?: () => void;
   onClose: () => void;
   theme?: 'light' | 'dark' | 'minimal';
   editorial?: boolean;
@@ -25,6 +26,7 @@ export function MessageContextMenu({
   onDelete,
   onEdit,
   canEdit,
+  onReply,
   onClose,
   theme = 'light',
   editorial,
@@ -82,6 +84,13 @@ export function MessageContextMenu({
     onClose();
   };
 
+  const handleReply = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    onReply?.();
+    onClose();
+  };
+
   const stopAndClose = (e: React.MouseEvent) => {
     e.stopPropagation();
     e.preventDefault();
@@ -118,6 +127,17 @@ export function MessageContextMenu({
           </svg>
           Copy text
         </button>
+        {onReply && (
+          <button
+            onClick={handleReply}
+            className={`w-full px-3 py-2 text-left text-xs ${tc!.fontClass} ${tc!.text} hover:bg-[#1a1a1a]/5 transition-colors flex items-center gap-2`}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3" />
+            </svg>
+            Reply
+          </button>
+        )}
         {canEdit && (
           <button
             onClick={handleEdit}
@@ -172,6 +192,21 @@ export function MessageContextMenu({
           </svg>
           {isMinimal ? 'Copy text' : 'COPY_TEXT'}
         </button>
+        {onReply && (
+          <button
+            onClick={handleReply}
+            className={`w-full px-3 py-2 text-left flex items-center gap-2 transition-colors ${
+              isMinimal
+                ? `text-xs font-sans tracking-wide text-[#1A1A1A] hover:bg-[#1A1A1A]/10`
+                : `text-[10px] font-mono uppercase tracking-wider ${isDark ? 'text-white hover:bg-white/10' : 'text-[#1A1A1A] hover:bg-[#1A1A1A]/10'}`
+            }`}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3" />
+            </svg>
+            {isMinimal ? 'Reply' : 'REPLY'}
+          </button>
+        )}
         {canEdit && (
           <button
             onClick={handleEdit}

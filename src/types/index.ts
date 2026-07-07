@@ -90,4 +90,10 @@ export interface GroupChatMessage {
   edited?: boolean;
   editedAt?: Date | null;
   editCount?: number;
+  // Quote-reply pointer — the id of the message this one is replying to. DISPLAY-ONLY: a plaintext
+  // id like senderId/senderName (NEVER passed through encryptData/decryptData — no new crypto). Set
+  // once at CREATE only (the firestore.rules update rule's hasOnly allowlist excludes it, so it is
+  // immutable after create; editing a replied message preserves the pointer). Like editedAt it is
+  // display-only context and MUST NEVER feed the unread counter / read-state / foreground listener.
+  replyToMessageId?: string;
 }
