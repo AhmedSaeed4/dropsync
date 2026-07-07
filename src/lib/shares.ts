@@ -59,11 +59,36 @@ function identityMatches(a: ShareIdentity, b: ShareIdentity): boolean {
   );
 }
 
+// Cryptographically-secure, unbiased share-ID generator.
+// A shareId is a BEARER SECRET — anyone holding it reads the fully-decrypted plaintext share via
+// GET /api/share with no auth. So it must be unguessable, which Math.random() does NOT guarantee
+// (it is not a CSPRNG and its output can correlate across calls / be observable). crypto.getRandom
+// Values supplies a cryptographically-secure RNG.
+// The 62-char alphabet is not a power of two, so naive `byte % 62` introduces modulo bias (a few
+// chars ~2% likelier). Rejection sampling eliminates it: only accept a byte below the largest
+// multiple of 62 that fits in a uint8 (248); bytes 248–255 are biased and re-rolled.
+// Lengthened 12 → 20 chars (62^20 ≈ 7e35 keyspace) to harden against brute-force enumeration.
+// Same alphabet, signature, and return type. Existing 12-char IDs are opaque strings — nothing
+// validates length/format, so they keep working unchanged.
 function generateShareId(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  // Largest multiple of the alphabet size that fits in a byte (62 → 248). Bytes ≥ this are
+  // rejected and re-rolled so every char is exactly equiprobable (no modulo bias).
+  const limit = Math.floor(256 / chars.length) * chars.length;
+  const randomValues = new Uint8Array(20);
+  crypto.getRandomValues(randomValues);
+
   let result = '';
-  for (let i = 0; i < 12; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  for (let i = 0; i < 20; i++) {
+    let byte = randomValues[i];
+    // Re-roll only the rejected bytes (248–255, ~3% each) until unbiased. Keeps the guarantee
+    // without regenerating the whole buffer; ~0.6 extra bytes expected across all 20 chars.
+    while (byte >= limit) {
+      const next = new Uint8Array(1);
+      crypto.getRandomValues(next);
+      byte = next[0];
+    }
+    result += chars.charAt(byte % chars.length);
   }
   return result;
 }
