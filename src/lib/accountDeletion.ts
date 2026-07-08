@@ -153,7 +153,7 @@ export async function deleteAccount(
 ): Promise<{ success: boolean; error?: string }> {
   try {
     let currentStep = 0;
-    const totalSteps = 8; // 8 onProgress steps (FCM client step removed — cleaned server-side instead)
+    const totalSteps = 9; // 9 onProgress steps (FCM tokens now cleaned server-side in Step 4)
     const firebaseUser = auth.currentUser;
 
     if (!firebaseUser || firebaseUser.uid !== userId) {
@@ -252,14 +252,22 @@ export async function deleteAccount(
       console.error('Failed to delete AI chat history:', error);
     }
 
-    // FCM push tokens (users/{uid}/fcmTokens/{token}) are intentionally NOT cleaned here. The
-    // subcollection read is rule-locked (`allow read: if false`, firestore.rules:80 — only the server
-    // / Admin SDK may read tokens), so the client cannot enumerate them; a client getDocs would always
-    // throw permission-denied (and log a noisy "Missing or insufficient permissions" error on every
-    // deletion). They are cleaned in a dedicated server-side follow-up (Admin SDK route). Firestore
-    // does not cascade-delete subcollections, so until that follow-up ships the token docs orphan
-    // after users/{uid} is deleted below — but they are rule-unreadable (allow read: false), so this
-    // is housekeeping debt, not a data leak.
+    // Step 4 (best-effort): Delete ALL this user's FCM push tokens SERVER-SIDE. The client cannot —
+    // the fcmTokens subcollection read is rule-locked (`allow read: if false`, firestore.rules:80), so
+    // we POST to /api/cleanup-fcm-tokens, which uses the Admin SDK (bypasses rules) and deletes only
+    // the VERIFIED caller's own tokens (uid from verifyIdToken — never from the body). MUST run BEFORE
+    // firebaseUser.delete() (Step 9): after it the Auth user is gone, so getIdToken() throws (no
+    // token to send) → the cleanup can't run. Best-effort: try/catch, never aborts deletion.
+    onProgress?.({ step: 'Cleaning push tokens', current: ++currentStep, total: totalSteps });
+    try {
+      const idToken = await firebaseUser.getIdToken();
+      await fetch('/api/cleanup-fcm-tokens', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${idToken}` },
+      });
+    } catch (error) {
+      console.error('Failed to clean FCM tokens server-side:', error);
+    }
 
     // Step 5 (best-effort): Delete the user's PERSONAL categories (categories where workspaceId == null
     // && createdBy == uid). workspaces.ts:310-312 notes personal categories are never deleted on
