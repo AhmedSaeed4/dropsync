@@ -1,5 +1,6 @@
 import { auth, db } from './firebase';
 import { deleteDoc, doc, collection, query, where, getDocs, updateDoc, QueryDocumentSnapshot } from 'firebase/firestore';
+import { deleteConversation } from './chat';
 import { deleteMasterKey } from './crypto';
 import { deleteFromR2 } from './drops';
 import { PROFILES_COLLECTION, getProfile } from './profiles';
@@ -10,6 +11,7 @@ const USER_KEYS_COLLECTION = 'userKeys';
 const USER_PUBLIC_KEYS_COLLECTION = 'userPublicKeys';
 const WORKSPACES_COLLECTION = 'workspaces';
 const DROPS_COLLECTION = 'drops';
+const CATEGORIES_COLLECTION = 'categories';
 
 export interface WorkspaceMember {
   uid: string;
@@ -151,7 +153,7 @@ export async function deleteAccount(
 ): Promise<{ success: boolean; error?: string }> {
   try {
     let currentStep = 0;
-    const totalSteps = 10; // Approximate
+    const totalSteps = 8; // 8 onProgress steps (FCM client step removed — cleaned server-side instead)
     const firebaseUser = auth.currentUser;
 
     if (!firebaseUser || firebaseUser.uid !== userId) {
@@ -182,6 +184,18 @@ export async function deleteAccount(
     for (const workspaceDoc of workspacesSnap.docs) {
       const data = workspaceDoc.data();
       const workspaceRef = doc(db, WORKSPACES_COLLECTION, workspaceDoc.id);
+
+      // (best-effort, FOLDED into this workspace loop — no second query) Delete this user's group-chat
+      // read cursor workspaces/{wsId}/readState/{uid} NOW, while they are still a member (the rule at
+      // firestore.rules:213-220 requires current membership for the write). Firestore does NOT cascade-
+      // delete subcollections, so the members-removal / workspace-delete below would otherwise orphan
+      // this doc. deleteDoc on a missing readState doc is a no-op. Rule: allow write (covers delete) if
+      // auth.uid == userId && current member → ALLOWED. MUST run before the mutation in this iteration.
+      try {
+        await deleteDoc(doc(db, WORKSPACES_COLLECTION, workspaceDoc.id, 'readState', userId));
+      } catch (error) {
+        console.error('Failed to delete group-chat read state:', error);
+      }
 
       if (data.ownerId === userId) {
         // User is owner
@@ -216,24 +230,79 @@ export async function deleteAccount(
       }
     }
 
-    // Step 3: Delete user document
+    // Step 3 (best-effort): Delete the user's AI assistant chat history (chats/{uid}/conversations/
+    // {convId}/messages/{msgId} + each conversation doc, then the chats/{uid} parent as an idempotent
+    // tidy-up). Plaintext personal AI history was previously never touched on account deletion. Reuses
+    // deleteConversation (already wipes a conversation's messages then its doc). The chats/{uid} parent
+    // is usually an implied, doc-less path segment, so deleting it is a harmless no-op. Rule: read/write/
+    // delete on chats + its subcollections allowed when auth.uid == userId (firestore.rules:292-308) → ALLOWED.
+    onProgress?.({ step: 'Deleting AI chat history', current: ++currentStep, total: totalSteps });
+    try {
+      const conversationsSnap = await getDocs(collection(db, 'chats', userId, 'conversations'));
+      for (const convDoc of conversationsSnap.docs) {
+        try {
+          await deleteConversation(userId, convDoc.id);
+        } catch (error) {
+          console.error('Failed to delete AI conversation:', error);
+        }
+      }
+      // Idempotent tidy-up of the (usually implied, doc-less) chats/{uid} parent path segment.
+      await deleteDoc(doc(db, 'chats', userId));
+    } catch (error) {
+      console.error('Failed to delete AI chat history:', error);
+    }
+
+    // FCM push tokens (users/{uid}/fcmTokens/{token}) are intentionally NOT cleaned here. The
+    // subcollection read is rule-locked (`allow read: if false`, firestore.rules:80 — only the server
+    // / Admin SDK may read tokens), so the client cannot enumerate them; a client getDocs would always
+    // throw permission-denied (and log a noisy "Missing or insufficient permissions" error on every
+    // deletion). They are cleaned in a dedicated server-side follow-up (Admin SDK route). Firestore
+    // does not cascade-delete subcollections, so until that follow-up ships the token docs orphan
+    // after users/{uid} is deleted below — but they are rule-unreadable (allow read: false), so this
+    // is housekeeping debt, not a data leak.
+
+    // Step 5 (best-effort): Delete the user's PERSONAL categories (categories where workspaceId == null
+    // && createdBy == uid). workspaces.ts:310-312 notes personal categories are never deleted on
+    // workspace teardown — this fixes that for ACCOUNT deletion. Workspace-scoped categories are
+    // excluded by the workspaceId == null filter → untouched (they belong to the workspace). Rule:
+    // read/delete allowed for the creator on personal categories (firestore.rules:275-276, :284-285) → ALLOWED.
+    onProgress?.({ step: 'Deleting personal categories', current: ++currentStep, total: totalSteps });
+    try {
+      const personalCatsQuery = query(
+        collection(db, CATEGORIES_COLLECTION),
+        where('createdBy', '==', userId),
+        where('workspaceId', '==', null),
+      );
+      const personalCatsSnap = await getDocs(personalCatsQuery);
+      for (const catDoc of personalCatsSnap.docs) {
+        try {
+          await deleteDoc(catDoc.ref);
+        } catch (error) {
+          console.error('Failed to delete personal category:', error);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to query personal categories for cleanup:', error);
+    }
+
+    // Step 6: Delete user document
     onProgress?.({ step: 'Deleting user data', current: ++currentStep, total: totalSteps });
     await deleteDoc(doc(db, USERS_COLLECTION, userId));
     // Also delete the world-readable profile doc so it isn't orphaned (displayName/photoURL moved
     // here). Mirrors the userPublicKeys delete below.
     await deleteDoc(doc(db, PROFILES_COLLECTION, userId));
 
-    // Step 4: Delete user keys from Firestore
+    // Step 7: Delete user keys from Firestore
     onProgress?.({ step: 'Deleting encryption keys', current: ++currentStep, total: totalSteps });
     await deleteDoc(doc(db, USER_KEYS_COLLECTION, userId));
     // Also delete the mirrored world-readable publicKey doc so it isn't orphaned.
     await deleteDoc(doc(db, USER_PUBLIC_KEYS_COLLECTION, userId));
 
-    // Step 5: Delete IndexedDB master key
+    // Step 8: Delete IndexedDB master key
     onProgress?.({ step: 'Cleaning up local data', current: ++currentStep, total: totalSteps });
     await deleteMasterKey(userId);
 
-    // Step 6: Delete Firebase Auth user
+    // Step 9: Delete Firebase Auth user
     onProgress?.({ step: 'Deleting account', current: ++currentStep, total: totalSteps });
     await firebaseUser.delete();
 
