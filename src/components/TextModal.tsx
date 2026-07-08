@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { getAuth } from 'firebase/auth';
 import { Drop, ExpirationOption } from '@/types';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useModalBackClose } from '@/hooks/useModalBackClose';
@@ -238,12 +239,21 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
 
         setIsTranscribing(true);
         try {
-          const formData = new FormData();
-          formData.append('file', blob, 'recording.webm');
-          const res = await fetch('/api/transcribe', { method: 'POST', body: formData });
-          const data = await res.json();
-          if (data.text) {
-            setContent(prev => prev ? prev + '\n' + data.text : data.text);
+          const token = await getAuth().currentUser?.getIdToken();
+          if (!token) {
+            console.error('Transcription failed: not signed in');
+          } else {
+            const formData = new FormData();
+            formData.append('file', blob, 'recording.webm');
+            const res = await fetch('/api/transcribe', {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${token}` },
+              body: formData,
+            });
+            const data = await res.json();
+            if (data.text) {
+              setContent(prev => prev ? prev + '\n' + data.text : data.text);
+            }
           }
         } catch (err) {
           console.error('Transcription failed:', err);

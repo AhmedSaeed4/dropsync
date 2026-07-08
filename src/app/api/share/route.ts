@@ -3,6 +3,7 @@ import { initializeApp, getApps, cert } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { isAllowedR2Url } from '@/lib/r2Url';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -184,6 +185,18 @@ export async function POST(request: NextRequest) {
 
     if (!shareId || !dropId || !type || !name) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+    }
+
+    // SSRF guard: imageUrl/fileUrl are stored verbatim from the body, so without this a caller could
+    // store an internal/localhost/metadata URL and later have /api/share/download fetch it
+    // server-side. Allow R2 storage URLs only (https + origin == R2_PUBLIC_URL origin). Fail-closed
+    // when R2_PUBLIC_URL is unset. Legit shares/ and drops/ URLs both live under that origin, so real
+    // shares (including binary shares pointing at a drop's R2 URL) are unaffected.
+    if (imageUrl && !isAllowedR2Url(imageUrl)) {
+      return NextResponse.json({ error: 'Invalid image URL' }, { status: 400 });
+    }
+    if (fileUrl && !isAllowedR2Url(fileUrl)) {
+      return NextResponse.json({ error: 'Invalid file URL' }, { status: 400 });
     }
 
     const docData: Record<string, unknown> = {
