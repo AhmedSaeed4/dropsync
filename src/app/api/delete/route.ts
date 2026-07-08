@@ -50,7 +50,11 @@ export async function POST(request: NextRequest) {
     // =============================================
     // Get request body
     // =============================================
-    const { key, workspaceId } = await request.json();
+    // Body shape is { key, workspaceId } (deleteFromR2 still sends workspaceId), but workspaceId is
+    // intentionally NOT read here — authorization is derived solely from the drop's own record
+    // below. (Hole A: a client-supplied workspaceId could otherwise override the drop's real
+    // workspace and bypass the personal-drop ownership branch.)
+    const { key } = await request.json();
 
     if (!key) {
       return NextResponse.json({ error: 'No key provided' }, { status: 400 });
@@ -71,7 +75,17 @@ export async function POST(request: NextRequest) {
     const snapshot = mainSnapshot.empty ? imageSnapshot : mainSnapshot;
 
     if (snapshot.empty) {
-      // No matching drop found — allow delete anyway (orphaned R2 object)
+      // Hole B (IDOR): when no drop matches the key, allow orphan cleanup ONLY of a superseded/old
+      // DROP asset. Edit/move/rollback flows delete an old `drops/` key after the doc no longer
+      // references it (the doc exists at normal delete time, but these cleanup paths run AFTER the
+      // key was already replaced on the doc). REFUSE everything else — notably `shares/` keys
+      // (public-share assets), which are derivable from the unauthenticated share URL and must NEVER
+      // be deletable here (that was the unauthorized-asset-deletion hole). request.json() can return
+      // non-strings, so type-check first. All legitimate drop keys are `drops/` (presign/route.ts:63);
+      // share keys are `shares/` (share/route.ts:121,147); no other prefixes exist.
+      if (typeof key !== 'string' || !key.startsWith('drops/')) {
+        return NextResponse.json({ error: 'Not found' }, { status: 404 });
+      }
       try {
         await r2.send(new DeleteObjectCommand({
           Bucket: process.env.R2_BUCKET_NAME!,
@@ -87,10 +101,14 @@ export async function POST(request: NextRequest) {
     const dropWorkspaceId = dropData.workspaceId || null;
     const dropUserId = dropData.userId;
 
-    if (workspaceId || dropWorkspaceId) {
-      // Workspace drop - verify user is a member
-      const wsId = workspaceId || dropWorkspaceId;
-      const workspaceDoc = await adminDb.collection('workspaces').doc(wsId).get();
+    // Authorize purely from the DROP's own record (Hole A). The body workspaceId is no longer
+    // consulted (see the destructure note above): previously `workspaceId || dropWorkspaceId` let a
+    // client-supplied workspaceId override the drop's real workspace, running the membership check
+    // against a workspace the caller IS in (not the file's), and any non-null body workspaceId
+    // skipped the personal-drop ownership branch entirely.
+    if (dropWorkspaceId) {
+      // Workspace drop — caller must be a member of THAT workspace.
+      const workspaceDoc = await adminDb.collection('workspaces').doc(dropWorkspaceId).get();
       if (!workspaceDoc.exists) {
         return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
       }
@@ -99,7 +117,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Not a workspace member' }, { status: 403 });
       }
     } else {
-      // Personal drop - verify ownership
+      // Personal drop — caller must own it.
       if (dropUserId !== userId) {
         return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
       }

@@ -1,7 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getAdminAuth } from '@/lib/firebase-admin';
 
 export async function POST(request: NextRequest) {
   try {
+    // ---- AUTH: require a valid Firebase ID token (mirrors /api/cleanup-fcm-tokens exactly).
+    // This route forwards caller audio to Groq under the server's GROQ_API_KEY; without a login
+    // check, anyone on the internet could burn that quota (denial-of-wallet). Auth gate only —
+    // the Groq forwarding logic below is unchanged. No file-size/rate limit is added. ----
+    const authHeader = request.headers.get('Authorization');
+    if (!authHeader?.startsWith('Bearer ')) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    const idToken = authHeader.substring(7);
+    try {
+      await getAdminAuth().verifyIdToken(idToken);
+    } catch {
+      return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
+    }
+
     const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) {
       return NextResponse.json({ error: 'Groq API key not configured' }, { status: 500 });

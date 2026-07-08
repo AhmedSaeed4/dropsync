@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { isAllowedR2Url } from '@/lib/r2Url';
 import { initializeApp, getApps, cert } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 
@@ -92,6 +93,12 @@ export async function GET(request: NextRequest) {
     const assetUrl: string | undefined = data.imageUrl || data.fileUrl;
     if (!assetUrl) {
       return NextResponse.json({ error: 'No downloadable asset' }, { status: 404 });
+    }
+
+    // SSRF guard (defense-in-depth for shares created before the intake validation): never fetch a
+    // non-R2 URL server-side, even if a legacy share stored one. https + R2 origin only.
+    if (!isAllowedR2Url(assetUrl)) {
+      return NextResponse.json({ error: 'Blocked asset URL' }, { status: 403 });
     }
 
     // Fetch the asset server-side (no CORS server-to-server).
