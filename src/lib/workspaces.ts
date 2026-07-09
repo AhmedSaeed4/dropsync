@@ -54,12 +54,22 @@ export async function getWorkspaceMembers(
   return results;
 }
 
-// Generate a random 6-character invite code
+// Generate a random 6-character invite code (CSPRNG, rejection-sampled — mirrors generateShareId in shares.ts)
 function generateInviteCode(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  const limit = Math.floor(256 / chars.length) * chars.length; // largest multiple of 36 ≤ 256 (= 252)
+  const randomValues = new Uint8Array(6);
+  crypto.getRandomValues(randomValues);
+
   let code = '';
   for (let i = 0; i < 6; i++) {
-    code += chars.charAt(Math.floor(Math.random() * chars.length));
+    let byte = randomValues[i];
+    while (byte >= limit) {
+      const next = new Uint8Array(1);
+      crypto.getRandomValues(next);
+      byte = next[0];
+    }
+    code += chars.charAt(byte % chars.length);
   }
   return code;
 }
