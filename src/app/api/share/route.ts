@@ -31,6 +31,11 @@ const r2 = new S3Client({
   },
 });
 
+// Share-asset upload caps (mirrors /api/upload's 500MB). Real share payloads are far under this
+// (encrypted files ≤ ~13MB, normal images < 100MB; ≥10MB binaries use the fileUrl bypass, not this PUT).
+const MAX_RAW_BODY = 700 * 1024 * 1024;  // ~700MB raw base64 body
+const MAX_DECODED = 500 * 1024 * 1024;   // 500MB decoded (matches /api/upload)
+
 async function deleteShareR2Assets(shareData: Record<string, unknown>) {
   const keys = [shareData.imageR2Key, shareData.fileR2Key].filter(Boolean) as string[];
   for (const key of keys) {
@@ -107,6 +112,13 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
     }
 
+    // Pre-read size guard: reject a body whose declared Content-Length already exceeds the cap,
+    // before buffering it. Chunked requests (no Content-Length) fall through to the decoded guard.
+    const contentLength = parseInt(request.headers.get('content-length') || '0', 10);
+    if (contentLength && contentLength > MAX_RAW_BODY) {
+      return NextResponse.json({ error: 'Payload too large' }, { status: 413 });
+    }
+
     const body = await request.text();
     const parsed = JSON.parse(body);
     const { imageData, fileData, mimeType } = parsed;
@@ -117,6 +129,9 @@ export async function PUT(request: NextRequest) {
       const contentType = matches?.[1] || mimeType || 'application/octet-stream';
       const base64Data = matches?.[2] || fileData;
       const buffer = Buffer.from(base64Data, 'base64');
+      if (buffer.length > MAX_DECODED) {
+        return NextResponse.json({ error: 'Payload too large' }, { status: 413 });
+      }
 
       const key = `shares/${Date.now()}-${crypto.randomUUID()}`;
       const publicUrl = process.env.R2_PUBLIC_URL;
@@ -143,6 +158,9 @@ export async function PUT(request: NextRequest) {
     const contentType = matches?.[1] || 'image/png';
     const base64Data = matches?.[2] || imageData;
     const buffer = Buffer.from(base64Data, 'base64');
+    if (buffer.length > MAX_DECODED) {
+      return NextResponse.json({ error: 'Payload too large' }, { status: 413 });
+    }
 
     const key = `shares/${Date.now()}-${crypto.randomUUID()}`;
     const publicUrl = process.env.R2_PUBLIC_URL;
@@ -197,6 +215,29 @@ export async function POST(request: NextRequest) {
     }
     if (fileUrl && !isAllowedR2Url(fileUrl)) {
       return NextResponse.json({ error: 'Invalid file URL' }, { status: 400 });
+    }
+
+    // Ownership: caller must own this drop (personal) or be a member of its workspace.
+    // Without this, any logged-in user who knows a dropId could create shares against it (and the
+    // latest share is returned by /api/share/active → link-hijack). Mirrors the authorize block in
+    // src/app/api/share/sync-expiry/route.ts + src/app/api/share/active/route.ts.
+    const dropDoc = await adminDb.collection('drops').doc(dropId).get();
+    if (!dropDoc.exists) {
+      return NextResponse.json({ error: 'Drop not found' }, { status: 404 });
+    }
+    const dropData = dropDoc.data()!;
+    const dropWorkspaceId = dropData.workspaceId || null;
+    if (dropWorkspaceId) {
+      const workspaceDoc = await adminDb.collection('workspaces').doc(dropWorkspaceId).get();
+      if (!workspaceDoc.exists) {
+        return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
+      }
+      const members = workspaceDoc.data()?.members || [];
+      if (!members.includes(decodedToken.uid)) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+      }
+    } else if (dropData.userId !== decodedToken.uid) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     const docData: Record<string, unknown> = {
