@@ -229,6 +229,7 @@ export async function GET(request: NextRequest) {
       headers: {
         'Content-Type': contentTypeHeader,
         'Content-Disposition': contentDispositionHeader(filename),
+        'X-Content-Type-Options': 'nosniff',
       },
     });
   } catch (error) {
