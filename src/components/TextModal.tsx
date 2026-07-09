@@ -520,7 +520,7 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
                   </button>
                 </div>
               </div>
-              {isDuplicateCategoryName && (
+              {isDuplicateCategoryName && !creatingCategory && (
                 <p className={`text-xs text-red-500 mt-1 ${tc.fontClass}`}>
                   Category already exists
                 </p>

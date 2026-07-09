@@ -487,7 +487,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
                     </button>
                   </div>
                 </div>
-                {isDuplicateCategoryName && (
+                {isDuplicateCategoryName && !creatingCategory && (
                   <p className={`text-xs text-red-500 mt-1 ${tc.fontClass}`}>
                     Category already exists
                   </p>
