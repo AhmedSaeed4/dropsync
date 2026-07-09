@@ -7,6 +7,7 @@ import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useModalBackClose } from '@/hooks/useModalBackClose';
 import { useUserTier } from '@/hooks/useUserTier';
 import { decryptDrop } from '@/lib/drops';
+import { dedupeCategoryNames } from '@/lib/categories';
 import { ForeverLockedModal } from './ForeverLockedModal';
 import { DrawingCanvas, BG_COLORS } from './DrawingCanvas';
 import { DropPickerRow } from './DropPickerRow';
@@ -194,6 +195,13 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
     }
     setLoading(false);
   };
+
+  const trimmedCategoryLower =
+    customCategoryName.trim().toLowerCase();
+  const isDuplicateCategoryName =
+    trimmedCategoryLower !== '' &&
+    (customCategories.some((c) => c.trim().toLowerCase() === trimmedCategoryLower) ||
+      BUILT_IN_CATEGORIES.some((b) => b.value === trimmedCategoryLower));
 
   const handleCreateCustomCategory = async () => {
     if (!customCategoryName.trim()) return;
@@ -451,7 +459,7 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
                   </button>
                 ))}
                 {/* Custom categories */}
-                {customCategories.map((cat) => (
+                {dedupeCategoryNames(customCategories).map((cat) => (
                   <button
                     key={cat}
                     type="button"
@@ -481,6 +489,7 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
                 )}
               </div>
             ) : (
+              <>
               <div className="flex flex-col sm:flex-row gap-2">
                 <input
                   type="text"
@@ -494,7 +503,7 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
                   <button
                     type="button"
                     onClick={handleCreateCustomCategory}
-                    disabled={!customCategoryName.trim() || creatingCategory}
+                    disabled={!customCategoryName.trim() || creatingCategory || isDuplicateCategoryName}
                     className={`flex-1 sm:flex-none px-3 py-2 bg-[#1A1A1A] text-white text-xs ${isMinimal ? 'rounded-full' : ''} hover:bg-[#2A2A2A] disabled:bg-[#C4C4C4] disabled:cursor-not-allowed transition-colors`}
                   >
                     {creatingCategory ? '...' : isMinimal ? 'Add' : 'ADD'}
@@ -511,6 +520,12 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
                   </button>
                 </div>
               </div>
+              {isDuplicateCategoryName && (
+                <p className={`text-xs text-red-500 mt-1 ${tc.fontClass}`}>
+                  Category already exists
+                </p>
+              )}
+              </>
             )}
           </div>
 
