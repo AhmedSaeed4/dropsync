@@ -278,8 +278,10 @@ export async function DELETE(request: NextRequest) {
     }
 
     const idToken = authHeader.substring(7);
+    let uid: string;
     try {
-      await getAuth().verifyIdToken(idToken);
+      const decoded = await getAuth().verifyIdToken(idToken);
+      uid = decoded.uid;
     } catch {
       return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
     }
@@ -287,6 +289,30 @@ export async function DELETE(request: NextRequest) {
     const dropId = request.nextUrl.searchParams.get('dropId');
     if (!dropId) {
       return NextResponse.json({ error: 'No drop ID provided' }, { status: 400 });
+    }
+
+    // AUTHORIZE: caller must own (personal) or be a member (workspace) of the DROP.
+    // Mirrors /api/share/sync-expiry + /api/share/active exactly. The drop doc MUST still
+    // exist here — the 4 client callers delete shares BEFORE the drop doc to make this resolve.
+    const dropDoc = await adminDb.collection('drops').doc(dropId).get();
+    if (!dropDoc.exists) {
+      return NextResponse.json({ error: 'Drop not found' }, { status: 404 });
+    }
+    const dropData = dropDoc.data()!;
+    const workspaceId = dropData.workspaceId || null;
+    if (workspaceId) {
+      const wsDoc = await adminDb.collection('workspaces').doc(workspaceId).get();
+      if (!wsDoc.exists) {
+        return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
+      }
+      const members = wsDoc.data()?.members || [];
+      if (!members.includes(uid)) {
+        return NextResponse.json({ error: 'Not a workspace member' }, { status: 403 });
+      }
+    } else {
+      if (dropData.userId !== uid) {
+        return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
+      }
     }
 
     const snapshot = await adminDb.collection('shares').where('dropId', '==', dropId).get();

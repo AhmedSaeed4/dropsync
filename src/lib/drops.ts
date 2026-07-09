@@ -852,9 +852,10 @@ export async function deleteDrop(drop: Drop): Promise<boolean> {
       }
     }
 
-    await deleteDoc(doc(db, DROPS_COLLECTION, drop.id));
-    // Delete any associated share links
+    // Delete associated share links FIRST — while the drop doc still exists, so the
+    // server-side ownership check in DELETE /api/share can resolve the drop.
     await deleteSharesForDrop(drop.id);
+    await deleteDoc(doc(db, DROPS_COLLECTION, drop.id));
     return true;
   } catch (error) {
     console.error('Error deleting drop:', error);
@@ -897,7 +898,7 @@ export async function cleanupExpiredDrops(
 
   if (expired.length === 0) return;
 
-  // Per-drop: R2 file → R2 image → Firestore doc → share links.
+  // Per-drop: R2 file → R2 image → share links → Firestore doc.
   // allSettled so one failure can't abort the rest of the batch.
   await Promise.allSettled(
     expired.map(async (document) => {
@@ -921,10 +922,10 @@ export async function cleanupExpiredDrops(
         }
       }
 
+      // Delete associated share links FIRST — while the drop doc still exists (see deleteDrop).
+      await deleteSharesForDrop(document.id);
       // Then delete the Firestore document
       await deleteDoc(doc(db, DROPS_COLLECTION, document.id));
-      // And any associated share links
-      await deleteSharesForDrop(document.id);
     })
   );
 }

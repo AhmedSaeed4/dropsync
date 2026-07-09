@@ -139,8 +139,8 @@ async function deleteDropWithAttachments(dropDoc: QueryDocumentSnapshot) {
       console.error('Failed to delete image from R2:', error);
     }
   }
-  await deleteDoc(dropDoc.ref);
   await deleteSharesForDrop(dropDoc.id);
+  await deleteDoc(dropDoc.ref);
 }
 
 /**
