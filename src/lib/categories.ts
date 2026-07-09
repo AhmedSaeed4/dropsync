@@ -18,6 +18,25 @@ const DROPS_COLLECTION = 'drops';
 // Built-in categories (not stored in DB, just used in UI)
 export const BUILT_IN_CATEGORIES = ['password', 'link'] as const;
 
+// Drop names that collide with a built-in pill key or are EXACT duplicates, so the category
+// picker never renders two pills sharing a React key. CASE-SENSITIVE and exact-only on purpose:
+// the DB is mixed-case (createCategory lowercases, ensureCategoriesForTarget preserves casing),
+// and lowercasing-for-grouping would merge a 'Work' pill into a 'work'-tagged drop's selection
+// and break edit-mode selected-state. Only the literal React-key collision is removed.
+export function dedupeCategoryNames(names: string[]): string[] {
+  const builtIn = new Set<string>(BUILT_IN_CATEGORIES);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const n of names) {
+    if (!n) continue;
+    if (builtIn.has(n)) continue;
+    if (seen.has(n)) continue;
+    seen.add(n);
+    out.push(n);
+  }
+  return out;
+}
+
 // Create a custom category
 export async function createCategory(
   workspaceId: string | null,

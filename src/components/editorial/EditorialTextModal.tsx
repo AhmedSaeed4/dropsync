@@ -9,6 +9,7 @@ import { useUserTier } from '@/hooks/useUserTier';
 import { getEditorialThemeColors } from './editorialTheme';
 import { ForeverLockedModal } from '../ForeverLockedModal';
 import { decryptDrop } from '@/lib/drops';
+import { dedupeCategoryNames } from '@/lib/categories';
 import { DrawingCanvas, BG_COLORS } from '../DrawingCanvas';
 import { EditorialDropPickerRow } from './EditorialDropPickerRow';
 import { useMentionEditor } from '@/hooks/useMentionEditor';
@@ -206,6 +207,13 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
     setExistingImageUrl(null);
     setImageRemoved(true);
   };
+
+  const trimmedCategoryLower =
+    customCategoryName.trim().toLowerCase();
+  const isDuplicateCategoryName =
+    trimmedCategoryLower !== '' &&
+    (customCategories.some((c) => c.trim().toLowerCase() === trimmedCategoryLower) ||
+      BUILT_IN_CATEGORIES.some((b) => b.value === trimmedCategoryLower));
 
   const handleCreateCustomCategory = async () => {
     if (!customCategoryName.trim()) return;
@@ -419,7 +427,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
                       {cat.label}
                     </button>
                   ))}
-                  {customCategories.map((cat) => (
+                  {dedupeCategoryNames(customCategories).map((cat) => (
                     <button
                       key={cat}
                       type="button"
@@ -448,6 +456,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
                   )}
                 </div>
               ) : (
+                <>
                 <div className="flex flex-col sm:flex-row gap-2">
                   <input
                     type="text"
@@ -461,7 +470,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
                     <button
                       type="button"
                       onClick={handleCreateCustomCategory}
-                      disabled={!customCategoryName.trim() || creatingCategory}
+                      disabled={!customCategoryName.trim() || creatingCategory || isDuplicateCategoryName}
                       className={`flex-1 sm:flex-none px-3 py-2 ${tc.activePillBg} ${tc.activePillText} text-xs rounded-full hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity ${tc.fontClass}`}
                     >
                       {creatingCategory ? '...' : 'Add'}
@@ -478,6 +487,12 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
                     </button>
                   </div>
                 </div>
+                {isDuplicateCategoryName && !creatingCategory && (
+                  <p className={`text-xs text-red-500 mt-1 ${tc.fontClass}`}>
+                    Category already exists
+                  </p>
+                )}
+                </>
               )}
             </div>
 
