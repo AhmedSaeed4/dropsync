@@ -312,9 +312,9 @@ export async function deleteWorkspace(userId: string, workspaceId: string): Prom
           console.error('Failed to delete image from R2:', error);
         }
       }
-      await deleteDoc(doc(db, 'drops', dropDoc.id));
-      // Delete associated share links (best-effort — swallows its own errors)
+      // Delete associated share links FIRST — while the drop doc still exists (see deleteDrop).
       await deleteSharesForDrop(dropDoc.id);
+      await deleteDoc(doc(db, 'drops', dropDoc.id));
     }
 
     // Delete this workspace's categories (best-effort — never block deletion on a cleanup
