@@ -829,7 +829,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
                     type="button"
                     aria-label="Message actions"
                     onClick={(e) => openMenuFromButton(e, msg)}
-                    className={`absolute top-0 ${isOwn ? 'right-full mr-0.5' : 'left-full ml-0.5'} flex h-5 w-5 items-center justify-center rounded ${tc.muted} opacity-0 transition-opacity hover:opacity-100 focus:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100`}
+                    className={`absolute top-0 ${isOwn ? 'right-full mr-0.5' : 'left-full ml-0.5'} flex h-5 w-5 items-center justify-center rounded ${tc.muted} opacity-0 transition-opacity hover:opacity-100 focus:opacity-100 group-hover:opacity-100 [@media(hover:none)]:hidden`}
                   >
                     <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
@@ -844,9 +844,21 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
                       isOwn
                         ? 'bg-[#1a1a1a] text-[#FFFEF5]'
                         : `bg-[#f5f5f5] ${theme === 'dark' ? 'bg-white/10 text-white' : 'text-[#1a1a1a]'} border ${tc.border}`
-                    } ${flashId === msg.id ? (theme === 'dark' ? 'animate-msg-flash-dark' : 'animate-msg-flash-light') : ''}`}
+                    } ${flashId === msg.id ? (theme === 'dark' ? 'animate-msg-flash-dark' : 'animate-msg-flash-light') : ''} relative [@media(hover:none)]:pt-7`}
                     style={isOwn ? { borderBottomRightRadius: '3px' } : { borderBottomLeftRadius: '3px' }}
                   >
+                    <button
+                      type="button"
+                      aria-label="Message actions"
+                      onClick={(e) => openMenuFromButton(e, msg)}
+                      className={`absolute top-1 ${isOwn ? 'right-1' : 'left-1'} hidden [@media(hover:none)]:flex h-5 w-5 items-center justify-center rounded ${tc.muted} opacity-60 transition-opacity active:opacity-100`}
+                    >
+                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                        <circle cx="5" cy="12" r="1.6" />
+                        <circle cx="12" cy="12" r="1.6" />
+                        <circle cx="19" cy="12" r="1.6" />
+                      </svg>
+                    </button>
                     {editingMsgId === msg.id ? (
                       <div className={`relative flex flex-col gap-1.5 min-w-[200px] p-1.5 border ${tc.border} ${tc.roundedClass} ${tc.bg}`}>
                         {/* #-mention dropdown — anchored to this edit wrapper, floats above the bubble */}
