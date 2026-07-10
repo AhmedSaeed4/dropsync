@@ -120,7 +120,7 @@ export function EditorialDropPickerRow({ drop, selected, attached, onSelect, the
         <div className="text-sm font-medium tracking-tight truncate">
           {drop.name}
         </div>
-        <div className={`flex items-center gap-2 mt-0.5 text-xs ${tc.fontClass} ${selected ? tc.activePillText : tc.muted}`}>
+        <div className={`flex items-center gap-2 mt-0.5 min-w-0 text-xs ${tc.fontClass} ${selected ? tc.activePillText : tc.muted}`}>
           {drop.type === 'file' && drop.fileSize && (
             <span>{formatFileSize(drop.fileSize).toLowerCase()}</span>
           )}
@@ -128,7 +128,7 @@ export function EditorialDropPickerRow({ drop, selected, attached, onSelect, the
             <span>{`${displayContent.length} chars`}</span>
           )}
           {drop.creatorName && (
-            <span>{drop.creatorName}</span>
+            <span className="shrink min-w-0 truncate">{drop.creatorName}</span>
           )}
           {drop.encrypted && (
             <span className="flex items-center gap-0.5">

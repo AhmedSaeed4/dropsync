@@ -883,7 +883,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
                       <div onClick={(e) => e.stopPropagation()} className={`relative flex flex-col gap-1.5 min-w-[180px] p-1.5 border ${s.inputBorder} ${s.roundedClass} ${s.panelBg}`}>
                         {/* #-mention dropdown — anchored to this edit wrapper, floats above the bubble */}
                         {editMention.showMention && editMention.filteredMentionDrops.length > 0 && (
-                          <div ref={editMention.dropdownRef} className={`absolute bottom-full left-0 right-0 z-50 mb-1 max-h-[240px] overflow-y-auto border ${s.borderColor} ${s.panelBg} ${s.roundedClass} shadow-lg`} style={{ touchAction: 'pan-y' }}>
+                          <div ref={editMention.dropdownRef} className={`absolute bottom-full ${isOwn ? 'right-0' : 'left-0'} w-[260px] z-50 mb-1 max-h-[240px] overflow-y-auto border ${s.borderColor} ${s.panelBg} ${s.roundedClass} shadow-lg`} style={{ touchAction: 'pan-y' }}>
                             {editMention.filteredMentionDrops.map((drop, idx) => (
                               <DropPickerRow key={drop.id} drop={drop} selected={idx === editMention.mentionIndex} attached={false} onSelect={editMention.insertMention} theme={theme} />
                             ))}
