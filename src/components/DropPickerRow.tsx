@@ -126,12 +126,12 @@ export function DropPickerRow({ drop, selected, attached, onSelect, theme }: Dro
         <div className={`font-semibold truncate ${isMinimal ? 'font-mono text-[11px] tracking-wide' : 'font-mono text-[11px] uppercase tracking-wider'}`}>
           {drop.name}
         </div>
-        <div className={`flex items-center gap-2 mt-0.5 ${textMuted} ${isMinimal ? 'font-sans' : 'font-mono'} text-[10px]`}>
+        <div className={`flex items-center gap-2 mt-0.5 min-w-0 ${textMuted} ${isMinimal ? 'font-sans' : 'font-mono'} text-[10px]`}>
           {drop.type === 'file' && drop.fileSize && (
             <span>{formatFileSize(drop.fileSize)}</span>
           )}
           {drop.creatorName && (
-            <span>{drop.creatorName}</span>
+            <span className="shrink min-w-0 truncate">{drop.creatorName}</span>
           )}
           {drop.encrypted && (
             <span className="flex items-center gap-0.5">
