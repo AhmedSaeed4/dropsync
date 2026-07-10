@@ -39,6 +39,11 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
   const [pendingDeletions, setPendingDeletions] = useState<Map<string, PendingDeletion>>(new Map());
+  // Drop ids whose deletion has already been triggered. Two independent 30s timers fire when the
+  // undo window elapses — handleDeleteWithUndo's setTimeout AND the UndoToast's onDismiss -> here.
+  // Without this guard the second call hits an already-deleted drop (DELETE /api/share 404 +
+  // Firestore permission-denied on the missing doc). Undo never reaches this, so undo is unaffected.
+  const deletedDropIdsRef = useRef<Set<string>>(new Set());
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [bulkMoveDrops, setBulkMoveDrops] = useState<Drop[] | null>(null);
@@ -112,17 +117,32 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
     setSelectionMode(false);
   };
 
+  const performDropDelete = useCallback(async (drop: Drop) => {
+    if (deletedDropIdsRef.current.has(drop.id)) return; // already triggered — ignore the second timer
+    deletedDropIdsRef.current.add(drop.id);
+    try {
+      const ok = await deleteDrop(drop);
+      if (!ok) {
+        // delete FAILED — the drop still exists (onSnapshot will re-show it). Clear the guard so the
+        // user's retry (click delete again) is NOT blocked. Safe vs the double-fire: the second 30s
+        // timer already returned early above, so clearing here does not reopen it.
+        deletedDropIdsRef.current.delete(drop.id);
+      }
+    } finally {
+      onDelete();
+    }
+  }, [onDelete]);
+
   // Handle single drop deletion with undo
   const handleDeleteWithUndo = useCallback((drop: Drop) => {
     // Set up new pending deletion with 30 second timeout
     const timeoutId = setTimeout(async () => {
-      await deleteDrop(drop);
+      await performDropDelete(drop);
       setPendingDeletions(prev => {
         const newMap = new Map(prev);
         newMap.delete(drop.id);
         return newMap;
       });
-      onDelete();
     }, 30000);
 
     setPendingDeletions(prev => {
@@ -130,7 +150,7 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
       newMap.set(drop.id, { drop, timeoutId });
       return newMap;
     });
-  }, [onDelete]);
+  }, [performDropDelete]);
 
   // Undo the deletion for a specific drop
   const handleUndoDeletion = useCallback((dropId: string) => {
@@ -151,15 +171,13 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
       const pending = prev.get(dropId);
       if (pending) {
         clearTimeout(pending.timeoutId);
-        deleteDrop(pending.drop).then(() => {
-          onDelete();
-        });
+        performDropDelete(pending.drop);
       }
       const newMap = new Map(prev);
       newMap.delete(dropId);
       return newMap;
     });
-  }, [onDelete]);
+  }, [performDropDelete]);
 
   // Filter out all pending deletions from displayed drops
   const visibleDrops = drops.filter(d => !pendingDeletions.has(d.id));
