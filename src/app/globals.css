@@ -600,3 +600,20 @@ body {
 .animate-msg-flash-light {
   animation: msg-flash-light 1.2s ease-out;
 }
+
+/* Group chat typing indicator — 3 bouncing dots above the composer. Each dot sets its own
+   animationDelay inline (0s / 0.15s / 0.3s) so they stagger. */
+@keyframes typing-bounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30%           { transform: translateY(-4px); opacity: 1; }
+}
+
+/* Subtle fade-in for the typing row wrapper (no plain .animate-fade-in exists in this file). */
+@keyframes typing-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.animate-typing-fade {
+  animation: typing-fade 0.18s ease-out;
+}

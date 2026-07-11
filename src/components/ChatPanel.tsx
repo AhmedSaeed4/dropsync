@@ -4,6 +4,9 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import { auth } from '@/lib/firebase';
+import { useTypingStatus, formatTypingText } from '@/hooks/useTypingStatus';
+import type { PresenceMap } from '@/hooks/usePresence';
+import { formatLastSeen } from '@/lib/presence';
 import {
   subscribeToMessages,
   saveMessage,
@@ -33,6 +36,7 @@ interface ChatPanelProps {
   onChatModeChange?: (mode: 'ai' | 'group') => void;
   drops?: Drop[];
   ownerId?: string | null;
+  presence?: PresenceMap;
 }
 
 const AGENT_URL = process.env.NEXT_PUBLIC_AGENT_URL || 'http://localhost:8000';
@@ -131,7 +135,7 @@ function getThemeStyles(theme: 'light' | 'dark' | 'minimal') {
 
 const WELCOME = 'Hi! I can help you manage your drops. Ask me to list drops, search content, check storage stats, or manage workspaces.';
 
-export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspaceMembers, chatMode: chatModeProp, onChatModeChange, drops, ownerId }: ChatPanelProps) {
+export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspaceMembers, chatMode: chatModeProp, onChatModeChange, drops, ownerId, presence }: ChatPanelProps) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -272,6 +276,28 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
   // Mark group messages read as they're viewed (panel open + tab visible) — closes Cause B of the
   // phantom-unread glow (messages read while the panel was open but never closed weren't persisted).
   useInPanelMarkRead(workspaceId, userId, groupMessages);
+
+  // Group typing indicator (panel-level — only the open panel subscribes) + members-popover state.
+  const typing = useTypingStatus(workspaceId, userId, workspaceMembers);
+  const [showMembers, setShowMembers] = useState(false);
+  const membersBtnRef = useRef<HTMLButtonElement>(null);
+  const membersPopoverRef = useRef<HTMLDivElement>(null);
+  // Close the members popover on workspace switch (the panel does not remount on switch).
+  useEffect(() => setShowMembers(false), [workspaceId]);
+  // Click-away: a document mousedown listener (transform-proof — the old fixed inset-0 overlay was
+  // trapped inside the header's slide-in transform and never covered the panel). Ignores the trigger
+  // button (so its onClick toggle still works) and the popover body. Attached only while open.
+  useEffect(() => {
+    if (!showMembers) return;
+    const onMouseDown = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (membersPopoverRef.current?.contains(target)) return;
+      if (membersBtnRef.current?.contains(target)) return;
+      setShowMembers(false);
+    };
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [showMembers]);
 
   // Lock body scroll on mobile
   useEffect(() => {
@@ -456,6 +482,9 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
   const handleGroupSend = async () => {
     const text = groupInput.trim();
     if (groupSending || !userId || !workspaceId) return;
+
+    // Sending (or clearing) ends any active typing state for this composer.
+    typing.clearTyping();
 
     if (text === '/clear') {
       setGroupInput('');
@@ -660,6 +689,49 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
           >
             Workspace
           </button>
+          {chatMode === 'group' && (
+            <span className="relative inline-flex">
+              <button
+                ref={membersBtnRef}
+                type="button"
+                onClick={() => setShowMembers((v) => !v)}
+                title="Members"
+                className={`py-1 px-1 rounded transition-colors ${showMembers ? s.headerText : s.muted} ${s.hoverBg}`}
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="8" r="3.4" />
+                  <path d="M5.5 20c0-3.4 2.9-6 6.5-6s6.5 2.6 6.5 6" />
+                </svg>
+              </button>
+              {showMembers && (
+                <div ref={membersPopoverRef} className="absolute top-full -right-2 mt-2 z-50">
+                    {/* Pointer notch — a sibling of the scrollable card so the card's overflow-y-auto can't clip it. */}
+                    <span className={`absolute -top-1.5 right-[16px] w-3 h-3 rotate-45 ${theme === 'dark' ? 'bg-[#2A2A2A] border-t border-l border-white/10' : 'bg-white border-t border-l border-black/10'}`} />
+                    <div className={`w-56 max-h-[300px] overflow-y-auto border p-1.5 ${s.roundedClass} ${theme === 'dark' ? 'bg-[#2A2A2A] border-white/10 shadow-[0_10px_30px_rgba(0,0,0,0.55)]' : 'bg-white border-black/10 shadow-[0_12px_34px_rgba(0,0,0,0.10)]'}`}>
+                    <div className={`flex items-center justify-between px-2 py-1 text-[10px] uppercase tracking-wider ${s.muted} ${s.fontClass}`}>
+                      <span>Members</span>
+                      <span>{(workspaceMembers || []).filter((m) => m.uid === userId || presence?.[m.uid]?.online).length} online</span>
+                    </div>
+                    {[...(workspaceMembers || [])]
+                      .map((m) => ({
+                        uid: m.uid as string,
+                        displayName: (m.displayName as string) || 'Unknown',
+                        online: m.uid === userId ? true : !!presence?.[m.uid]?.online,
+                        lastSeen: presence?.[m.uid]?.lastSeen,
+                      }))
+                      .sort((a, b) => (b.online ? 1 : 0) - (a.online ? 1 : 0))
+                      .map((m) => (
+                        <div key={m.uid} className={`flex items-center gap-2 px-2 py-1.5 text-xs ${s.fontClass} ${s.hoverBg} rounded`}>
+                          <span className={`w-2 h-2 rounded-full shrink-0 ${m.online ? 'bg-green-500' : 'bg-gray-400'}`} />
+                          <span className={`truncate ${s.inputText}`}>{m.displayName}{m.uid === userId && ' (you)'}</span>
+                          <span className={`ml-auto text-[10px] ${s.muted}`}>{m.online ? 'Online' : m.lastSeen ? formatLastSeen(m.lastSeen) : ''}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+              )}
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -838,8 +910,11 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
               <div key={msg.id} className={`group flex ${isOwn ? 'justify-end' : 'justify-start'} animate-fade-in-up`} style={{ animationDelay: `${Math.min(idx, 10) * 30}ms` }}>
                 {/* Avatar for other users */}
                 {!isOwn && showSender && (
-                  <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-medium shrink-0 mr-1.5 mt-0.5 ${s.sendBtn} text-white`}>
+                  <div className={`relative w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-medium shrink-0 mr-1.5 mt-0.5 ${s.sendBtn} text-white`}>
                     {initial}
+                    {presence?.[msg.senderId]?.online && (
+                      <span className="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-green-500 ring-1 ring-white" />
+                    )}
                   </div>
                 )}
                 {!isOwn && !showSender && <div className="w-6 mr-1.5 shrink-0" />}
@@ -1051,6 +1126,18 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
         </div>
       )}
 
+      {/* Typing indicator — pinned above the composer, outside the scroll area (group only). */}
+      {chatMode === 'group' && typing.typingUsers.length > 0 && (
+        <div className={`shrink-0 px-3 pt-2 flex items-center gap-2 animate-typing-fade ${s.muted} ${s.fontClass}`}>
+          <span className="flex items-center gap-0.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-current" style={{ animation: 'typing-bounce 1.2s infinite', animationDelay: '0s' }} />
+            <span className="w-1.5 h-1.5 rounded-full bg-current" style={{ animation: 'typing-bounce 1.2s infinite', animationDelay: '0.15s' }} />
+            <span className="w-1.5 h-1.5 rounded-full bg-current" style={{ animation: 'typing-bounce 1.2s infinite', animationDelay: '0.3s' }} />
+          </span>
+          <span className="text-[10px]">{formatTypingText(typing.typingUsers.map((u) => u.displayName))}</span>
+        </div>
+      )}
+
       {/* Input */}
       <div className={`border-t ${s.borderColor} p-3 shrink-0 ${chatMode === 'group' ? 'relative' : ''}`}>
         {chatMode === 'ai' ? (
@@ -1126,7 +1213,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
                   ref={groupMention.setEditorRef}
                   contentEditable
                   suppressContentEditableWarning
-                  onInput={groupMention.handleInput}
+                  onInput={(e) => { groupMention.handleInput(); typing.onComposerInput(e.currentTarget.textContent || ''); }}
                   onKeyDown={(e) => {
                     // Hook handles picker nav + Enter-to-pick when open; closed + Enter (no shift) sends.
                     groupMention.handleKeyDown(e);
@@ -1141,7 +1228,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
                       clearReply();
                     }
                   }}
-                  onBlur={groupMention.handleBlur}
+                  onBlur={(e) => { groupMention.handleBlur(e); typing.clearTyping(); }}
                   role="textbox"
                   aria-multiline="true"
                   className={`w-full px-3 py-2 text-xs ${s.fontClass} ${s.inputBg} ${s.inputText} border ${s.inputBorder} ${s.roundedClass} focus:outline-none focus:ring-1 ${s.focusRing} whitespace-pre-wrap break-words leading-relaxed min-h-[40px] max-h-[120px] overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]`}

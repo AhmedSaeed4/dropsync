@@ -7,6 +7,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useDrops } from '@/hooks/useDrops';
 import { useWorkspaces } from '@/hooks/useWorkspaces';
 import { useCategories } from '@/hooks/useCategories';
+import { usePresence } from '@/hooks/usePresence';
 import { ClassicLayout } from '@/components/layouts/ClassicLayout';
 import { EditorialLayout } from '@/components/editorial/EditorialLayout';
 import { EditorialAuthModal } from '@/components/editorial/EditorialAuthModal';
@@ -81,6 +82,11 @@ export default function Home() {
 
   // Categories for current workspace
   const { categories, addCategory, removeCategory } = useCategories(currentWorkspaceId, user?.uid);
+
+  // Workspace presence — PAGE-LEVEL (the chat panel unmounts on close, so presence must live here).
+  // Self-excludes; threaded down to both chat panels as the `presence` prop. MUST stay above all
+  // early returns (Rules of Hooks) — it self-guards when user/workspace are null.
+  const presenceMap = usePresence(user?.uid || null, currentWorkspaceId);
 
   // Modal states
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -1563,6 +1569,7 @@ export default function Home() {
     signIn, emailSignIn, signUp, resetPassword, resendVerification,
     signOutUser, updateDisplayName, reauthenticateUser,
     editDrop, setEditDrop, handleEditDrop, handleEditSubmit,
+    presenceMap,
   };
 
   const transitionClass = layoutTransition === 'fade-out'
