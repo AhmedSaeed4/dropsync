@@ -12,7 +12,7 @@
 // Typing docs are NOT messages and are never counted by useInPanelMarkRead or the unread listener.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { TYPING_TTL_MS, setTyping, subscribeToTyping, type TypingEntry } from '@/lib/presence';
+import { CLOCK_SKEW_TOLERANCE_MS, TYPING_TTL_MS, setTyping, subscribeToTyping, type TypingEntry } from '@/lib/presence';
 
 interface MemberLike {
   uid: string;
@@ -30,6 +30,10 @@ export function useTypingStatus(
   const currentlyTyping = useRef(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const idleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 3s heartbeat: while still typing, re-stamp `at` so a stale/dropped typing doc self-heals and
+  // continuous typing >10s doesn't age out of the TTL window. Started on the typing transition only;
+  // never per keystroke. Cleared on send / blur / switch / unmount (see clearTyping + effect cleanup).
+  const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const entriesRef = useRef<TypingEntry[]>([]);
 
   // Latest-value refs so the callbacks/effect stay stable (no re-subscription on member-name churn).
@@ -49,7 +53,7 @@ export function useTypingStatus(
     }
     const now = Date.now();
     const active = entriesRef.current
-      .filter((e) => e.uid !== me && e.isTyping && now - e.atMs >= 0 && now - e.atMs < TYPING_TTL_MS)
+      .filter((e) => e.uid !== me && e.isTyping && now - e.atMs >= -CLOCK_SKEW_TOLERANCE_MS && now - e.atMs < TYPING_TTL_MS)
       .map((e) => ({ uid: e.uid, displayName: nameMapRef.current.get(e.uid) || 'Someone' }));
     setTypingUsers(active);
   }, []);
@@ -86,6 +90,10 @@ export function useTypingStatus(
         clearTimeout(idleRef.current);
         idleRef.current = null;
       }
+      if (heartbeatRef.current) {
+        clearInterval(heartbeatRef.current);
+        heartbeatRef.current = null;
+      }
       // Clear typing for THIS (old) workspace so we don't ghost-type there after a switch/unmount.
       if (currentlyTyping.current) {
         currentlyTyping.current = false;
@@ -103,6 +111,10 @@ export function useTypingStatus(
     if (idleRef.current) {
       clearTimeout(idleRef.current);
       idleRef.current = null;
+    }
+    if (heartbeatRef.current) {
+      clearInterval(heartbeatRef.current);
+      heartbeatRef.current = null;
     }
     const ws = wsIdRef.current;
     const me = userIdRef.current;
@@ -133,6 +145,23 @@ export function useTypingStatus(
         debounceRef.current = setTimeout(() => {
           currentlyTyping.current = true;
           void setTyping(wsIdRef.current!, userIdRef.current!, true).catch(() => {});
+          // Start the heartbeat on the typing transition (not per keystroke). It re-stamps `at` every
+          // 3s while still typing so the doc stays inside the TTL and recovers if an earlier write was
+          // dropped/skewed. Cleared on send / blur / switch / unmount (see clearTyping + effect cleanup).
+          // Capture workspace/user at heartbeat START, not the live ref: wsIdRef flips to the new
+          // workspace during render BEFORE the passive-effect cleanup clears this interval, so a fire
+          // in that commit→cleanup gap on a switch would otherwise re-stamp the NEW workspace. Using
+          // the captured values keeps every heartbeat re-stamp on the workspace typing STARTED in;
+          // the cleanup's setTyping(OLD, false) is then the final, ordered write there. (Guaranteed
+          // non-null — onComposerInput early-returned on !ws/!me above.)
+          const hbWs = wsIdRef.current!;
+          const hbMe = userIdRef.current!;
+          if (heartbeatRef.current) clearInterval(heartbeatRef.current);
+          heartbeatRef.current = setInterval(() => {
+            if (currentlyTyping.current) {
+              void setTyping(hbWs, hbMe, true).catch(() => {});
+            }
+          }, 3000);
         }, 300);
       }
     },

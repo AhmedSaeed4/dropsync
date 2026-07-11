@@ -12,6 +12,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
+  CLOCK_SKEW_TOLERANCE_MS,
   PRESENCE_GRACE_MS,
   setPresenceOffline,
   subscribeToPresence,
@@ -103,7 +104,7 @@ export function usePresence(userId: string | null, workspaceId: string | null): 
     const out: PresenceMap = {};
     for (const [uid, e] of Object.entries(entries)) {
       const age = now - e.lastSeenMs;
-      const online = e.online === true && age >= 0 && age < PRESENCE_GRACE_MS;
+      const online = e.online === true && age >= -CLOCK_SKEW_TOLERANCE_MS && age < PRESENCE_GRACE_MS;
       out[uid] = { lastSeen: e.lastSeenMs, online };
     }
     return out;

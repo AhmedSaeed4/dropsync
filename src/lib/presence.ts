@@ -5,16 +5,22 @@
 // docs. Identity = doc path (workspaces/{ws}/{typing|presence}/{uid}); readers resolve display
 // names from the trusted workspaceMembers prop, NEVER from a stored field (prevents spoofing).
 //
-// All client timestamps use Timestamp.fromDate(new Date()) — NEVER serverTimestamp(). The client
-// computes the TTL/grace; a serverTimestamp reads back null transiently and breaks the age diff.
+// All write timestamps use FieldValue.serverTimestamp() — Firestore SERVER time, NOT the device
+// clock. The old Timestamp.fromDate(new Date()) made cross-device reads fail: the reader's
+// Date.now() disagreed with the writer's clock → docs falsely looked "future-dated" and were
+// dropped. serverTimestamp reads back null transiently on the WRITING client only; the readers'
+// toMillis type-guards below skip null/pending docs silently, so a pending value just delays the
+// first valid snapshot by one round-trip. Readers tolerate CLOCK_SKEW_TOLERANCE_MS of skew.
 
-import { collection, doc, onSnapshot, setDoc, Timestamp } from 'firebase/firestore';
+import { collection, doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from './firebase';
 
 /** Typing docs expire (treated as not-typing) after this many ms. */
 export const TYPING_TTL_MS = 10000;
 /** A presence doc is considered stale (offline) once lastSeen is older than this many ms. */
 export const PRESENCE_GRACE_MS = 25000;
+/** Tolerate this much reader-clock-vs-server-clock skew (negative age) before dropping a doc. */
+export const CLOCK_SKEW_TOLERANCE_MS = 30_000;
 
 export interface TypingEntry {
   uid: string;
@@ -34,8 +40,9 @@ export interface PresenceEntry {
  * with console access could otherwise inject a non-timestamp `at` (kills typing for the whole
  * workspace when toMillis is called) or a future-dated `at` (perpetual "typing"). We type-check the
  * timestamp (toMillis must be a function) + the isTyping boolean, and range-check the age
- * (0 <= age < TYPING_TTL_MS — future/negative docs and already-stale docs are dropped). Malformed
- * docs are skipped SILENTLY; the listener never throws.
+ * (-CLOCK_SKEW_TOLERANCE_MS <= age < TYPING_TTL_MS — gross-future and already-stale docs are dropped;
+ * a little reader-clock skew is tolerated). Malformed docs are skipped SILENTLY; the listener never
+ * throws.
  */
 export function subscribeToTyping(
   workspaceId: string,
@@ -54,7 +61,7 @@ export function subscribeToTyping(
         if (typeof data.isTyping !== 'boolean') return;
         const atMs = (data.at as { toMillis: () => number }).toMillis();
         const age = now - atMs;
-        if (age < 0 || age >= TYPING_TTL_MS) return; // future-dated or already stale
+        if (age < -CLOCK_SKEW_TOLERANCE_MS || age >= TYPING_TTL_MS) return; // skew-tolerant; drop gross-future or stale
         out.push({ uid: d.id, isTyping: data.isTyping, atMs });
       });
       cb(out);
@@ -77,7 +84,7 @@ export async function setTyping(
 ): Promise<void> {
   await setDoc(
     doc(db, 'workspaces', workspaceId, 'typing', userId),
-    { isTyping, at: Timestamp.fromDate(new Date()) },
+    { isTyping, at: serverTimestamp() },
     { merge: true },
   );
 }
@@ -85,8 +92,9 @@ export async function setTyping(
 /**
  * Subscribe to workspace presence docs via a PLAIN onSnapshot (no decryption).
  *
- * Defensive parse: type-check lastSeen (toMillis must be a function) and reject future-dated/negative
- * docs (age < 0) — a future-dated lastSeen would otherwise read as perpetually online. We do NOT
+ * Defensive parse: type-check lastSeen (toMillis must be a function) and reject grossly-future docs
+ * (age < -CLOCK_SKEW_TOLERANCE_MS) — a grossly-future lastSeen would otherwise read as perpetually
+ * online. A little reader-clock skew is tolerated. We do NOT
  * upper-bound the age here: the members popover needs to show OFFLINE members with a "last seen X
  * ago" line even when they have been away for hours, so stale docs must survive to the reader's
  * output. The online/stale determination (age < PRESENCE_GRACE_MS) is applied by the usePresence
@@ -106,7 +114,7 @@ export function subscribeToPresence(
         const data = d.data() as { lastSeen?: { toMillis?: unknown }; online?: unknown };
         if (typeof data.lastSeen?.toMillis !== 'function') return;
         const lastSeenMs = (data.lastSeen as { toMillis: () => number }).toMillis();
-        if (Date.now() - lastSeenMs < 0) return; // future-dated → ignore
+        if (Date.now() - lastSeenMs < -CLOCK_SKEW_TOLERANCE_MS) return; // skew-tolerant
         out.push({ uid: d.id, lastSeenMs, online: data.online === true });
       });
       cb(out);
@@ -132,7 +140,7 @@ export async function updatePresence(
   userId: string,
   isFirst: boolean,
 ): Promise<void> {
-  const lastSeen = Timestamp.fromDate(new Date());
+  const lastSeen = serverTimestamp();
   await setDoc(
     doc(db, 'workspaces', workspaceId, 'presence', userId),
     isFirst ? { lastSeen, online: true } : { lastSeen },
@@ -147,7 +155,7 @@ export async function setPresenceOffline(
 ): Promise<void> {
   await setDoc(
     doc(db, 'workspaces', workspaceId, 'presence', userId),
-    { online: false, lastSeen: Timestamp.fromDate(new Date()) },
+    { online: false, lastSeen: serverTimestamp() },
     { merge: true },
   );
 }
