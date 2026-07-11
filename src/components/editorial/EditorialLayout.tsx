@@ -85,6 +85,7 @@ interface EditorialLayoutProps {
   currentWorkspaceId: string | null;
   workspaceMembers: any[];
   resolvedWorkspaceMembers: any[];
+  presenceMap: Record<string, { lastSeen: number; online: boolean }>;
   switchWorkspace: (id: string | null) => void;
   drops: Drop[];
   dropsLoading: boolean;
@@ -136,7 +137,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
     previewDrop, setPreviewDrop,
     previewLoading, setPreviewLoading,
     encryptionInitializing,
-    workspaces, currentWorkspace, currentWorkspaceId, workspaceMembers, resolvedWorkspaceMembers,
+    workspaces, currentWorkspace, currentWorkspaceId, workspaceMembers, resolvedWorkspaceMembers, presenceMap,
     switchWorkspace,
     drops, dropsLoading, refreshDrops,
     categories, handleCreateCategory, handleDeleteCategory,
@@ -348,6 +349,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
               onChatModeChange={setChatMode}
               drops={drops}
               ownerId={currentWorkspace?.ownerId ?? null}
+              presence={presenceMap}
             />
           )}
         </div>

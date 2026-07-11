@@ -85,6 +85,7 @@ interface ClassicLayoutProps {
   currentWorkspaceId: string | null;
   workspaceMembers: any[];
   resolvedWorkspaceMembers: any[];
+  presenceMap: Record<string, { lastSeen: number; online: boolean }>;
   switchWorkspace: (id: string | null) => void;
   drops: Drop[];
   dropsLoading: boolean;
@@ -136,7 +137,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
     previewDrop, setPreviewDrop,
     previewLoading, setPreviewLoading,
     encryptionInitializing,
-    workspaces, currentWorkspace, currentWorkspaceId, workspaceMembers, resolvedWorkspaceMembers,
+    workspaces, currentWorkspace, currentWorkspaceId, workspaceMembers, resolvedWorkspaceMembers, presenceMap,
     switchWorkspace,
     drops, dropsLoading, refreshDrops,
     categories, handleCreateCategory, handleDeleteCategory,
@@ -298,7 +299,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
 
           <div className={`sticky ${theme === 'minimal' ? 'top-24' : 'top-28'} self-start w-full flex flex-col min-h-0 transition-all duration-300 ease-out ${showChat ? 'lg:w-[480px]' : 'lg:w-80'}`}>
             {showChat ? (
-              <ChatPanel theme={theme} onClose={() => setShowChat(false)} onPreviewDrop={handlePreviewDrop} workspaceId={currentWorkspaceId} workspaceMembers={resolvedWorkspaceMembers} chatMode={chatMode} onChatModeChange={setChatMode} drops={drops} ownerId={currentWorkspace?.ownerId ?? null} />
+              <ChatPanel theme={theme} onClose={() => setShowChat(false)} onPreviewDrop={handlePreviewDrop} workspaceId={currentWorkspaceId} workspaceMembers={resolvedWorkspaceMembers} chatMode={chatMode} onChatModeChange={setChatMode} drops={drops} ownerId={currentWorkspace?.ownerId ?? null} presence={presenceMap} />
             ) : (
               <div className="space-y-6">
             {/* Theme Toggle Panel */}
