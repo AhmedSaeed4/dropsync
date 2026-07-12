@@ -18,7 +18,7 @@ import {
   Conversation,
   ChatMessage,
 } from '@/lib/chat';
-import { subscribeToGroupMessages, sendGroupMessage, editGroupMessage, deleteGroupMessage, clearGroupChat } from '@/lib/groupChat';
+import { subscribeToGroupMessages, sendGroupMessage, editGroupMessage, deleteGroupMessage, clearGroupChat, getSeenBy } from '@/lib/groupChat';
 import { useInPanelMarkRead } from '@/hooks/useInPanelMarkRead';
 import { useMentionEditor } from '@/hooks/useMentionEditor';
 import { Drop, GroupChatMessage } from '@/types';
@@ -71,7 +71,8 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   const [isClearing, setIsClearing] = useState(false);
   const [noticeLeaving, setNoticeLeaving] = useState(false);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [menuMsg, setMenuMsg] = useState<{ msg: GroupChatMessage; x: number; y: number } | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [menuMsg, setMenuMsg] = useState<{ msg: GroupChatMessage; x: number; y: number; panelRight: number } | null>(null);
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
   // Inline message editor — editingMsgId === msg.id swaps that bubble's text node for a textarea.
   const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
@@ -79,6 +80,10 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   // Quote-reply draft — replyTo is the message being replied to; cleared on send / Escape / mode or
   // workspace switch. Display-only context; replyTo?.id is passed as sendGroupMessage's 5th arg.
   const [replyTo, setReplyTo] = useState<GroupChatMessage | null>(null);
+  // Seen-by roster for the open message's "Read by" view (null = not fetched). Cleared on menu close
+  // and on workspace/chat-mode switch (mirrors editingMsgId/replyTo). On-demand: one getSeenBy fetch
+  // per "Seen" tap — no live listener.
+  const [seenInfo, setSeenInfo] = useState<{ loading: boolean; seenUids: Set<string>; error: boolean } | null>(null);
   const groupUnsubRef = useRef<(() => void) | null>(null);
   const systemNoticeRef = useRef<HTMLDivElement>(null);
   const hadNoticeRef = useRef(false);
@@ -532,7 +537,8 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
     e.preventDefault();
     e.stopPropagation();
     const r = e.currentTarget.getBoundingClientRect();
-    setMenuMsg({ msg, x: r.left, y: r.bottom });
+    const panelRight = panelRef.current?.getBoundingClientRect().right ?? window.innerWidth;
+    setMenuMsg({ msg, x: r.left, y: r.bottom, panelRight });
   };
 
   const handleCopyMessage = async (msg: GroupChatMessage) => {
@@ -550,7 +556,20 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
     await deleteGroupMessage(workspaceId, msg.id);
   };
 
-  const closeMessageMenu = () => setMenuMsg(null);
+  const closeMessageMenu = () => { setMenuMsg(null); setSeenInfo(null); };
+
+  // On-demand fetch of which members have read `msg` (server-derived from readState cursors). Drives
+  // the "Read by" roster in the message menu. Silent failure → error state in the menu (no toast).
+  const handleSeen = async (msg: GroupChatMessage) => {
+    if (!workspaceId) return;
+    setSeenInfo({ loading: true, seenUids: new Set(), error: false });
+    try {
+      const seenUids = await getSeenBy(workspaceId, msg.id);
+      setSeenInfo({ loading: false, seenUids: new Set(seenUids), error: false });
+    } catch {
+      setSeenInfo({ loading: false, seenUids: new Set(), error: true });
+    }
+  };
 
   // Inline edit lifecycle. editDraft is seeded from the RAW message content (not the parsed parts) so
   // #[name](id) attachment mentions survive the round-trip and re-parse correctly after save. Silent:
@@ -594,6 +613,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
     setEditingMsgId(null);
     setEditDraft('');
     setReplyTo(null);
+    setSeenInfo(null);
   }, [workspaceId, chatMode]);
 
   // Scroll a notice into view ONLY when one appears from nothing.
@@ -622,7 +642,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   }, []);
 
   return (
-    <div className={`flex flex-col h-full overflow-hidden border-l ${tc.border} ${tc.bg} transition-colors duration-500`}>
+    <div ref={panelRef} className={`flex flex-col h-full overflow-hidden border-l ${tc.border} ${tc.bg} transition-colors duration-500`}>
       {/* Header with staggered fade-in */}
       <div className={`z-20 border-b ${tc.border} px-5 py-4 flex items-center justify-between shrink-0 transition-all duration-300 ease-out ${showHeader ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-[10px]'}`} style={{ touchAction: 'none' }}>
         <div className="flex items-center gap-1.5">
@@ -1099,6 +1119,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
             <MessageContextMenu
               x={menuMsg.x}
               y={menuMsg.y}
+              rightBound={menuMsg.panelRight}
               isOwnMessage={menuMsg.msg.senderId === userId}
               canEdit={
                 !!userId &&
@@ -1111,6 +1132,11 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
               onCopy={() => handleCopyMessage(menuMsg.msg)}
               onDelete={() => handleDeleteMessage(menuMsg.msg)}
               onClose={closeMessageMenu}
+              onSeen={() => handleSeen(menuMsg.msg)}
+              seenInfo={seenInfo}
+              workspaceMembers={workspaceMembers}
+              presence={presence}
+              currentUserId={userId || ''}
               theme={theme}
               editorial
             />

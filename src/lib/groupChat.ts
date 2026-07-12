@@ -317,3 +317,23 @@ export async function initReadState(workspaceId: string, userId: string, baselin
   const ref = doc(db, 'workspaces', workspaceId, 'readState', userId);
   await setDoc(ref, { lastReadAt: Timestamp.fromDate(baseline) }, { merge: true });
 }
+
+/**
+ * On-demand: which members have read message `messageId`. Server-derived from readState cursors via
+ * the read-only /api/chat-seen-by route (the client readState rule is self-only, so the cross-member
+ * derivation must run server-side through the Admin SDK). Returns only the seen-uid list — never raw
+ * timestamps. One call per "Seen" tap (no live listener). Mirrors sendGroupMessage's notify-call
+ * auth pattern (getIdToken + Bearer fetch).
+ */
+export async function getSeenBy(workspaceId: string, messageId: string): Promise<string[]> {
+  const idToken = await getAuth().currentUser?.getIdToken();
+  if (!idToken) throw new Error('Not authenticated');
+  const res = await fetch('/api/chat-seen-by', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspaceId, messageId }),
+  });
+  if (!res.ok) throw new Error(`seen-by failed: ${res.status}`);
+  const { seenUids } = (await res.json()) as { seenUids: string[] };
+  return seenUids;
+}
