@@ -5,6 +5,8 @@ import ReactMarkdown from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import { auth } from '@/lib/firebase';
 import { useTypingStatus, formatTypingText } from '@/hooks/useTypingStatus';
+import { useNearBottom } from '@/hooks/useNearBottom';
+import { useDelayedUnmount } from '@/hooks/useDelayedUnmount';
 import type { PresenceMap } from '@/hooks/usePresence';
 import { formatLastSeen } from '@/lib/presence';
 import {
@@ -240,6 +242,16 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
 
   // Group typing indicator (panel-level — only the open panel subscribes) + members-popover state.
   const typing = useTypingStatus(workspaceId, userId, workspaceMembers);
+  // atBottom drives the typing-pill vs scroll-to-bottom-button swap (group only). Additive — it only
+  // observes scroll position and never touches the existing scrollTop = scrollHeight auto-scroll.
+  const atBottom = useNearBottom(scrollRef);
+  // Fade-OUT: keep each overlay mounted ~180ms past its exit so a pure-opacity fade-out can play
+  // before the real unmount (React otherwise removes instantly). shouldRender gates the element;
+  // isExiting swaps in the fade-out class. Object access (not destructured).
+  const pillVisible = chatMode === 'group' && atBottom && typing.typingUsers.length > 0;
+  const scrollVisible = chatMode === 'group' && !atBottom;
+  const pill = useDelayedUnmount(pillVisible, 180);
+  const scroll = useDelayedUnmount(scrollVisible, 180);
   const [showMembers, setShowMembers] = useState(false);
   const membersBtnRef = useRef<HTMLButtonElement>(null);
   const membersPopoverRef = useRef<HTMLDivElement>(null);
@@ -1106,20 +1118,44 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
         </div>
       )}
 
-      {/* Typing indicator — pinned above the composer, outside the scroll area (group only). */}
-      {chatMode === 'group' && typing.typingUsers.length > 0 && (
-        <div className={`shrink-0 px-4 pt-2 flex items-center gap-2 animate-typing-fade ${tc.muted} ${tc.fontClass}`}>
-          <span className="flex items-center gap-0.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-current" style={{ animation: 'typing-bounce 1.2s infinite', animationDelay: '0s' }} />
-            <span className="w-1.5 h-1.5 rounded-full bg-current" style={{ animation: 'typing-bounce 1.2s infinite', animationDelay: '0.15s' }} />
-            <span className="w-1.5 h-1.5 rounded-full bg-current" style={{ animation: 'typing-bounce 1.2s infinite', animationDelay: '0.3s' }} />
-          </span>
-          <span className="text-xs">{formatTypingText(typing.typingUsers.map((u) => u.displayName))}</span>
-        </div>
-      )}
-
       {/* Input area with staggered fade-in */}
       <div className={`border-t ${tc.border} p-4 shrink-0 relative transition-all duration-300 ease-out ${showInputArea ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-[10px]'}`} style={{ touchAction: 'none' }}>
+        {/* Typing indicator — a zero-space overlay above the composer (group + at bottom + someone
+            typing). Plain dots + muted text, no background (the original in-flow look). Anchored to
+            this relative wrapper (never position:fixed — this wrapper's own translate-y emerge
+            transform would trap that); bottom-full floats it above the input border, pb-1.5 clears
+            the bouncing dots. pointer-events-none (click-through). atBottom gating makes it mutually
+            exclusive with the scroll-to-bottom button. */}
+        {pill.shouldRender && (
+          <div className={`absolute bottom-full left-0 right-0 px-4 pb-1.5 flex items-center gap-2 pointer-events-none ${pill.isExiting ? 'animate-typing-fade-out' : 'animate-typing-fade'} z-10 ${tc.muted} ${tc.fontClass}`}>
+            <span className="flex items-center gap-0.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-current" style={{ animation: 'typing-bounce 1.2s infinite', animationDelay: '0s' }} />
+              <span className="w-1.5 h-1.5 rounded-full bg-current" style={{ animation: 'typing-bounce 1.2s infinite', animationDelay: '0.15s' }} />
+              <span className="w-1.5 h-1.5 rounded-full bg-current" style={{ animation: 'typing-bounce 1.2s infinite', animationDelay: '0.3s' }} />
+            </span>
+            <span className="text-xs">{formatTypingText(typing.typingUsers.map((u) => u.displayName))}</span>
+          </div>
+        )}
+        {/* Scroll-to-bottom button — shown only when scrolled up (group + !atBottom). Mutually
+            exclusive with the pill (atBottom vs !atBottom). Clicking smooth-scrolls the list to the
+            bottom → atBottom flips true → this hides and the pill re-shows if still typing. The
+            typing badge (coral dot, top corner) reuses typing-bounce so a scrolled-up user still sees
+            activity. pointer-events-auto (clickable, unlike the pill). Same opaque members-popover bg. */}
+        {scroll.shouldRender && (
+          <button
+            type="button"
+            aria-label="Scroll to bottom"
+            onClick={() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })}
+            className={`absolute bottom-full right-4 mb-2 flex items-center justify-center w-9 h-9 rounded-full shadow-md pointer-events-auto cursor-pointer ${scroll.isExiting ? 'animate-typing-fade-out' : 'animate-typing-fade'} z-10 ${theme === 'dark' ? 'bg-[#2A2A2A]' : 'bg-white'}`}
+          >
+            <svg className={`w-5 h-5 ${theme === 'dark' ? 'text-white' : 'text-[#1A1A1A]'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12l7 7l7-7" />
+            </svg>
+            {typing.typingUsers.length > 0 && (
+              <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-[#FF5A47]" style={{ animation: 'typing-bounce 1.2s infinite' }} />
+            )}
+          </button>
+        )}
         {/* Reply preview bar — an in-flow child above the composer row (mirrors classic's placement
             above the form). The group editor below is now wrapped in a relative flex-1 (also mirrors
             classic) so the placeholder + dropdown anchor to the editor box, not this outer wrapper;

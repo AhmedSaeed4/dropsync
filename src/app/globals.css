@@ -617,3 +617,14 @@ body {
 .animate-typing-fade {
   animation: typing-fade 0.18s ease-out;
 }
+
+/* Fade-OUT for the typing pill / scroll-button deferred unmount (mirrors typing-fade's 0.18s).
+   Pure opacity (NO transform) so the absolute zero-space overlays never trigger reflow/jiggle.
+   `forwards` is load-bearing: without it the element snaps back to opacity:1 before unmount. */
+@keyframes typing-fade-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+.animate-typing-fade-out {
+  animation: typing-fade-out 0.18s ease-out forwards;
+}
