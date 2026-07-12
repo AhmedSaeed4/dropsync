@@ -20,12 +20,14 @@ import {
   serverTimestamp,
   Timestamp,
   updateDoc,
+  where,
   writeBatch,
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { db } from './firebase';
 import { encryptData, decryptData } from './crypto';
 import { getWorkspaceKey } from './keys';
+import { extractMentionedUids } from './dropTagUtils';
 import { GroupChatMessage } from '@/types';
 
 const MAX_MESSAGES = 200;
@@ -155,6 +157,10 @@ export async function sendGroupMessage(
     }
 
     const { encrypted, iv } = await encryptData(content, workspaceKey);
+    // @[displayName](uid) chips live in the PLAINTEXT body; collect their uids for the plaintext,
+    // create-only `mentionedUids` field. The notify route intersects these with current members
+    // (abuse boundary) so a uid forged into the body still can't push to a non-member.
+    const mentionedUids = extractMentionedUids(content);
 
     // Reply is a CREATE: it gets a fresh serverTimestamp() createdAt. replyToMessageId is a plaintext
     // pointer (NEVER encrypted) written ONLY when present — omit the key entirely when undefined so
@@ -172,6 +178,10 @@ export async function sendGroupMessage(
                                  // missing-field branch for new messages
         createdAt: serverTimestamp(),
         ...(replyToMessageId ? { replyToMessageId } : {}),
+        // @member mentions — plaintext + create-only. The update rule's hasOnly (:191) makes this
+        // immutable after create (same as replyToMessageId) — that's why v1 is composer-only.
+        // Omitted entirely when nobody is @mentioned, so it never stores null/empty.
+        ...(mentionedUids.length > 0 ? { mentionedUids } : {}),
       },
     );
 
@@ -183,11 +193,24 @@ export async function sendGroupMessage(
         try {
           const idToken = await getAuth().currentUser?.getIdToken();
           if (!idToken) return;
-          await fetch('/api/notify-chat-message', {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ workspaceId, messageId: docRef.id, senderId: userId, senderName }),
-          });
+          // Two best-effort notifies, fully isolated — a failure in either NEVER blocks/delays the
+          // send. notify-chat-message pings every OTHER member of THIS workspace (in-app glow/push).
+          // notify-mention writes a users/{uid}/mentions doc + FCM for each @mentioned member, CROSS-
+          // workspace, and BYPASSES mute (a direct @ always rings). The mention route reads
+          // mentionedUids from the doc (authoritative), not the body. allSettled so one rejection
+          // can't abort the other mid-flight.
+          await Promise.allSettled([
+            fetch('/api/notify-chat-message', {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ workspaceId, messageId: docRef.id, senderId: userId, senderName }),
+            }),
+            fetch('/api/notify-mention', {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ workspaceId, messageId: docRef.id }),
+            }),
+          ]);
         } catch {
           // Push is best-effort — never surface a failure to the chat.
         }
@@ -336,4 +359,22 @@ export async function getSeenBy(workspaceId: string, messageId: string): Promise
   if (!res.ok) throw new Error(`seen-by failed: ${res.status}`);
   const { seenUids } = (await res.json()) as { seenUids: string[] };
   return seenUids;
+}
+
+/**
+ * Delete this user's @mention docs for ONE workspace — called when they read that workspace's chat,
+ * so the switcher glow + system notification clear once they've actually seen it. Client-side delete
+ * is allowed by the users/{uid}/mentions self-only rule. Best-effort: never throws to the caller
+ * (a failed clear just leaves the glow until the next read retry).
+ */
+export async function clearWorkspaceMentions(userId: string, workspaceId: string): Promise<void> {
+  try {
+    const snap = await getDocs(query(collection(db, 'users', userId, 'mentions'), where('workspaceId', '==', workspaceId)));
+    if (snap.empty) return;
+    const batch = writeBatch(db);
+    snap.forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+  } catch (error) {
+    console.error('Error clearing workspace mentions:', error);
+  }
 }

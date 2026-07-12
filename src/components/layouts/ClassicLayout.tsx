@@ -85,6 +85,7 @@ interface ClassicLayoutProps {
   currentWorkspaceId: string | null;
   workspaceMembers: any[];
   resolvedWorkspaceMembers: any[];
+  mentionedWorkspaceIds: Set<string>;
   presenceMap: Record<string, { lastSeen: number; online: boolean }>;
   switchWorkspace: (id: string | null) => void;
   drops: Drop[];
@@ -137,7 +138,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
     previewDrop, setPreviewDrop,
     previewLoading, setPreviewLoading,
     encryptionInitializing,
-    workspaces, currentWorkspace, currentWorkspaceId, workspaceMembers, resolvedWorkspaceMembers, presenceMap,
+    workspaces, currentWorkspace, currentWorkspaceId, workspaceMembers, resolvedWorkspaceMembers, mentionedWorkspaceIds, presenceMap,
     switchWorkspace,
     drops, dropsLoading, refreshDrops,
     categories, handleCreateCategory, handleDeleteCategory,
@@ -262,6 +263,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
           onDelete={(workspace) => setWorkspaceToDelete(workspace)}
           onLeave={(workspace) => setWorkspaceToLeave(workspace)}
           theme={theme}
+          mentionedWorkspaceIds={mentionedWorkspaceIds}
         />
       </Header>
       <main className="max-w-6xl mx-auto px-6 py-8">

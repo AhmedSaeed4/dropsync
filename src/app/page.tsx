@@ -21,12 +21,13 @@ import { initializeUserKeys, hasUserKeys, getUserKeys, ensurePublicKeyPublished 
 import { ensureProfilePublished } from '@/lib/profiles';
 import { decryptDrop, updateTextDrop, updateDropMetadata, moveDrop } from '@/lib/drops';
 import { getWorkspaceMembers, MemberInfo } from '@/lib/workspaces';
-import { getLastRead, initReadState, markWorkspaceChatRead } from '@/lib/groupChat';
+import { getLastRead, initReadState, markWorkspaceChatRead, clearWorkspaceMentions } from '@/lib/groupChat';
 import {
   isNotificationsSupported,
   getNotificationPermission,
   requestNotificationPermission,
   showChatNotification,
+  showMentionNotification,
   registerChatServiceWorker,
   ensureFcmToken,
 } from '@/lib/notifications';
@@ -387,6 +388,29 @@ export default function Home() {
     return () => { cancelled = true; };
   }, [currentWorkspace?.id]);
 
+  // Persist the user's last-active workspace so the SERVER can scope plain-message pushes to it:
+  // notify-chat-message skips a recipient whose lastActiveWorkspaceId != the message's workspace.
+  // Must live in Firestore (not localStorage) so OFFLINE recipients get the right decision. The
+  // effect fires only on user/workspace change → no redundant writes. @mention pushes are NOT scoped
+  // (notify-mention is untouched). A missed write only means one wrong push decision (lower-stakes
+  // than readState), so a plain updateDoc-on-change is acceptable for v1.
+  useEffect(() => {
+    if (!user || !currentWorkspaceId) return;
+    updateDoc(doc(db, 'users', user.uid), { lastActiveWorkspaceId: currentWorkspaceId }).catch((err) =>
+      console.error('Failed to persist lastActiveWorkspaceId:', err),
+    );
+  }, [user?.uid, currentWorkspaceId]);
+
+  // @mention glow + foreground notif. mentionedWorkspaceIds = workspace ids that have ≥1 unread
+  // mention of this user (cross-workspace) — drives the switcher name glow. The listener below is
+  // global (alive regardless of which workspace is open): the FIRST cross-workspace activity signal.
+  const [mentionedWorkspaceIds, setMentionedWorkspaceIds] = useState<Set<string>>(new Set());
+  // Refs read inside the mentions snapshot without re-subscribing: the currently-open workspace id,
+  // and the mention doc ids we've already fired a notif for (suppresses notifs for pre-existing
+  // mentions on mount; GC'd as docs are deleted on read so the set can't grow unbounded).
+  const currentWsIdRef = useRef<string | null>(currentWorkspaceId);
+  const seenMentionIdsRef = useRef<Set<string>>(new Set());
+
   // Mark as read when chat opens/closes (MUST come before unread listener). AWAITS the Firestore
   // write and only clears the glow (setUnreadCount(0)) on success — previously the write was
   // fire-and-forget and setUnreadCount(0) ran immediately, so a write lost to a tab close / device
@@ -416,6 +440,9 @@ export default function Home() {
 
           await markWorkspaceChatRead(currentWorkspaceId, user.uid, newestSeenCreatedAt);
           setUnreadCount(0); // only clear the glow once the write actually committed
+          // Reading this workspace's chat also clears its @mention glow (deletes the mention docs
+          // for this workspace; the mentions listener sees the removal → glow clears).
+          void clearWorkspaceMentions(user.uid, currentWorkspaceId);
         } catch (err) {
           // Don't clear the glow on failure — it correctly persists so the next open retries.
           console.error('Failed to mark chat read:', err);
@@ -578,7 +605,8 @@ export default function Home() {
   // without re-subscribing on every showChat/chatMode change.
   useEffect(() => {
     viewingGroupChatRef.current = showChat && chatMode === 'group';
-  }, [showChat, chatMode]);
+    currentWsIdRef.current = currentWorkspaceId;
+  }, [showChat, chatMode, currentWorkspaceId]);
 
   // Active only when supported, permitted, and not muted.
   const notifsActive = isNotificationsSupported() && notifPermission === 'granted' && !notifMuted;
@@ -619,6 +647,11 @@ export default function Home() {
         const msgDate = ts.toDate();
         if (msgDate <= lastSeenTs) continue;
         if (data.senderId === user.uid) { lastSeenTs = msgDate; continue; } // own msg: seen, no notify
+        // An @mention of this user is delivered by the MENTION listener (the richer "tagged you"
+        // notif + workspace-switch tap), so skip the generic chat notif here — otherwise one message
+        // yields two OS notifications. mentionedUids is plaintext on the doc (no decryption needed).
+        const mentioned = data.mentionedUids as string[] | undefined;
+        if (Array.isArray(mentioned) && mentioned.includes(user.uid)) { lastSeenTs = msgDate; continue; }
         lastSeenTs = msgDate; // advance baseline (seen)
 
         // Re-check permission at fire time (can change outside the app).
@@ -710,6 +743,51 @@ export default function Home() {
     navigator.serviceWorker.addEventListener('message', handler);
     return () => navigator.serviceWorker.removeEventListener('message', handler);
   }, []);
+
+  // Global @mention listener — the FIRST cross-workspace activity signal. Subscribes to ALL of this
+  // user's mention docs (every workspace), derives the glow set (mentionedWorkspaceIds), and fires a
+  // foreground system notification for each NEW mention. The first snapshot only SEEDS the seen-id
+  // set (no notif) so a page load with pending mentions doesn't spam. Stays alive across workspace
+  // switches (deps: [user] only); currentWsIdRef/viewingGroupChatRef keep the notif gate current.
+  useEffect(() => {
+    if (!user) {
+      setMentionedWorkspaceIds(new Set());
+      seenMentionIdsRef.current = new Set();
+      return;
+    }
+    const seen = seenMentionIdsRef.current;
+    let firstSnap = true;
+    const q = query(collection(db, 'users', user.uid, 'mentions'));
+    const unsub = onSnapshot(q, (snap) => {
+      const wsSet = new Set<string>();
+      snap.forEach((d) => {
+        const wsId = d.get('workspaceId') as string | undefined;
+        if (wsId) wsSet.add(wsId);
+        if (!seen.has(d.id)) {
+          seen.add(d.id);
+          if (!firstSnap) {
+            const senderName = (d.get('senderName') as string | undefined) || 'Someone';
+            const wsName = (d.get('workspaceName') as string | undefined) || 'workspace';
+            // Skip the OS notif when the tab is hidden (the FCM/SW mention push handles closed-app)
+            // or the user is already viewing that workspace's group chat.
+            const viewingThis = !!wsId && wsId === currentWsIdRef.current && viewingGroupChatRef.current;
+            if (wsId && document.visibilityState === 'visible' && !viewingThis && getNotificationPermission() === 'granted') {
+              showMentionNotification(senderName, wsName, wsId, () => openChatFromTapRef.current(wsId || undefined));
+            }
+          }
+        }
+      });
+      firstSnap = false;
+      setMentionedWorkspaceIds(wsSet);
+      // Drop seen ids whose docs were deleted (on read) so the set can't grow without bound.
+      const live = new Set(snap.docs.map((d) => d.id));
+      for (const id of seen) if (!live.has(id)) seen.delete(id);
+    }, (err) => {
+      console.warn('Mentions listener error:', err.message);
+    });
+    return () => unsub();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
   // Toggle chat panel — auto-switch to workspace tab when unreads exist.
   // Passed down as onToggleChat so the layout chat buttons hit this (and thus the
@@ -1559,6 +1637,7 @@ export default function Home() {
     previewLoading, setPreviewLoading,
     encryptionInitializing,
     workspaces, currentWorkspace, currentWorkspaceId, workspaceMembers, resolvedWorkspaceMembers,
+    mentionedWorkspaceIds,
     switchWorkspace,
     drops, dropsLoading, refreshDrops,
     categories, handleCreateCategory, handleDeleteCategory,

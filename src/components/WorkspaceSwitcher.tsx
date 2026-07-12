@@ -14,6 +14,8 @@ interface WorkspaceSwitcherProps {
   onDelete: (workspace: Workspace) => void;
   onLeave: (workspace: Workspace) => void;
   theme?: 'light' | 'dark' | 'minimal';
+  // Workspace ids with ≥1 unread @mention of this user → their names glow (tags-only signal).
+  mentionedWorkspaceIds?: Set<string>;
 }
 
 export function WorkspaceSwitcher({
@@ -25,7 +27,8 @@ export function WorkspaceSwitcher({
   onJoin,
   onDelete,
   onLeave,
-  theme = 'light'
+  theme = 'light',
+  mentionedWorkspaceIds,
 }: WorkspaceSwitcherProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -160,6 +163,7 @@ export function WorkspaceSwitcher({
               const isActive = currentWorkspace?.id === workspace.id;
               const isExpanded = expandedWorkspaceId === workspace.id;
               const members = membersMap[workspace.id];
+              const hasMention = mentionedWorkspaceIds?.has(workspace.id) ?? false;
 
               return (
                 <div key={workspace.id}>
@@ -174,7 +178,7 @@ export function WorkspaceSwitcher({
                       <svg className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : tc.textColor}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
                       </svg>
-                      <span className={`${tc.fontClass} ${isActive ? 'text-white' : tc.textColor} truncate`}>
+                      <span className={`${tc.fontClass} ${isActive ? 'text-white' : tc.textColor} truncate ${hasMention ? 'animate-text-rgb' : ''}`}>
                         {workspace.name}
                       </span>
                     </div>

@@ -4,7 +4,7 @@ import { Drop } from '@/types';
 import { parseMessageContent } from '@/lib/dropTagUtils';
 
 interface DropMentionContentProps {
-  // Decrypted text body — may contain #[Name](id) mention tokens.
+  // Decrypted text body — may contain #[Name](id) drop tokens and @[Name](uid) @member tokens.
   content: string;
   // Current space's drops — used to resolve chip targets (existence + current name).
   allDrops?: Drop[];
@@ -14,6 +14,10 @@ interface DropMentionContentProps {
   foundClassName: string;
   // Full className for a chip whose target was deleted / can't be resolved.
   deletedClassName: string;
+  // Full className for an inline @[Name](uid) @member chip (group chat only). Single style — an
+  // ex-member's chip keeps the baked name, so there is no found/deleted split for users. Optional:
+  // drop cards / preview modals render drop content (no @ chips), so they omit it.
+  userMentionClassName?: string;
 }
 
 /**
@@ -23,11 +27,15 @@ interface DropMentionContentProps {
  * identical. The caller supplies theme-specific class strings; this component owns the
  * parse → map → chip logic.
  */
-export function DropMentionContent({ content, allDrops = [], onPreview, foundClassName, deletedClassName }: DropMentionContentProps) {
+export function DropMentionContent({ content, allDrops = [], onPreview, foundClassName, deletedClassName, userMentionClassName = '' }: DropMentionContentProps) {
   return (
     <>
       {parseMessageContent(content).map((part, i) => {
         if (part.type === 'text') return <span key={i}>{part.value}</span>;
+        if (part.uid !== undefined) {
+          // @member chip — styled inline, non-interactive (no target to open). Renders the baked name.
+          return <span key={i} className={userMentionClassName}>{part.name}</span>;
+        }
         const found = allDrops.find(d => d.id === part.dropId);
         const exists = !!found;
         // Show the linked drop's current name when it exists (so renames update);

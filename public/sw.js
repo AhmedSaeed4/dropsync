@@ -43,6 +43,17 @@ const messaging = firebase.messaging();
 messaging.onBackgroundMessage((payload) => {
   const d = (payload && payload.data) || {};
   const wsId = d.workspaceId || '';
+  // @mention push — distinct tag (dropsync-mention-<wsId>) so a later plain message in the same
+  // workspace can't collapse it, + mention-specific copy. Tap reuses the same deep-link pipeline.
+  if (d.type === 'mention') {
+    self.registration.showNotification((d.senderName || 'Someone') + ' tagged you', {
+      body: 'In ' + (d.workspaceName || 'workspace'),
+      tag: 'dropsync-mention-' + wsId,
+      data: { workspaceId: wsId },
+      icon: '/icon.svg?v=2',
+    });
+    return;
+  }
   self.registration.showNotification(d.senderName || 'New message', {
     body: 'Sent a message in ' + (d.workspaceName || 'workspace'),
     tag: 'dropsync-chat-' + wsId,

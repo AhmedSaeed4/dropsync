@@ -95,6 +95,13 @@ export async function POST(request: NextRequest) {
       // member gets no push at all — even with the app closed.
       const recipientDoc = await adminDb.collection('users').doc(recipientUid).get();
       if (recipientDoc.get('notifMuted') === true) continue;
+      // Scope the PLAIN-MESSAGE push to the recipient's LAST-ACTIVE workspace: skip if they last had
+      // a DIFFERENT workspace open (they'll see it via the in-app Chat-button glow when they open it).
+      // Absent field → push (backward compat for users who haven't switched since deploy). The user
+      // doc is already fetched above for the mute check, so reuse it. @mention pushes go through a
+      // SEPARATE route (notify-mention) and are NOT scoped by this — left untouched.
+      const lastActiveWs = recipientDoc.get('lastActiveWorkspaceId') as string | undefined;
+      if (lastActiveWs && lastActiveWs !== workspaceId) continue;
       const tokenSnap = await adminDb
         .collection('users')
         .doc(recipientUid)
