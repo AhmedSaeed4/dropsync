@@ -61,6 +61,62 @@ export async function requestNotificationPermission(): Promise<NotificationPermi
 }
 
 /**
+ * Fire a foreground @mention notification. Mirrors showChatNotification's platform split (desktop
+ * `new Notification`, mobile via the service worker) but uses mention-specific copy + a DISTINCT tag
+ * (`dropsync-mention`) so a mention never collapses a plain-message notification (or vice versa).
+ * Clicking focuses the window and runs `onClick` (jump to that workspace's chat). The caller gates
+ * WHEN to fire (tab visible + not already viewing that workspace's chat).
+ */
+export function showMentionNotification(
+  senderName: string,
+  workspaceName: string,
+  workspaceId: string,
+  onClick: () => void,
+): void {
+  if (!isNotificationsSupported() || Notification.permission !== 'granted') return;
+
+  const isMobile = typeof window !== 'undefined' && window.matchMedia('(max-width: 1023px)').matches;
+  if (isMobile && !isIOSSafari() && 'serviceWorker' in navigator) {
+    (async () => {
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        // data.workspaceId is THE FIX: the SW's notificationclick (public/sw.js) recovers the target
+        // workspace from event.notification.data.workspaceId and posts OPEN_CHAT with it, so tapping
+        // the mention switches to the MENTIONING workspace (not the currently-open one). Without it
+        // the SW recovers undefined → openChatFromTapRef(undefined) → the current workspace's chat.
+        await reg.showNotification(`${senderName} tagged you`, {
+          body: `In ${workspaceName}`,
+          tag: 'dropsync-mention',
+          data: { workspaceId },
+          icon: '/icon.svg?v=2',
+        });
+      } catch (e) {
+        console.error('Notification failed:', e);
+      }
+    })();
+    return;
+  }
+
+  try {
+    // Desktop: onclick already carries workspaceId via the closure, so data is redundant here —
+    // included only for symmetry with the mobile branch. Behavior is unchanged.
+    const n = new Notification(`${senderName} tagged you`, {
+      body: `In ${workspaceName}`,
+      tag: 'dropsync-mention', // distinct from dropsync-chat so mentions never collapse plain messages
+      data: { workspaceId },
+      icon: '/icon.svg?v=2',
+    });
+    n.onclick = () => {
+      window.focus();
+      onClick();
+      n.close();
+    };
+  } catch (e) {
+    console.error('Notification failed:', e);
+  }
+}
+
+/**
  * Fire a chat notification. `tag` makes repeat notifications REPLACE rather than
  * stack (spam control). Clicking focuses the window and runs `onClick` (open chat).
  */

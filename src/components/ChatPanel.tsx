@@ -186,14 +186,18 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
   // there are NO crypto / rules / data-model changes. workspaceDrops feeds the picker and resolves
   // chip targets for both the editor and the inline display.
   const workspaceDrops = useMemo(() => (drops || []).filter(d => d.workspaceId === workspaceId), [drops, workspaceId]);
+  // Declared early so the editor hook below can self-exclude the current user from the @ picker.
+  const userId = auth.currentUser?.uid;
   // Editor chip classes — solid fills, since the editor sits on a single input-bg surface.
   const mentionChipBase = 'inline-flex items-center mx-0.5 px-1.5 py-0.5 align-middle text-[13px] leading-none';
   const mentionFoundClass = `${mentionChipBase} ${theme === 'minimal' ? 'rounded-full font-sans bg-[#1A1A1A]' : 'font-mono bg-[#FF5A47]'} text-white`;
   const mentionDeletedClass = `${mentionChipBase} line-through opacity-50 cursor-not-allowed`;
-  const groupMention = useMentionEditor({ content: groupInput, setContent: setGroupInput, allDrops: workspaceDrops, foundClassName: mentionFoundClass, deletedClassName: mentionDeletedClass });
+  // @member chips use a blue accent so they read distinctly from #[drop] chips (coral) while editing.
+  const mentionMemberClass = `${mentionChipBase} ${theme === 'minimal' ? 'rounded-full font-sans bg-[#1A1A1A]' : 'font-mono bg-[#2563eb]'} text-white`;
+  const groupMention = useMentionEditor({ content: groupInput, setContent: setGroupInput, allDrops: workspaceDrops, foundClassName: mentionFoundClass, deletedClassName: mentionDeletedClass, allMembers: workspaceMembers, excludeUid: userId, memberClassName: mentionMemberClass });
   // editMention is a single top-level instance (Rules of Hooks); its contentEditable renders only
   // for the message being edited (editingMsgId === msg.id).
-  const editMention = useMentionEditor({ content: editDraft, setContent: setEditDraft, allDrops: workspaceDrops, foundClassName: mentionFoundClass, deletedClassName: mentionDeletedClass });
+  const editMention = useMentionEditor({ content: editDraft, setContent: setEditDraft, allDrops: workspaceDrops, foundClassName: mentionFoundClass, deletedClassName: mentionDeletedClass, memberClassName: mentionMemberClass });
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -201,7 +205,6 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
   // Scroll-to-message + flash-highlight for quote-reply jumps (shared with EditorialChatPanel).
   const { setMessageRef, jumpToMessage, flashId } = useMessageScroll(scrollRef);
   const s = getThemeStyles(theme);
-  const userId = auth.currentUser?.uid;
   const isOwner = !!userId && ownerId === userId;
   // Display chip classes — translucent fills, since a rendered chip can land on EITHER the sender's
   // own bubble (s.userBubble) or another member's (s.assistantBubble); a solid accent would vanish on
@@ -210,6 +213,8 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
   const displayChipBase = 'inline-flex items-center mx-0.5 px-1.5 py-0.5 align-middle rounded text-[10px] font-medium transition-opacity leading-none';
   const displayFoundClass = `${displayChipBase} ${s.activeBg} hover:opacity-80 cursor-pointer`;
   const displayDeletedClass = `${displayChipBase} ${s.muted} line-through cursor-not-allowed opacity-60`;
+  // Displayed @member chip — blue, non-interactive (translucent so it reads on either bubble color).
+  const displayUserClass = `${displayChipBase} bg-[#2563eb]/15 text-[#2563eb]`;
 
   // Delay welcome message fade-in until panel animation completes
   useEffect(() => {
@@ -1069,6 +1074,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
                             onPreview={(d) => { if (onPreviewDrop && workspaceId) onPreviewDrop(d.id, workspaceId); }}
                             foundClassName={displayFoundClass}
                             deletedClassName={displayDeletedClass}
+                            userMentionClassName={displayUserClass}
                           />
                         </div>
                         {msg.edited && (
@@ -1267,7 +1273,30 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
                     ))}
                   </div>
                 )}
-                {groupInput === '' && !groupMention.showMention && (
+                {groupMention.showUserMention && groupMention.filteredMembers.length > 0 && (
+                  <div
+                    ref={groupMention.userDropdownRef}
+                    className={`absolute bottom-full left-0 right-0 z-50 mb-1 max-h-[240px] overflow-y-auto border ${s.borderColor} ${s.panelBg} ${s.roundedClass} shadow-lg`}
+                    style={{ touchAction: 'pan-y' }}
+                  >
+                    {groupMention.filteredMembers.map((member, idx) => (
+                      <button
+                        key={member.uid}
+                        type="button"
+                        data-member-highlighted={idx === groupMention.userMentionIndex}
+                        onPointerDown={(e) => e.preventDefault()}
+                        onClick={() => groupMention.insertUserMention(member)}
+                        className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 ${idx === groupMention.userMentionIndex ? `${s.activeBg} ${s.inputText}` : `${s.hoverBg} ${s.inputText}`}`}
+                      >
+                        <span className={`w-5 h-5 rounded-full ${s.sendBtn} text-white flex items-center justify-center text-[9px] font-medium shrink-0`}>
+                          {member.displayName.charAt(0).toUpperCase()}
+                        </span>
+                        <span className="truncate">{member.displayName}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {groupInput === '' && !groupMention.showMention && !groupMention.showUserMention && (
                   <span className={`pointer-events-none absolute left-3 top-2 text-xs ${s.placeholder} ${s.fontClass}`}>
                     Message workspace...
                   </span>

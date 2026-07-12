@@ -16,6 +16,8 @@ interface EditorialWorkspaceSwitcherProps {
   onLeave: (workspace: Workspace) => void;
   theme?: 'light' | 'dark' | 'minimal';
   showChat?: boolean;
+  // Workspace ids with ≥1 unread @mention of this user → their names glow (tags-only signal).
+  mentionedWorkspaceIds?: Set<string>;
 }
 
 export function EditorialWorkspaceSwitcher({
@@ -29,6 +31,7 @@ export function EditorialWorkspaceSwitcher({
   onLeave,
   theme = 'light',
   showChat = false,
+  mentionedWorkspaceIds,
 }: EditorialWorkspaceSwitcherProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -179,6 +182,7 @@ export function EditorialWorkspaceSwitcher({
               const isActive = currentWorkspace?.id === workspace.id;
               const isExpanded = expandedWorkspaceId === workspace.id;
               const members = membersMap[workspace.id];
+              const hasMention = mentionedWorkspaceIds?.has(workspace.id) ?? false;
 
               return (
                 <div key={workspace.id}>
@@ -206,7 +210,7 @@ export function EditorialWorkspaceSwitcher({
                         />
                       </svg>
                       <span
-                        className={`${tc.fontClass} text-sm ${isActive ? 'text-white' : tc.text} truncate`}
+                        className={`${tc.fontClass} text-sm ${isActive ? 'text-white' : tc.text} truncate ${hasMention ? 'animate-text-rgb' : ''}`}
                       >
                         {workspace.name}
                       </span>

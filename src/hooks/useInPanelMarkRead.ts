@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { Timestamp } from 'firebase/firestore';
-import { markWorkspaceChatRead } from '@/lib/groupChat';
+import { markWorkspaceChatRead, clearWorkspaceMentions } from '@/lib/groupChat';
 import type { GroupChatMessage } from '@/types';
 
 const DEBOUNCE_MS = 1500;
@@ -66,6 +66,10 @@ export function useInPanelMarkRead(
       void markWorkspaceChatRead(wsId, uId, Timestamp.fromDate(newest.createdAt)).catch((err) =>
         console.error('Failed to mark chat read (in-panel):', err),
       );
+      // Reading up to the newest message also clears this workspace's @mention glow (the mentions
+      // listener in page.tsx sees the doc deletes → the switcher glow clears). Best-effort, like the
+      // mark-read above; a failed clear just leaves the glow until the next read retry.
+      void clearWorkspaceMentions(uId, wsId).catch(() => {});
     }, DEBOUNCE_MS);
   };
 
@@ -78,6 +82,7 @@ export function useInPanelMarkRead(
     // (e.g. the tab is hidden in the window between the switch and the new workspace's first
     // snapshot). `messages` is the panels' state, which is NOT cleared on a switch (the panels
     // don't remount), so on the switch commit it still belongs to the PREVIOUS workspace.
+    const oldWsId = prevWsRef.current;
     const switched = prevWsRef.current !== undefined && prevWsRef.current !== workspaceId;
     prevWsRef.current = workspaceId;
 
@@ -93,6 +98,13 @@ export function useInPanelMarkRead(
       }
       lastMarkedRef.current = null;
       messagesWorkspaceRef.current = undefined;
+      // The user was viewing oldWsId's chat — clear its @mention glow on departure, mirroring the
+      // chat-close path (page.tsx). The debounced clear above was just cancelled by this switch, so
+      // fire it directly. Fire-and-forget + idempotent (no-op if no mention docs); readState logic
+      // is unaffected.
+      if (oldWsId && userId) {
+        void clearWorkspaceMentions(userId, oldWsId).catch(() => {});
+      }
       return;
     }
 

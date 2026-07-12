@@ -85,6 +85,7 @@ interface EditorialLayoutProps {
   currentWorkspaceId: string | null;
   workspaceMembers: any[];
   resolvedWorkspaceMembers: any[];
+  mentionedWorkspaceIds: Set<string>;
   presenceMap: Record<string, { lastSeen: number; online: boolean }>;
   switchWorkspace: (id: string | null) => void;
   drops: Drop[];
@@ -137,7 +138,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
     previewDrop, setPreviewDrop,
     previewLoading, setPreviewLoading,
     encryptionInitializing,
-    workspaces, currentWorkspace, currentWorkspaceId, workspaceMembers, resolvedWorkspaceMembers, presenceMap,
+    workspaces, currentWorkspace, currentWorkspaceId, workspaceMembers, resolvedWorkspaceMembers, mentionedWorkspaceIds, presenceMap,
     switchWorkspace,
     drops, dropsLoading, refreshDrops,
     categories, handleCreateCategory, handleDeleteCategory,
@@ -270,6 +271,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
         onJoin={() => setShowJoinModal(true)}
         onDelete={(ws) => setWorkspaceToDelete(ws)}
         onLeave={(ws) => setWorkspaceToLeave(ws)}
+        mentionedWorkspaceIds={mentionedWorkspaceIds}
       />
 
       {/* Main content - responsive: stacked on mobile/tablet, side-by-side on desktop */}

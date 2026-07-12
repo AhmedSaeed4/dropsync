@@ -3,7 +3,8 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import type { KeyboardEvent, FocusEvent, Dispatch, SetStateAction } from 'react';
 import { Drop } from '@/types';
-import { detectHashtagTrigger, parseMessageContent } from '@/lib/dropTagUtils';
+import { detectHashtagTrigger, detectMentionTrigger, parseMessageContent } from '@/lib/dropTagUtils';
+import type { MemberInfo } from '@/lib/workspaces';
 
 /**
  * useMentionEditor — backs a contentEditable text editor that renders #[Name](id) mention
@@ -34,9 +35,17 @@ function serializeNode(node: Node): string {
     } else if (child.nodeType === Node.ELEMENT_NODE) {
       const el = child as HTMLElement;
       if (el.classList && el.classList.contains('mention-chip')) {
-        const name = el.getAttribute('data-drop-name') || '';
-        const id = el.getAttribute('data-drop-id') || '';
-        out += `#[${name}](${id})`;
+        // Chip kind drives the token shape: drop → #[name](id), user → @[name](uid). Both share
+        // data-chip-name; the kind-specific ref lives in data-chip-id (drop) / data-chip-uid (user).
+        const kind = el.getAttribute('data-chip-kind') || 'drop';
+        const name = el.getAttribute('data-chip-name') || '';
+        if (kind === 'user') {
+          const uid = el.getAttribute('data-chip-uid') || '';
+          out += `@[${name}](${uid})`;
+        } else {
+          const id = el.getAttribute('data-chip-id') || '';
+          out += `#[${name}](${id})`;
+        }
       } else if (el.tagName === 'BR') {
         out += '\n';
       } else if (el.tagName === 'DIV' || el.tagName === 'P') {
@@ -52,17 +61,34 @@ function serializeNode(node: Node): string {
 }
 
 // Token string → HTML for initial render / external updates. Chips are contenteditable=false.
-function renderContentToHtml(content: string, allDrops: Drop[], foundClassName: string, deletedClassName: string): string {
+// Renders #[name](id) drop chips (found/deleted against allDrops) AND @[name](uid) member chips
+// (memberClassName). The drop-note editor passes no members + a body with no @ chips, so the member
+// branch is inert there; the group-chat composer passes both.
+function renderContentToHtml(
+  content: string,
+  allDrops: Drop[],
+  members: MemberInfo[],
+  foundClassName: string,
+  deletedClassName: string,
+  memberClassName: string,
+): string {
   return parseMessageContent(content).map((part) => {
     if (part.type === 'text') {
       return escapeHtml(part.value || '').replace(/\n/g, '<br>');
+    }
+    if (part.uid !== undefined) {
+      // @member chip — rendered with the single member class. An ex-member's chip keeps the baked
+      // name (same as a deleted drop), so there is no found/deleted split for users.
+      const name = escapeHtml(part.name || '');
+      const uid = escapeHtml(part.uid || '');
+      return `<span class="mention-chip ${memberClassName}" contenteditable="false" data-chip-kind="user" data-chip-name="${name}" data-chip-uid="${uid}">${name}</span>${ZWSP}`;
     }
     const name = part.name || '';
     const id = part.dropId || '';
     const exists = allDrops.some((d) => d.id === id);
     const cls = exists ? foundClassName : deletedClassName;
     // Trailing ZWSP gives the caret a landing spot after the atomic chip; stripped on serialize.
-    return `<span class="mention-chip ${cls}" contenteditable="false" data-drop-id="${escapeHtml(id)}" data-drop-name="${escapeHtml(name)}">${escapeHtml(name)}</span>${ZWSP}`;
+    return `<span class="mention-chip ${cls}" contenteditable="false" data-chip-kind="drop" data-chip-name="${escapeHtml(name)}" data-chip-id="${escapeHtml(id)}">${escapeHtml(name)}</span>${ZWSP}`;
   }).join('');
 }
 
@@ -70,9 +96,22 @@ function createChipElement(drop: Drop, className: string): HTMLSpanElement {
   const span = document.createElement('span');
   span.className = `mention-chip ${className}`;
   span.setAttribute('contenteditable', 'false');
-  span.setAttribute('data-drop-id', drop.id);
-  span.setAttribute('data-drop-name', drop.name);
+  span.setAttribute('data-chip-kind', 'drop');
+  span.setAttribute('data-chip-name', drop.name);
+  span.setAttribute('data-chip-id', drop.id);
   span.textContent = drop.name;
+  return span;
+}
+
+// @member chip — same atomic structure as a drop chip, kind=user, carrying the uid (not a drop id).
+function createMemberChipElement(member: MemberInfo, className: string): HTMLSpanElement {
+  const span = document.createElement('span');
+  span.className = `mention-chip ${className}`;
+  span.setAttribute('contenteditable', 'false');
+  span.setAttribute('data-chip-kind', 'user');
+  span.setAttribute('data-chip-name', member.displayName);
+  span.setAttribute('data-chip-uid', member.uid);
+  span.textContent = member.displayName;
   return span;
 }
 
@@ -96,6 +135,13 @@ export interface UseMentionEditorOptions {
   // Full className strings for chips — supplied by the caller per theme.
   foundClassName: string;
   deletedClassName: string;
+  // @member source (group-chat composer only). When omitted/empty, the @ trigger stays inert —
+  // that's how the inline edit box and the drop-note editor remain @-free (v1 is composer-only).
+  allMembers?: MemberInfo[];
+  // uid to exclude from the @ picker (the current user — never @mention yourself).
+  excludeUid?: string;
+  // Full className for an @member chip in the editor (single style — no found/deleted split).
+  memberClassName?: string;
 }
 
 export function useMentionEditor({
@@ -105,9 +151,15 @@ export function useMentionEditor({
   excludeDropId,
   foundClassName,
   deletedClassName,
+  allMembers,
+  excludeUid,
+  memberClassName,
 }: UseMentionEditorOptions) {
   const editorRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  // Separate dropdown container for the @member picker. Only one picker is ever open at once (the
+  // caret sits at one position), but each needs its own ref for scroll-into-view + blur handling.
+  const userDropdownRef = useRef<HTMLDivElement>(null);
   // The last string either read FROM the DOM or written INTO it. When `content` equals this,
   // the DOM is already in sync and we must NOT rewrite innerHTML (that would jump the caret).
   const lastSerializedRef = useRef<string | null>(null);
@@ -119,6 +171,10 @@ export function useMentionEditor({
   const [showMention, setShowMention] = useState(false);
   const [mentionQuery, setMentionQuery] = useState('');
   const [mentionIndex, setMentionIndex] = useState(0);
+  // @member picker state — mirrors the # drop-picker. Only one picker is open at a time.
+  const [showUserMention, setShowUserMention] = useState(false);
+  const [userMentionQuery, setUserMentionQuery] = useState('');
+  const [userMentionIndex, setUserMentionIndex] = useState(0);
   // Bumped by the setEditorRef callback whenever the contentEditable (re)mounts. Added to the
   // external→DOM effect's deps so the effect re-runs on remount EVEN IF `content` is unchanged —
   // which is what happens on a group→AI→group tab switch (the composer's contentEditable is
@@ -147,6 +203,16 @@ export function useMentionEditor({
     return list.slice(0, MAX_RESULTS);
   }, [allDrops, mentionQuery, excludeDropId]);
 
+  // @member picker list — self-excluded (excludeUid). Empty when no member source is wired, which is
+  // how the edit box / drop-note editor stay @-free even though they share this hook.
+  const filteredMembers = useMemo(() => {
+    const q = userMentionQuery.toLowerCase().trim();
+    let list = (allMembers || []).filter((m) => m.uid !== excludeUid);
+    if (q) list = list.filter((m) => m.displayName.toLowerCase().includes(q));
+    const MAX_RESULTS = typeof window !== 'undefined' && window.innerWidth < 640 ? 5 : 8;
+    return list.slice(0, MAX_RESULTS);
+  }, [allMembers, userMentionQuery, excludeUid]);
+
   // Reset highlight when the query changes.
   useEffect(() => { setMentionIndex(0); }, [mentionQuery]);
 
@@ -163,6 +229,21 @@ export function useMentionEditor({
     if (el) el.scrollIntoView({ block: 'nearest' });
   }, [mentionIndex, showMention]);
 
+  // Reset highlight when the @ query changes.
+  useEffect(() => { setUserMentionIndex(0); }, [userMentionQuery]);
+
+  // Clamp the @ highlight when its filtered list shrinks so Enter always lands on a valid row.
+  useEffect(() => {
+    setUserMentionIndex((idx) => Math.max(0, Math.min(idx, filteredMembers.length - 1)));
+  }, [filteredMembers]);
+
+  // Keep the highlighted @member row in view while arrow-navigating.
+  useEffect(() => {
+    if (!showUserMention) return;
+    const el = userDropdownRef.current?.querySelector('[data-member-highlighted="true"]');
+    if (el) el.scrollIntoView({ block: 'nearest' });
+  }, [userMentionIndex, showUserMention]);
+
   // EXTERNAL → DOM. Fires when `content` changes for reasons other than typing (mount, edit-load,
   // voice appends), OR when the editor (re)mounts (mountKey — see setEditorRef). The guard prevents
   // innerHTML rewrites during typing (caret-safety).
@@ -178,7 +259,7 @@ export function useMentionEditor({
       lastSerializedRef.current = null;
     }
     if (content !== lastSerializedRef.current) {
-      editor.innerHTML = renderContentToHtml(content, allDrops, foundClassName, deletedClassName);
+      editor.innerHTML = renderContentToHtml(content, allDrops, allMembers || [], foundClassName, deletedClassName, memberClassName || '');
       lastSerializedRef.current = content;
       placeCaretAtEnd(editor);
     }
@@ -195,22 +276,42 @@ export function useMentionEditor({
     lastSerializedRef.current = serialized;
     setContent(serialized);
 
-    // Detect a #query at the caret — only meaningful inside a text node (chips are atomic).
+    // Detect a #query OR @query at the caret — only meaningful inside a text node (chips are atomic).
+    // The caret is at one position, so at most one picker can be active; they share the trigger-node
+    // refs and whichever detection fires first wins.
     const sel = window.getSelection();
     const node = sel?.anchorNode;
     if (sel && sel.rangeCount && node && editor.contains(node) && node.nodeType === Node.TEXT_NODE) {
       const textBefore = (node.textContent || '').slice(0, sel.anchorOffset);
-      const trigger = detectHashtagTrigger(textBefore);
-      if (trigger && trigger.query.length > 0) {
+      const hashTrigger = detectHashtagTrigger(textBefore);
+      if (hashTrigger && hashTrigger.query.length > 0) {
         setShowMention(true);
-        setMentionQuery(trigger.query);
+        setMentionQuery(hashTrigger.query);
         mentionTextNodeRef.current = node as Text;
-        mentionStartOffsetRef.current = trigger.startIndex;
+        mentionStartOffsetRef.current = hashTrigger.startIndex;
+        setShowUserMention(false);
+        setUserMentionQuery('');
         return;
+      }
+      // @member picker — only when a member source is wired (composer). Without allMembers the @
+      // trigger stays inert, so the inline edit box and the drop-note editor remain @-free (v1).
+      if (allMembers && allMembers.length > 0) {
+        const atTrigger = detectMentionTrigger(textBefore);
+        if (atTrigger && atTrigger.query.length > 0) {
+          setShowUserMention(true);
+          setUserMentionQuery(atTrigger.query);
+          mentionTextNodeRef.current = node as Text;
+          mentionStartOffsetRef.current = atTrigger.startIndex;
+          setShowMention(false);
+          setMentionQuery('');
+          return;
+        }
       }
     }
     setShowMention(false);
     setMentionQuery('');
+    setShowUserMention(false);
+    setUserMentionQuery('');
     mentionTextNodeRef.current = null;
   };
 
@@ -266,7 +367,64 @@ export function useMentionEditor({
     mentionTextNodeRef.current = null;
   };
 
+  // Insert an @member chip — mirrors insertMention (drop) but for the member picker: replaces the
+  // tracked @query range with [chip][zwsp], places the caret after, and re-serializes. Shares the
+  // trigger-node refs (only one picker is active per input).
+  const insertUserMention = (member: MemberInfo) => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    editor.focus();
+    const sel = window.getSelection();
+    const chip = createMemberChipElement(member, memberClassName || '');
+    const zwsp = document.createTextNode(ZWSP);
+
+    const node = mentionTextNodeRef.current;
+    if (node && editor.contains(node) && node.nodeType === Node.TEXT_NODE) {
+      const len = node.textContent?.length ?? 0;
+      const start = Math.min(mentionStartOffsetRef.current, len);
+      let end = sel && sel.anchorNode === node ? sel.anchorOffset : len;
+      end = Math.max(start, Math.min(end, len));
+      const range = document.createRange();
+      range.setStart(node, start);
+      range.setEnd(node, end);
+      range.deleteContents();
+      range.insertNode(zwsp);
+      zwsp.parentNode?.insertBefore(chip, zwsp);
+    } else {
+      if (sel && sel.rangeCount && editor.contains(sel.anchorNode)) {
+        const range = sel.getRangeAt(0);
+        range.deleteContents();
+        range.insertNode(zwsp);
+        zwsp.parentNode?.insertBefore(chip, zwsp);
+      } else {
+        editor.appendChild(chip);
+        editor.appendChild(zwsp);
+      }
+    }
+
+    const newRange = document.createRange();
+    newRange.setStartAfter(zwsp);
+    newRange.collapse(true);
+    sel?.removeAllRanges();
+    sel?.addRange(newRange);
+
+    const serialized = serializeNode(editor);
+    lastSerializedRef.current = serialized;
+    setContent(serialized);
+
+    setShowUserMention(false);
+    setUserMentionQuery('');
+    setUserMentionIndex(0);
+    mentionTextNodeRef.current = null;
+  };
+
   const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (showUserMention && filteredMembers.length > 0) {
+      if (e.key === 'ArrowUp') { e.preventDefault(); setUserMentionIndex((p) => Math.max(0, p - 1)); return; }
+      if (e.key === 'ArrowDown') { e.preventDefault(); setUserMentionIndex((p) => Math.min(filteredMembers.length - 1, p + 1)); return; }
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); const m = filteredMembers[userMentionIndex]; if (m) insertUserMention(m); return; }
+      if (e.key === 'Escape') { e.preventDefault(); setShowUserMention(false); return; }
+    }
     if (showMention && filteredMentionDrops.length > 0) {
       if (e.key === 'ArrowUp') { e.preventDefault(); setMentionIndex((p) => Math.max(0, p - 1)); return; }
       if (e.key === 'ArrowDown') { e.preventDefault(); setMentionIndex((p) => Math.min(filteredMentionDrops.length - 1, p + 1)); return; }
@@ -278,7 +436,9 @@ export function useMentionEditor({
 
   const handleBlur = (e: FocusEvent<HTMLDivElement>) => {
     if (dropdownRef.current?.contains(e.relatedTarget as Node)) return;
+    if (userDropdownRef.current?.contains(e.relatedTarget as Node)) return;
     setShowMention(false);
+    setShowUserMention(false);
   };
 
   const focusEditor = () => {
@@ -302,5 +462,13 @@ export function useMentionEditor({
     handleBlur,
     insertMention,
     focusEditor,
+    // @member picker API (composer-only; no-op where no member source is wired)
+    userDropdownRef,
+    showUserMention,
+    userMentionQuery,
+    userMentionIndex,
+    setUserMentionIndex,
+    filteredMembers,
+    insertUserMention,
   };
 }

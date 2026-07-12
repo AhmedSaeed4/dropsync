@@ -94,20 +94,26 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   // renders, so there are NO crypto / rules / data-model changes. workspaceDrops feeds the picker and
   // resolves chip targets for the editor AND the inline display.
   const workspaceDrops = useMemo(() => (drops || []).filter(d => d.workspaceId === workspaceId), [drops, workspaceId]);
+  // Declared early so the editor hook below can self-exclude the current user from the @ picker.
+  const userId = auth.currentUser?.uid;
   // Editor chip classes — solid pills on the editor's single-bg surface.
   const mentionChipBase = `inline-flex items-center mx-0.5 px-1.5 py-0.5 align-middle rounded text-[13px] leading-none ${tc.fontClass}`;
   const mentionFoundClass = `${mentionChipBase} ${tc.activePillBg} ${tc.activePillText}`;
   const mentionDeletedClass = `${mentionChipBase} ${tc.inactivePillBg} ${tc.muted} line-through cursor-not-allowed`;
+  // @member chip — a blue pill so it reads distinctly from #[drop] chips (theme accent) while editing.
+  const mentionMemberClass = `${mentionChipBase} bg-[#2563eb] text-white`;
   // Display chip classes — found reuses the theme accent (matches the prior separate-card look 1:1);
   // deleted is themed (inactive + muted + strike) instead of the old gray, per "deleted chip is
   // themed (not gray)".
   const displayChipBase = `inline-flex items-center mx-0.5 px-1.5 py-0.5 align-middle rounded text-[11px] font-medium leading-none ${tc.fontClass}`;
   const displayFoundClass = `${displayChipBase} ${tc.activePillBg} ${tc.activePillText} hover:opacity-80 cursor-pointer`;
   const displayDeletedClass = `${displayChipBase} ${tc.inactivePillBg} ${tc.muted} line-through cursor-not-allowed opacity-60`;
-  const groupMention = useMentionEditor({ content: groupInput, setContent: setGroupInput, allDrops: workspaceDrops, foundClassName: mentionFoundClass, deletedClassName: mentionDeletedClass });
+  // Displayed @member chip — blue, non-interactive (translucent so it reads on either bubble color).
+  const displayUserClass = `${displayChipBase} bg-[#2563eb]/15 text-[#2563eb]`;
+  const groupMention = useMentionEditor({ content: groupInput, setContent: setGroupInput, allDrops: workspaceDrops, foundClassName: mentionFoundClass, deletedClassName: mentionDeletedClass, allMembers: workspaceMembers, excludeUid: userId, memberClassName: mentionMemberClass });
   // editMention is a single top-level instance (Rules of Hooks); its contentEditable renders only
   // for the message being edited (editingMsgId === msg.id).
-  const editMention = useMentionEditor({ content: editDraft, setContent: setEditDraft, allDrops: workspaceDrops, foundClassName: mentionFoundClass, deletedClassName: mentionDeletedClass });
+  const editMention = useMentionEditor({ content: editDraft, setContent: setEditDraft, allDrops: workspaceDrops, foundClassName: mentionFoundClass, deletedClassName: mentionDeletedClass, memberClassName: mentionMemberClass });
 
   const [switchingConv, setSwitchingConv] = useState<string | null>(null);
   const [animateMessages, setAnimateMessages] = useState(false);
@@ -116,7 +122,6 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   const unsubRef = useRef<(() => void) | null>(null);
   // Scroll-to-message + flash-highlight for quote-reply jumps (shared with ChatPanel).
   const { setMessageRef, jumpToMessage, flashId } = useMessageScroll(scrollRef);
-  const userId = auth.currentUser?.uid;
   const isOwner = !!userId && ownerId === userId;
   const activeConv = conversations.find(c => c.id === activeConvId) || null;
 
@@ -1047,6 +1052,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
                             onPreview={(d) => { if (onPreviewDrop && workspaceId) onPreviewDrop(d.id, workspaceId); }}
                             foundClassName={displayFoundClass}
                             deletedClassName={displayDeletedClass}
+                            userMentionClassName={displayUserClass}
                           />
                         </div>
                         {msg.edited && (
@@ -1224,10 +1230,35 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
                   ))}
                 </div>
               )}
+              {/* @member picker — anchored to the editor wrapper, floats above it (mirrors the #
+                  picker above). Inline member rows; selecting one inserts an @[name](uid) chip. */}
+              {groupMention.showUserMention && groupMention.filteredMembers.length > 0 && (
+                <div
+                  ref={groupMention.userDropdownRef}
+                  className={`absolute bottom-full left-0 right-0 mb-1 z-50 max-h-[240px] overflow-y-auto rounded-md border ${tc.border} ${tc.bg} shadow-lg`}
+                  style={{ touchAction: 'pan-y' }}
+                >
+                  {groupMention.filteredMembers.map((member, idx) => (
+                    <button
+                      key={member.uid}
+                      type="button"
+                      data-member-highlighted={idx === groupMention.userMentionIndex}
+                      onPointerDown={(e) => e.preventDefault()}
+                      onClick={() => groupMention.insertUserMention(member)}
+                      className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 ${tc.fontClass} ${idx === groupMention.userMentionIndex ? `${tc.activePillBg} ${tc.activePillText}` : `${tc.text} hover:bg-[#1a1a1a]/5`}`}
+                    >
+                      <span className={`w-5 h-5 rounded-full ${tc.activePillBg} ${tc.activePillText} flex items-center justify-center text-[9px] font-medium shrink-0`}>
+                        {member.displayName.charAt(0).toUpperCase()}
+                      </span>
+                      <span className="truncate">{member.displayName}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
               {/* Placeholder — shown only when empty + no picker. Anchored to the editor wrapper, so
                   left-4 top-3 = the editor's px-4 py-3 text origin. (The old left-8 top-7 included the
                   outer wrapper's p-4, gone now that the anchor is the padding-less inner wrapper.) */}
-              {groupInput === '' && !groupMention.showMention && (
+              {groupInput === '' && !groupMention.showMention && !groupMention.showUserMention && (
                 <span className={`pointer-events-none absolute left-4 top-3 text-[14px] ${tc.fontClass} ${theme === 'dark' ? 'text-white/30' : 'text-[#1A1A1A]/30'}`}>
                   Message workspace...
                 </span>

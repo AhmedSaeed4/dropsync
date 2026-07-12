@@ -84,6 +84,17 @@ service cloud.firestore {
         allow delete: if request.auth != null && request.auth.uid == userId;
         allow update: if false;
       }
+
+      // @mention inbox — per-user PLAINTEXT pointer docs (workspaceId/workspaceName/messageId/
+      // senderId/senderName) written ONLY by the /api/notify-mention route via the Admin SDK
+      // (write:false here; the client readState rule is self-only so cross-user mention delivery
+      // must run server-side). Clients may read + delete their OWN: read drives the switcher glow +
+      // foreground system notification; delete clears the glow on read. Self-only — no field rules
+      // needed (these docs carry no secrets; the message body stays encrypted in the messages doc).
+      match /mentions/{mentionId} {
+        allow read, delete: if request.auth != null && request.auth.uid == userId;
+        allow write: if false;
+      }
     }
 
     // User PROFILES — world-readable display fields (displayName, photoURL). Any logged-in user
