@@ -5,6 +5,8 @@ import ReactMarkdown from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import { auth } from '@/lib/firebase';
 import { useTypingStatus, formatTypingText } from '@/hooks/useTypingStatus';
+import { useNearBottom } from '@/hooks/useNearBottom';
+import { useDelayedUnmount } from '@/hooks/useDelayedUnmount';
 import type { PresenceMap } from '@/hooks/usePresence';
 import { formatLastSeen } from '@/lib/presence';
 import {
@@ -279,6 +281,17 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
 
   // Group typing indicator (panel-level — only the open panel subscribes) + members-popover state.
   const typing = useTypingStatus(workspaceId, userId, workspaceMembers);
+  // atBottom drives the typing-pill vs scroll-to-bottom-button swap (group only). Additive — it only
+  // observes scroll position and never touches the existing scrollTop = scrollHeight auto-scroll.
+  const atBottom = useNearBottom(scrollRef);
+  // Fade-OUT: keep each overlay mounted ~180ms past its exit so a pure-opacity fade-out can play
+  // before the real unmount (React otherwise removes instantly). shouldRender gates the element;
+  // isExiting swaps in the fade-out class. Object access (not destructured) — classic has its own
+  // isExiting state at the top of this component.
+  const pillVisible = chatMode === 'group' && atBottom && typing.typingUsers.length > 0;
+  const scrollVisible = chatMode === 'group' && !atBottom;
+  const pill = useDelayedUnmount(pillVisible, 180);
+  const scroll = useDelayedUnmount(scrollVisible, 180);
   const [showMembers, setShowMembers] = useState(false);
   const membersBtnRef = useRef<HTMLButtonElement>(null);
   const membersPopoverRef = useRef<HTMLDivElement>(null);
@@ -1126,20 +1139,44 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
         </div>
       )}
 
-      {/* Typing indicator — pinned above the composer, outside the scroll area (group only). */}
-      {chatMode === 'group' && typing.typingUsers.length > 0 && (
-        <div className={`shrink-0 px-3 pt-2 flex items-center gap-2 animate-typing-fade ${s.muted} ${s.fontClass}`}>
-          <span className="flex items-center gap-0.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-current" style={{ animation: 'typing-bounce 1.2s infinite', animationDelay: '0s' }} />
-            <span className="w-1.5 h-1.5 rounded-full bg-current" style={{ animation: 'typing-bounce 1.2s infinite', animationDelay: '0.15s' }} />
-            <span className="w-1.5 h-1.5 rounded-full bg-current" style={{ animation: 'typing-bounce 1.2s infinite', animationDelay: '0.3s' }} />
-          </span>
-          <span className="text-[10px]">{formatTypingText(typing.typingUsers.map((u) => u.displayName))}</span>
-        </div>
-      )}
-
       {/* Input */}
       <div className={`border-t ${s.borderColor} p-3 shrink-0 ${chatMode === 'group' ? 'relative' : ''}`}>
+        {/* Typing indicator — a zero-space overlay above the composer (group + at bottom + someone
+            typing). Plain dots + muted text, no background (the original in-flow look). Anchored to
+            this relative input wrapper (never position:fixed — a transform on an ancestor would trap
+            it); bottom-full floats it just above the input border and pb-1.5 clears the bouncing dots
+            off that border. pointer-events-none (click-through). atBottom gating makes it mutually
+            exclusive with the scroll-to-bottom button. */}
+        {pill.shouldRender && (
+          <div className={`absolute bottom-full left-0 right-0 px-3 pb-1.5 flex items-center gap-2 pointer-events-none ${pill.isExiting ? 'animate-typing-fade-out' : 'animate-typing-fade'} z-10 ${s.muted} ${s.fontClass}`}>
+            <span className="flex items-center gap-0.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-current" style={{ animation: 'typing-bounce 1.2s infinite', animationDelay: '0s' }} />
+              <span className="w-1.5 h-1.5 rounded-full bg-current" style={{ animation: 'typing-bounce 1.2s infinite', animationDelay: '0.15s' }} />
+              <span className="w-1.5 h-1.5 rounded-full bg-current" style={{ animation: 'typing-bounce 1.2s infinite', animationDelay: '0.3s' }} />
+            </span>
+            <span className="text-[10px]">{formatTypingText(typing.typingUsers.map((u) => u.displayName))}</span>
+          </div>
+        )}
+        {/* Scroll-to-bottom button — shown only when scrolled up (group + !atBottom). Mutually
+            exclusive with the pill (atBottom vs !atBottom). Clicking smooth-scrolls the list to the
+            bottom → atBottom flips true → this hides and the pill re-shows if still typing. The
+            typing badge (coral dot, top corner) reuses typing-bounce so a scrolled-up user still sees
+            activity. pointer-events-auto (clickable, unlike the pill). Same opaque members-popover bg. */}
+        {scroll.shouldRender && (
+          <button
+            type="button"
+            aria-label="Scroll to bottom"
+            onClick={() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })}
+            className={`absolute bottom-full right-3 mb-2 flex items-center justify-center w-9 h-9 rounded-full shadow-md pointer-events-auto cursor-pointer ${scroll.isExiting ? 'animate-typing-fade-out' : 'animate-typing-fade'} z-10 ${theme === 'dark' ? 'bg-[#2A2A2A]' : 'bg-white'}`}
+          >
+            <svg className={`w-5 h-5 ${theme === 'dark' ? 'text-white' : 'text-[#1A1A1A]'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12l7 7l7-7" />
+            </svg>
+            {typing.typingUsers.length > 0 && (
+              <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-[#FF5A47]" style={{ animation: 'typing-bounce 1.2s infinite' }} />
+            )}
+          </button>
+        )}
         {chatMode === 'ai' ? (
           <form
             onSubmit={(e) => { e.preventDefault(); handleSend(); }}
