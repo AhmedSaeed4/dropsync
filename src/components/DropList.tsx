@@ -179,8 +179,12 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
     });
   }, [performDropDelete]);
 
-  // Filter out all pending deletions from displayed drops
-  const visibleDrops = drops.filter(d => !pendingDeletions.has(d.id));
+  // Filter out all pending deletions from displayed drops.
+  // Also hide drops whose delete has already started (deletedDropIdsRef tombstone) — set
+  // synchronously at delete-start, this keeps the drop hidden through the gap between the undo
+  // toast clearing the pendingDeletions hide and onSnapshot actually removing the doc, so the
+  // drop never flashes back at 30s. Undo never sets the tombstone, so undo still re-shows it.
+  const visibleDrops = drops.filter(d => !pendingDeletions.has(d.id) && !deletedDropIdsRef.current.has(d.id));
 
   const handlePinDrop = useCallback(async (drop: Drop) => {
     if (drop.pinned) {
