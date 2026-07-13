@@ -647,9 +647,9 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   }, []);
 
   return (
-    <div ref={panelRef} className={`flex flex-col h-full overflow-hidden border-l ${tc.border} ${tc.bg} transition-colors duration-500`}>
+    <div ref={panelRef} className={`relative flex flex-col h-full overflow-hidden border-l ${tc.border} ${tc.bg} transition-colors duration-500`}>
       {/* Header with staggered fade-in */}
-      <div className={`z-20 border-b ${tc.border} px-5 py-4 flex items-center justify-between shrink-0 transition-all duration-300 ease-out ${showHeader ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-[10px]'}`} style={{ touchAction: 'none' }}>
+      <div className={`${chatMode === 'group' ? 'z-20' : ''} border-b ${tc.border} px-5 py-4 flex items-center justify-between shrink-0 transition-all duration-300 ease-out ${showHeader ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-[10px]'}`} style={{ touchAction: 'none' }}>
         <div className="flex items-center gap-1.5">
           <h3 className={`text-[15px] font-medium ${tc.fontClass} ${tc.text}`}>
             {chatMode === 'group' ? 'Workspace Chat' : 'AI Assistant'}
@@ -771,15 +771,26 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
               <p className={`text-xs ${tc.fontClass} ${tc.muted}`}>
                 Chat history
               </p>
-              <button
-                onClick={() => setShowSidebar(false)}
-                className={`${tc.text} opacity-50 hover:opacity-100 transition-opacity`}
-                title="Close history"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={handleNewChat}
+                  className={`w-7 h-7 flex items-center justify-center rounded-md ${tc.text} opacity-50 hover:opacity-100 hover:bg-black/5 transition-all`}
+                  title="New chat"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => setShowSidebar(false)}
+                  className={`w-7 h-7 flex items-center justify-center rounded-md ${tc.text} opacity-50 hover:opacity-100 hover:bg-black/5 transition-all`}
+                  title="Close history"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
             </div>
             <div className="flex-1 overflow-y-auto" style={{ touchAction: 'pan-y' }}>
               {conversations.map((conv) => (

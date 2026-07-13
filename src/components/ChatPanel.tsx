@@ -804,15 +804,26 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
               <p className={`text-[10px] ${s.fontClass} uppercase tracking-wider ${s.muted}`}>
                 {theme === 'minimal' ? 'Chat history' : 'CHAT/LOG'}
               </p>
-              <button
-                onClick={() => setShowSidebar(false)}
-                className={`${s.headerText} opacity-60 hover:opacity-100 transition-opacity`}
-                title="Close history"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleNewChat}
+                  className={`${s.headerText} opacity-60 hover:opacity-100 transition-opacity`}
+                  title="New chat"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => setShowSidebar(false)}
+                  className={`${s.headerText} opacity-60 hover:opacity-100 transition-opacity`}
+                  title="Close history"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
             </div>
             <div className="flex-1 overflow-y-auto">
               {conversations.map((conv) => (
