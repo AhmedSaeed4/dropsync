@@ -12,16 +12,35 @@ interface UndoToastProps {
   theme?: 'light' | 'dark' | 'minimal';
   index?: number; // For stacking multiple toasts
   editorial?: boolean;
+  // epoch ms of the real delete deadline (store-owned). When provided, the countdown is derived from
+  // (expiresAt - now) so it survives remounts (a layout switch mounts a fresh toast reading the SAME
+  // deadline) and stays synced to the authoritative store timer instead of restarting at 30.
+  expiresAt?: number;
 }
 
-export function UndoToast({ message, dropName, onUndo, onDismiss, duration = 30, theme = 'light', index = 0, editorial = false }: UndoToastProps) {
-  const [timeLeft, setTimeLeft] = useState(duration);
+export function UndoToast({ message, dropName, onUndo, onDismiss, duration = 30, theme = 'light', index = 0, editorial = false, expiresAt }: UndoToastProps) {
+  // Countdown: when the store provides the real delete deadline (expiresAt), derive the remaining
+  // seconds from it on mount — self-correcting across remounts (a layout switch mounts a fresh toast
+  // that reads the SAME deadline) and resilient to tab-throttling. Fall back to the duration-based
+  // initial value when no deadline is supplied (keeps the component self-contained).
+  const [timeLeft, setTimeLeft] = useState(() =>
+    expiresAt !== undefined ? Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000)) : duration
+  );
   const [progress, setProgress] = useState(100);
   const dismissedRef = useRef(false);
   const isDark = theme === 'dark';
   const isMinimal = theme === 'minimal';
 
   useEffect(() => {
+    // expiresAt path: recompute the remaining time from the real deadline each tick (NOT a
+    // decrement) so the display can never drift from the store's timer — correct on any remount and
+    // resilient to background-tab throttling. Legacy path (no deadline): decrement once per second.
+    if (expiresAt !== undefined) {
+      const interval = setInterval(() => {
+        setTimeLeft(Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000)));
+      }, 1000);
+      return () => clearInterval(interval);
+    }
     const interval = setInterval(() => {
       setTimeLeft((prev) => {
         if (prev <= 1) {
@@ -33,7 +52,7 @@ export function UndoToast({ message, dropName, onUndo, onDismiss, duration = 30,
     }, 1000);
 
     return () => clearInterval(interval);
-  }, []);
+  }, [expiresAt, duration]);
 
   // Handle auto-dismiss when time runs out
   useEffect(() => {

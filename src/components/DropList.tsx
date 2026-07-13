@@ -8,6 +8,7 @@ import { UndoToast } from './UndoToast';
 import { Toast } from './Toast';
 import { CategoryFilter } from './CategoryFilter';
 import { deleteDrop, moveDrop, copyDrop, pinDrop, unpinDrop } from '@/lib/drops';
+import { usePendingDeletions, requestDelete, undo, dismiss } from '@/lib/pendingDeletions';
 import { ensureCategoriesForTarget } from '@/lib/categories';
 import { MoveDropModal } from '@/components/MoveDropModal';
 import { MemberInfo } from '@/lib/workspaces';
@@ -29,21 +30,15 @@ interface DropListProps {
   allDrops?: Drop[];
 }
 
-interface PendingDeletion {
-  drop: Drop;
-  timeoutId: NodeJS.Timeout;
-}
-
 export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspaces = [], theme = 'light', currentUserId, categories = [], onDeleteCategory, currentWorkspace, workspaceMembers, allDrops = [] }: DropListProps) {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
-  const [pendingDeletions, setPendingDeletions] = useState<Map<string, PendingDeletion>>(new Map());
-  // Drop ids whose deletion has already been triggered. Two independent 30s timers fire when the
-  // undo window elapses — handleDeleteWithUndo's setTimeout AND the UndoToast's onDismiss -> here.
-  // Without this guard the second call hits an already-deleted drop (DELETE /api/share 404 +
-  // Firestore permission-denied on the missing doc). Undo never reaches this, so undo is unaffected.
-  const deletedDropIdsRef = useRef<Set<string>>(new Set());
+  // Single-drop delete-with-undo state lives in the shared module store (PR #168) so it survives a
+  // classic<->editorial layout switch / client-side nav mid-30s-window. `pending` is the request-
+  // time hide + the 30s timer; `deletedDropIds` (the tombstone) hides drops whose delete has
+  // already fired, until onSnapshot confirms removal.
+  const { pending: pendingDeletions, tombstone: deletedDropIds } = usePendingDeletions();
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [bulkMoveDrops, setBulkMoveDrops] = useState<Drop[] | null>(null);
@@ -117,74 +112,21 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
     setSelectionMode(false);
   };
 
-  const performDropDelete = useCallback(async (drop: Drop) => {
-    if (deletedDropIdsRef.current.has(drop.id)) return; // already triggered — ignore the second timer
-    deletedDropIdsRef.current.add(drop.id);
-    try {
-      const ok = await deleteDrop(drop);
-      if (!ok) {
-        // delete FAILED — the drop still exists (onSnapshot will re-show it). Clear the guard so the
-        // user's retry (click delete again) is NOT blocked. Safe vs the double-fire: the second 30s
-        // timer already returned early above, so clearing here does not reopen it.
-        deletedDropIdsRef.current.delete(drop.id);
-      }
-    } finally {
-      onDelete();
-    }
-  }, [onDelete]);
-
-  // Handle single drop deletion with undo
-  const handleDeleteWithUndo = useCallback((drop: Drop) => {
-    // Set up new pending deletion with 30 second timeout
-    const timeoutId = setTimeout(async () => {
-      await performDropDelete(drop);
-      setPendingDeletions(prev => {
-        const newMap = new Map(prev);
-        newMap.delete(drop.id);
-        return newMap;
-      });
-    }, 30000);
-
-    setPendingDeletions(prev => {
-      const newMap = new Map(prev);
-      newMap.set(drop.id, { drop, timeoutId });
-      return newMap;
-    });
-  }, [performDropDelete]);
-
-  // Undo the deletion for a specific drop
-  const handleUndoDeletion = useCallback((dropId: string) => {
-    setPendingDeletions(prev => {
-      const pending = prev.get(dropId);
-      if (pending) {
-        clearTimeout(pending.timeoutId);
-      }
-      const newMap = new Map(prev);
-      newMap.delete(dropId);
-      return newMap;
-    });
-  }, []);
-
-  // Dismiss the toast (continue with deletion) for a specific drop
-  const handleDismissToast = useCallback((dropId: string) => {
-    setPendingDeletions(prev => {
-      const pending = prev.get(dropId);
-      if (pending) {
-        clearTimeout(pending.timeoutId);
-        performDropDelete(pending.drop);
-      }
-      const newMap = new Map(prev);
-      newMap.delete(dropId);
-      return newMap;
-    });
-  }, [performDropDelete]);
+  // Single-drop delete-with-undo handlers — thin wrappers over the shared store (PR #168). The
+  // store owns the pending map, the tombstone, and the 30s timer; these just delegate. Multi-select
+  // delete (handleBulkDelete below) stays per-instance and immediate — no undo window, not routed
+  // through the store.
+  const handleDeleteWithUndo = useCallback((drop: Drop) => requestDelete(drop, onDelete), [onDelete]);
+  const handleUndoDeletion = useCallback((dropId: string) => undo(dropId), []);
+  const handleDismissToast = useCallback((dropId: string) => dismiss(dropId, onDelete), [onDelete]);
 
   // Filter out all pending deletions from displayed drops.
-  // Also hide drops whose delete has already started (deletedDropIdsRef tombstone) — set
-  // synchronously at delete-start, this keeps the drop hidden through the gap between the undo
-  // toast clearing the pendingDeletions hide and onSnapshot actually removing the doc, so the
-  // drop never flashes back at 30s. Undo never sets the tombstone, so undo still re-shows it.
-  const visibleDrops = drops.filter(d => !pendingDeletions.has(d.id) && !deletedDropIdsRef.current.has(d.id));
+  // Also hide drops whose delete has already started (the shared tombstone) — set synchronously at
+  // delete-start inside the store, this keeps the drop hidden through the gap between the undo toast
+  // clearing the pendingDeletions hide and onSnapshot actually removing the doc, so the drop never
+  // flashes back at 30s. Undo never sets the tombstone, so undo still re-shows it. Both clauses are
+  // load-bearing: collapsing to one reopens the #167 30s flash.
+  const visibleDrops = drops.filter(d => !pendingDeletions.has(d.id) && !deletedDropIds.has(d.id));
 
   const handlePinDrop = useCallback(async (drop: Drop) => {
     if (drop.pinned) {
@@ -549,6 +491,7 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
           onUndo={() => handleUndoDeletion(pending.drop.id)}
           onDismiss={() => handleDismissToast(pending.drop.id)}
           duration={30}
+          expiresAt={pending.expiresAt}
           theme={theme}
           index={index}
         />
