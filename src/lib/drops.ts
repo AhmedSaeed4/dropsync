@@ -318,7 +318,10 @@ export async function createFileDrop(
   workspaceId: string | null = null,
   workspaceMembers?: string[],
   creatorName?: string,
-  locked: boolean = false
+  locked: boolean = false,
+  // OPTIONAL real byte-progress callback (ratio 0..1 of the in-flight PUT). Default no-op so every
+  // existing caller is unchanged. Threaded into uploadToR2 / uploadBinaryFileToR2 below.
+  onProgress?: (ratio: number) => void
 ): Promise<{ drop: Drop | null; error?: string }> {
   try {
     // Check file size (NOW UP TO 50MB instead of 800KB)
@@ -361,7 +364,7 @@ export async function createFileDrop(
 
           // Upload encrypted data to R2
           try {
-            const uploadResult = await uploadToR2(encryptedFileData);
+            const uploadResult = await uploadToR2(encryptedFileData, onProgress);
             fileUrl = uploadResult.url;
             r2Key = uploadResult.key;
           } catch (uploadError) {
@@ -399,7 +402,7 @@ export async function createFileDrop(
 
           // Upload encrypted data to R2
           try {
-            const uploadResult = await uploadToR2(encryptedFileData);
+            const uploadResult = await uploadToR2(encryptedFileData, onProgress);
             fileUrl = uploadResult.url;
             r2Key = uploadResult.key;
           } catch (uploadError) {
@@ -415,7 +418,7 @@ export async function createFileDrop(
       // files become binary too — harmless: /api/share/download already sniffs bytes, and this
       // never touches drop.fileData population, so preview/download behavior is unchanged.
       try {
-        const uploadResult = await uploadBinaryFileToR2(file);
+        const uploadResult = await uploadBinaryFileToR2(file, onProgress);
         fileUrl = uploadResult.url;
         r2Key = uploadResult.key;
         fileFormat = 'binary';
@@ -1763,7 +1766,10 @@ export async function decryptDrop(drop: Drop, currentUserId: string): Promise<Dr
 // Helper function to upload to R2
 // Uses Firebase ID token for authentication
 // =============================================
-async function uploadToR2(fileData: string): Promise<{ url: string; key: string }> {
+async function uploadToR2(
+  fileData: string,
+  onProgress?: (ratio: number) => void
+): Promise<{ url: string; key: string }> {
   // Get Firebase ID token from current user
   const currentUser = auth.currentUser;
   if (!currentUser) {
@@ -1787,18 +1793,27 @@ async function uploadToR2(fileData: string): Promise<{ url: string; key: string 
 
   const { presignedUrl, key, fileUrl } = await presignResponse.json();
 
-  // Step 2: Upload directly to R2 using presigned URL
-  const uploadResponse = await fetch(presignedUrl, {
-    method: 'PUT',
-    headers: {
-      'Content-Type': 'application/octet-stream',
-    },
-    body: fileData,
+  // Step 2: Upload directly to R2 using the presigned URL via XMLHttpRequest so we can report REAL
+  // byte progress (xhr.upload.onprogress). Byte-identical to the old fetch PUT: same Content-Type
+  // (application/octet-stream — exactly what /api/presign signs by default for this no-body caller,
+  // so R2 never sees a SignatureDoesNotMatch), 2xx = success, same thrown-error shape, same
+  // { url, key } result. onProgress is optional and a no-op when omitted (every other caller).
+  await new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', presignedUrl);
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) {
+        onProgress(e.loaded / e.total);
+      }
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve();
+      else reject(new Error(`R2 upload failed: ${xhr.status}`));
+    };
+    xhr.onerror = () => reject(new Error(`R2 upload failed: ${xhr.status}`));
+    xhr.send(fileData);
   });
-
-  if (!uploadResponse.ok) {
-    throw new Error(`R2 upload failed: ${uploadResponse.status}`);
-  }
 
   return { url: fileUrl, key };
 }
@@ -1809,7 +1824,10 @@ async function uploadToR2(fileData: string): Promise<{ url: string; key: string 
 // Blob body and its real Content-Type. The Content-Type sent on the PUT MUST match the one presign
 // signed (R2 rejects mismatched types with SignatureDoesNotMatch), so we pass blob.type to both.
 // uploadToR2 (which uploads ciphertext / data-URI strings) is intentionally left untouched.
-async function uploadBinaryFileToR2(blob: Blob): Promise<{ url: string; key: string }> {
+async function uploadBinaryFileToR2(
+  blob: Blob,
+  onProgress?: (ratio: number) => void
+): Promise<{ url: string; key: string }> {
   // Get Firebase ID token from current user
   const currentUser = auth.currentUser;
   if (!currentUser) {
@@ -1839,18 +1857,26 @@ async function uploadBinaryFileToR2(blob: Blob): Promise<{ url: string; key: str
 
   const { presignedUrl, key, fileUrl } = await presignResponse.json();
 
-  // Step 2: Upload the RAW blob directly to R2 (binary stream, no base64 inflate)
-  const uploadResponse = await fetch(presignedUrl, {
-    method: 'PUT',
-    headers: {
-      'Content-Type': contentType,
-    },
-    body: blob,
+  // Step 2: Upload the RAW blob directly to R2 (binary stream, no base64 inflate) via
+  // XMLHttpRequest so we can report REAL byte progress. Byte-identical to the old fetch PUT: the
+  // Content-Type sent here EXACTLY matches what presign signed above (R2 rejects a mismatch with
+  // SignatureDoesNotMatch), 2xx = success, same thrown-error shape, same { url, key } result.
+  await new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', presignedUrl);
+    xhr.setRequestHeader('Content-Type', contentType);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) {
+        onProgress(e.loaded / e.total);
+      }
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve();
+      else reject(new Error(`R2 binary upload failed: ${xhr.status}`));
+    };
+    xhr.onerror = () => reject(new Error(`R2 binary upload failed: ${xhr.status}`));
+    xhr.send(blob);
   });
-
-  if (!uploadResponse.ok) {
-    throw new Error(`R2 binary upload failed: ${uploadResponse.status}`);
-  }
 
   return { url: fileUrl, key };
 }
