@@ -96,9 +96,9 @@ const COLUMNS: { title: string; links: { label: string; href: string }[] }[] = [
   {
     title: 'Product',
     links: [
-      { label: 'How it works', href: '/about#how-it-works' },
-      { label: 'Security', href: '/about#security' },
-      { label: 'Docs', href: '/about' }, // temporary stand-in until a real /docs page exists
+      { label: 'How it works', href: '/docs#getting-started' },
+      { label: 'Security', href: '/docs#security' },
+      { label: 'Docs', href: '/docs' },
     ],
   },
   {
