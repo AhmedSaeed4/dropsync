@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Inter, Raleway } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/components/Providers";
+import { SmoothScrollProvider } from "@/components/SmoothScrollProvider";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -40,7 +41,9 @@ export default function RootLayout({
     <html lang="en">
       <body className={`${inter.variable} ${raleway.variable} font-[family-name:var(--font-inter)] antialiased`} suppressHydrationWarning>
         <Providers>
-          {children}
+          <SmoothScrollProvider>
+            {children}
+          </SmoothScrollProvider>
         </Providers>
       </body>
     </html>

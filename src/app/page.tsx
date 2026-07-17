@@ -16,6 +16,11 @@ import { getEditorialThemeColors } from '@/components/editorial/editorialTheme';
 import { AuthModal } from '@/components/AuthModal';
 import { VerifyEmailModal } from '@/components/VerifyEmailModal';
 import { Toast } from '@/components/Toast';
+import { Footer } from '@/components/Footer';
+import { lockScroll, unlockScroll, retractFooterIfUp } from '@/components/SmoothScrollProvider';
+import { useDissolve } from '@/hooks/useDissolve';
+import { useMagnet } from '@/hooks/useMagnet';
+import { useIsWide } from '@/hooks/useIsWide';
 import { Drop, Workspace, ExpirationOption } from '@/types';
 import { initializeUserKeys, hasUserKeys, getUserKeys, ensurePublicKeyPublished } from '@/lib/keys';
 import { ensureProfilePublished } from '@/lib/profiles';
@@ -111,6 +116,9 @@ export default function Home() {
   // Default: notifications ON once permission is granted (mute flag = off).
   const [notifPermission, setNotifPermission] = useState<NotificationPermission>('default');
   const [notifMuted, setNotifMuted] = useState(false);
+  // Approach-C: footer (dissolve + magnet) user toggle. Default ON. Persisted to Firestore
+  // users/{uid}.footerEnabled (mirrors notifMuted) so it syncs across devices on reload.
+  const [footerEnabled, setFooterEnabled] = useState(true);
   // Session-only guard for the chat-open permission prompt. Resets on every page load (NO
   // localStorage), so accounts created before the push feature get prompted again instead of being
   // permanently skipped. Only caps the prompt at once-per-tab-session.
@@ -140,9 +148,11 @@ export default function Home() {
       if (scrollbarWidth > 0) {
         document.body.style.paddingRight = `${scrollbarWidth}px`;
       }
+      lockScroll(); // freeze smooth-scroll while the overlay locks the page (ref-counted)
       return () => {
         document.body.style.overflow = originalOverflow;
         document.body.style.paddingRight = originalPaddingRight;
+        unlockScroll();
       };
     }
   }, [workspaceToDelete, workspaceToLeave, encryptionInitializing]);
@@ -222,6 +232,18 @@ export default function Home() {
       try { document.cookie = `share-theme=${theme === 'dark' ? 'dark' : 'light'};path=/;max-age=31536000;SameSite=Lax`; } catch {}
     }
   }, [theme, themeLoaded]);
+
+  // Match the page background to the theme so the dissolve (#app-shell fade) never flashes
+  // the cream body bg on the dark theme. On dark the body is PURE BLACK #000000 — matches the
+  // footer exactly, so the whole scroll-into-footer is uniformly black (no lighter band above
+  // the footer). On light/minimal the body stays cream (app is already cream → invisible).
+  // The inline style overrides globals.css `body { background: var(--off-white) }`; '' reverts
+  // to that cream default on light/minimal AND on unmount so other routes (/privacy, /s/[shareId])
+  // keep their cream body.
+  useEffect(() => {
+    document.body.style.backgroundColor = theme === 'dark' ? '#000000' : '';
+    return () => { document.body.style.backgroundColor = ''; };
+  }, [theme]);
 
   // Load layout from localStorage on mount
   useEffect(() => {
@@ -353,6 +375,9 @@ export default function Home() {
 
   // Handle preview with decryption
   const handlePreview = async (drop: Drop) => {
+    // Retract the footer if it's partway up (mid-dissolve) BEFORE opening the drop, so the modal
+    // isn't trapped behind the risen footer (#app-shell z-[1] < footer z-[2]). No-op at scrollY 0.
+    retractFooterIfUp();
     if (!user) {
       setPreviewDrop(drop);
       return;
@@ -554,7 +579,12 @@ export default function Home() {
     if (!user) { setNotifMuted(false); return; }
     let cancelled = false;
     getDoc(doc(db, 'users', user.uid))
-      .then((snap) => { if (!cancelled) setNotifMuted(!!snap.data()?.notifMuted); })
+      .then((snap) => {
+        if (cancelled) return;
+        setNotifMuted(!!snap.data()?.notifMuted);
+        // Default ON — use ?? true, NOT !! (!!undefined === false would hide the footer for everyone).
+        setFooterEnabled(snap.data()?.footerEnabled ?? true);
+      })
       .catch(() => {});
     return () => { cancelled = true; };
   }, [user]);
@@ -570,6 +600,22 @@ export default function Home() {
       updateDoc(doc(db, 'users', user.uid), { notifMuted: v }).catch(() => {});
     }
   };
+
+  // Approach-C footer toggle — persisted to Firestore users/{uid}.footerEnabled (default ON), the
+  // same pattern as persistMuted. Optimistic so the gate flips instantly; syncs across devices.
+  const persistFooterEnabled = (v: boolean) => {
+    setFooterEnabled(v); // optimistic
+    if (user) {
+      updateDoc(doc(db, 'users', user.uid), { footerEnabled: v }).catch(() => {});
+    }
+  };
+
+  const onToggleFooterEnabled = () => persistFooterEnabled(!footerEnabled);
+  // The footer's OWN "Hide footer" button → one-directional OFF (NOT the bidirectional Settings
+  // toggle). Footer runs the close-modal → smooth-scroll-to-top → onComplete sequence itself and
+  // calls this only once the footer has retracted out of view; persistFooterEnabled(false) then
+  // flips footerActive → false, unmounting the footer and disabling dissolve/magnet atomically.
+  const onHideFooter = () => persistFooterEnabled(false);
 
   // The Settings switch is THE reliable way to enable push. Its checked state (computed in
   // SettingsModal as `permission === 'granted' && !notifMuted`) decides direction:
@@ -667,7 +713,7 @@ export default function Home() {
         showChatNotification(
           data.senderName || 'Someone',
           currentWorkspace?.name || 'workspace',
-          () => { setChatMode('group'); setShowChat(true); },
+          () => { setChatMode('group'); retractFooterIfUp(); setShowChat(true); },
         );
       }
     }, (err) => {
@@ -708,6 +754,7 @@ export default function Home() {
         switchWorkspace(workspaceId);
       }
       setChatMode('group');
+      retractFooterIfUp();
       setShowChat(true);
     };
   }, [user, workspaces, switchWorkspace]);
@@ -725,6 +772,7 @@ export default function Home() {
     if (!isMember) return; // workspace not hydrated yet (or no access) — retry on the next workspaces change
     switchWorkspace(chatWsId);
     setChatMode('group');
+    retractFooterIfUp();
     setShowChat(true);
     deepLinkHandledRef.current = true;
   }, [user, workspaces, workspacesLoading, switchWorkspace]);
@@ -804,11 +852,13 @@ export default function Home() {
     if (!showChat && unreadCount > 0) {
       setChatMode('group');
     }
+    if (!showChat) retractFooterIfUp(); // retract the footer only when chat is OPENING (no-op at scrollY 0)
     setShowChat(!showChat);
   }, [showChat, unreadCount]);
 
   // Handle edit drop — decrypt text drops, file drops just need metadata
   const handleEditDrop = async (drop: Drop) => {
+    retractFooterIfUp(); // retract the footer before the edit overlay mounts (no-op at scrollY 0)
     setPreviewDrop(null); // close preview if open
     if (drop.type === 'file') {
       setEditDrop(drop);
@@ -897,6 +947,23 @@ export default function Home() {
   };
 
   const themeColors = getThemeColors(theme);
+
+  // Approach-C: footer + dissolve + magnet are a large-desktop (>=1400px / `wide`) feature. Below
+  // 1400px the footer is not rendered, so the dissolve/magnet self-heal polls never find
+  // #footer-shell and stay unattached (plain single-screen app). SSR-safe (false pre-mount).
+  const isWide = useIsWide();
+  // The footer (dissolve + magnet) is active ONLY on wide screens (>=1400px) AND when the user
+  // hasn't toggled it off in Settings (footerEnabled, default ON). This single flag gates the
+  // render AND both hooks so toggling off fully removes the footer/dissolve/magnet and stops the
+  // self-heal polls (same gate the hooks' Effect A uses — bailing here prevents a perpetual poll).
+  const footerActive = isWide && footerEnabled;
+  // Approach-C Part 2: the dissolve (app lifts + fades as the footer rises). Frozen solid while
+  // chat or a modal is open; off under reduced-motion. No-ops on login/loading (elements absent).
+  useDissolve(showChat, footerActive);
+  // Approach-C Part 3: the magnetic footer wheel-gate (resist at the app<->footer boundary, glide
+  // through on sustained intent). Desktop-pointer (wheel) only; off under reduced-motion; inert
+  // when the footer is absent. No-ops on login/loading/verify.
+  useMagnet(footerActive);
 
   // Wait for theme to load to prevent flash
   if (!themeLoaded) {
@@ -1623,6 +1690,7 @@ export default function Home() {
     unreadCount,
     onToggleChat: handleToggleChat,
     notifPermission, notifMuted, onToggleNotifications: handleToggleNotifications,
+    footerEnabled, onToggleFooterEnabled,
     showSettingsModal, setShowSettingsModal,
     showAuthModal, setShowAuthModal,
     showVerifyModal, setShowVerifyModal,
@@ -1658,8 +1726,11 @@ export default function Home() {
       : '';
 
   return (
-    <div className={transitionClass}>
-      {layoutMode === 'editorial' ? <EditorialLayout {...layoutProps} /> : <ClassicLayout {...layoutProps} />}
+    <>
+      <div id="app-shell" className={`sticky top-0 z-[1] h-[100dvh] overflow-x-hidden overflow-y-hidden ${transitionClass}`}>
+        {layoutMode === 'editorial' ? <EditorialLayout {...layoutProps} /> : <ClassicLayout {...layoutProps} />}
+      </div>
+      {footerActive && <Footer onHideFooter={onHideFooter} />}
       {removedNotice && (
         <Toast
           message={removedNotice}
@@ -1668,6 +1739,6 @@ export default function Home() {
           onDone={handleRemovedNoticeDone}
         />
       )}
-    </div>
+    </>
   );
 }

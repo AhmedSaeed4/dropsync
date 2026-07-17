@@ -5,6 +5,7 @@ import { Workspace } from '@/types';
 import { getWorkspaceMembers, type MemberInfo } from '@/lib/workspaces';
 import { getEditorialThemeColors } from '@/components/editorial/editorialTheme';
 import { useModalBackClose } from '@/hooks/useModalBackClose';
+import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 
 /**
  * WorkspaceOptionsModal — the OWNER's choice modal (replaces the old inline delete-only
@@ -53,6 +54,9 @@ export default function WorkspaceOptionsModal({
   const [kickTargetId, setKickTargetId] = useState<string | null>(null);
   // Back closes only when not mid delete/transfer/kick (matches the disabled X/backdrop).
   useModalBackClose(true, () => { if (!(isDeleting || isLeaving || isKicking)) onClose(); });
+  // Freeze the page (body overflow + Lenis) while this full-screen blocking modal is open, like
+  // every other modal. Previously this overlay locked NEITHER, so the background scrolled/glided.
+  useBodyScrollLock();
 
   // Fetch members on mount / when the workspace changes. `cancelled` prevents setState after
   // unmount; the modal is dismissed once a transfer/delete resolves, so this guards the race.

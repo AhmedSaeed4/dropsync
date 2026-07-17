@@ -25,6 +25,13 @@ body {
   scrollbar-gutter: stable;
 }
 
+/* Root scroll: kill pull-to-refresh / rubber-band on the app screen. Internal scrollers
+   keep their own overscroll-contain. */
+html,
+body {
+  overscroll-behavior: none;
+}
+
 /* Custom scrollbar - technical style */
 ::-webkit-scrollbar {
   width: 6px;
@@ -40,6 +47,18 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--coral);
+}
+
+/* Hide the DOCUMENT scrollbar — it only appears once the footer makes the page scrollable
+   (the footer is reached by scrolling, not via the bar). Scoped to `html` (the document
+   scroller) so nested scrollers (drop list / chat / modals) KEEP their styled scrollbars
+   from the global ::-webkit-scrollbar rule above. */
+html::-webkit-scrollbar {
+  display: none;
+}
+html {
+  scrollbar-width: none;        /* Firefox */
+  -ms-overflow-style: none;     /* legacy IE/Edge */
 }
 
 /* Minimal theme scrollbar - neutral instead of coral */

@@ -39,7 +39,7 @@ function buildThemeStyle(theme: 'light' | 'dark'): string {
   const p = theme === 'dark'
     ? { bg: '#0D0D0D', text: '#ffffff', muted: '#888', heading: '#ffffff', border: '#333', link: '#ffffff' }
     : { bg: '#FFFEF5', text: '#1a1a1a', muted: '#666', heading: '#1a1a1a', border: '#e0e0e0', link: '#1a1a1a' };
-  return `:root{--bg:${p.bg};--text:${p.text};--muted:${p.muted};--heading:${p.heading};--border:${p.border};--link:${p.link};}`;
+  return `:root{--bg:${p.bg};--text:${p.text};--muted:${p.muted};--heading:${p.heading};--border:${p.border};--link:${p.link};}html,body{background-color:${p.bg} !important;color:${p.text} !important;}`;
 }
 
 // Copies the app's `dropsync_theme` localStorage value into the `share-theme` cookie

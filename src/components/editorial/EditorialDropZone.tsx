@@ -9,6 +9,7 @@ import { ForeverLockedModal } from '../ForeverLockedModal';
 import { Tooltip } from '../Tooltip';
 import { ExpirationOption, Drop } from '@/types';
 import { getEditorialThemeColors } from './editorialTheme';
+import { retractFooterIfUp } from '../SmoothScrollProvider';
 
 interface EditorialDropZoneProps {
   theme?: 'light' | 'dark' | 'minimal';
@@ -329,6 +330,7 @@ export function EditorialDropZone({
             if (busy) return;
             const target = e.target as HTMLElement;
             if (target.tagName === 'BUTTON' || target.closest('button')) return;
+            retractFooterIfUp();
             setShowTextModal(true);
           }}
         >
@@ -372,6 +374,7 @@ export function EditorialDropZone({
                   disabled={busy}
                   onClick={(e) => {
                     e.stopPropagation();
+                    retractFooterIfUp();
                     setShowTextModal(true);
                   }}
                   className={`${tc.fontClass} rounded-lg border ${tc.border} bg-transparent ${tc.text} ${tc.hoverBorder} transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${showChat ? 'px-4 py-2.5 text-sm' : 'px-6 py-3 text-sm'} ${busy ? 'cursor-not-allowed' : ''}`}

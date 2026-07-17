@@ -16,6 +16,7 @@ import { ChatPanel } from '@/components/ChatPanel';
 import { SavedPaths } from '@/components/SavedPaths';
 import { TextModal } from '@/components/TextModal';
 import { MoveDropModal } from '@/components/MoveDropModal';
+import { retractFooterIfUp } from '@/components/SmoothScrollProvider';
 import WorkspaceOptionsModal from '@/components/WorkspaceOptionsModal';
 import { useModalBackClose } from '@/hooks/useModalBackClose';
 import { useIsMobile } from '@/hooks/useIsMobile';
@@ -54,6 +55,8 @@ interface ClassicLayoutProps {
   notifPermission?: NotificationPermission;
   notifMuted?: boolean;
   onToggleNotifications?: () => void;
+  footerEnabled?: boolean;
+  onToggleFooterEnabled?: () => void;
   showSettingsModal: boolean;
   setShowSettingsModal: (v: boolean) => void;
   showAuthModal: boolean;
@@ -125,6 +128,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
     chatMode = 'ai', setChatMode,
     unreadCount = 0,
     notifPermission, notifMuted, onToggleNotifications,
+    footerEnabled, onToggleFooterEnabled,
     showSettingsModal, setShowSettingsModal,
     showAuthModal, setShowAuthModal,
     showVerifyModal, setShowVerifyModal,
@@ -238,7 +242,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
   };
 
   return (
-    <div className={`min-h-screen ${themeColors.bgColor} transition-colors duration-500`}>
+    <div className={`flex h-[100dvh] flex-col ${themeColors.bgColor} transition-colors duration-500`}>
       {/* Encryption initializing overlay */}
       {encryptionInitializing && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 overscroll-contain">
@@ -252,21 +256,21 @@ export function ClassicLayout(props: ClassicLayoutProps) {
           </div>
         </div>
       )}
-      <Header theme={theme} onThemeChange={setTheme} onOpenSettings={() => setShowSettingsModal(true)} onToggleChat={onToggleChat} chatOpen={showChat} unreadCount={unreadCount}>
+      <Header theme={theme} onThemeChange={setTheme} onOpenSettings={() => { retractFooterIfUp(); setShowSettingsModal(true); }} onToggleChat={onToggleChat} chatOpen={showChat} unreadCount={unreadCount}>
         <WorkspaceSwitcher
           workspaces={workspaces}
           currentWorkspace={currentWorkspace}
           currentUserId={user?.uid || null}
           onSwitch={switchWorkspace}
-          onCreate={() => setShowCreateModal(true)}
-          onJoin={() => setShowJoinModal(true)}
-          onDelete={(workspace) => setWorkspaceToDelete(workspace)}
-          onLeave={(workspace) => setWorkspaceToLeave(workspace)}
+          onCreate={() => { retractFooterIfUp(); setShowCreateModal(true); }}
+          onJoin={() => { retractFooterIfUp(); setShowJoinModal(true); }}
+          onDelete={(workspace) => { retractFooterIfUp(); setWorkspaceToDelete(workspace); }}
+          onLeave={(workspace) => { retractFooterIfUp(); setWorkspaceToLeave(workspace); }}
           theme={theme}
           mentionedWorkspaceIds={mentionedWorkspaceIds}
         />
       </Header>
-      <main className="max-w-6xl mx-auto px-6 py-8">
+      <main id="app-main" className="flex-1 min-h-0 overflow-y-auto overscroll-contain max-w-6xl mx-auto px-6 py-8">
         <div className="flex flex-col lg:flex-row gap-6">
           <div className="flex-1">
             <section className="mb-6">
@@ -299,7 +303,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
             </section>
           </div>
 
-          <div className={`sticky ${theme === 'minimal' ? 'top-24' : 'top-28'} self-start w-full flex flex-col min-h-0 transition-all duration-300 ease-out ${showChat ? 'lg:w-[480px]' : 'lg:w-80'}`}>
+          <div className={`sticky top-0 self-start w-full flex flex-col min-h-0 transition-all duration-300 ease-out ${showChat ? 'lg:w-[480px]' : 'lg:w-80'}`}>
             {showChat ? (
               <ChatPanel theme={theme} onClose={() => setShowChat(false)} onPreviewDrop={handlePreviewDrop} workspaceId={currentWorkspaceId} workspaceMembers={resolvedWorkspaceMembers} chatMode={chatMode} onChatModeChange={setChatMode} drops={drops} ownerId={currentWorkspace?.ownerId ?? null} presence={presenceMap} />
             ) : (
@@ -556,6 +560,8 @@ export function ClassicLayout(props: ClassicLayoutProps) {
           notifPermission={notifPermission}
           notifMuted={notifMuted}
           onToggleNotifications={onToggleNotifications}
+          footerEnabled={footerEnabled}
+          onToggleFooterEnabled={onToggleFooterEnabled}
         />
       )}
     </div>

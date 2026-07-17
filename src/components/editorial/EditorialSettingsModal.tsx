@@ -23,6 +23,8 @@ interface EditorialSettingsModalProps {
   notifPermission?: NotificationPermission;
   notifMuted?: boolean;
   onToggleNotifications?: () => void;
+  footerEnabled?: boolean;
+  onToggleFooterEnabled?: () => void;
 }
 
 type Step = 'main' | 'delete-preview' | 'delete-confirm' | 'deleting' | 'deleted';
@@ -41,6 +43,8 @@ export function EditorialSettingsModal({
   notifPermission = 'default',
   notifMuted = false,
   onToggleNotifications,
+  footerEnabled = true,
+  onToggleFooterEnabled,
 }: EditorialSettingsModalProps) {
   useBodyScrollLock();
   useModalBackClose(true, onClose);
@@ -528,6 +532,28 @@ export function EditorialSettingsModal({
                   </div>
                 </div>
               )}
+
+              {/* Magnetic footer */}
+              <div>
+                <h3 className={`${tc.fontClass} ${tc.text} font-medium text-sm mb-3`}>Footer</h3>
+                <div className={`flex items-center justify-between p-3 rounded-lg border ${tc.border} ${tc.bg}`}>
+                  <div className="flex-1 pr-3">
+                    <p className={`${tc.fontClass} text-sm ${tc.text}`}>Magnetic footer</p>
+                    <p className={`text-xs mt-1 ${tc.muted} ${tc.fontClass}`}>Show the footer and its scroll effect on large screens.</p>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={footerEnabled}
+                    onClick={onToggleFooterEnabled}
+                    className={`relative shrink-0 w-11 h-6 rounded-full transition-colors ${
+                      footerEnabled ? 'bg-emerald-500' : 'bg-gray-400'
+                    }`}
+                  >
+                    <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${footerEnabled ? 'translate-x-5' : ''}`} />
+                  </button>
+                </div>
+              </div>
             </div>
           )}
         </div>
