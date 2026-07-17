@@ -21,6 +21,8 @@ interface SettingsModalProps {
   notifPermission?: NotificationPermission;
   notifMuted?: boolean;
   onToggleNotifications?: () => void;
+  footerEnabled?: boolean;
+  onToggleFooterEnabled?: () => void;
 }
 
 type Step = 'main' | 'password-reset' | 'delete-preview' | 'delete-confirm' | 'deleting' | 'deleted';
@@ -38,6 +40,8 @@ export function SettingsModal({
   notifPermission = 'default',
   notifMuted = false,
   onToggleNotifications,
+  footerEnabled = true,
+  onToggleFooterEnabled,
 }: SettingsModalProps) {
   useBodyScrollLock();
   useModalBackClose(true, onClose);
@@ -300,6 +304,34 @@ export function SettingsModal({
               {layout.charAt(0).toUpperCase() + layout.slice(1)}
             </button>
           ))}
+        </div>
+      </div>
+
+      {/* Appearance */}
+      <div className={`pt-6 border-t ${tc.borderColor}`}>
+        <h3 className={`text-sm font-semibold mb-1 ${isMinimal ? 'font-sans tracking-wide' : 'font-mono uppercase tracking-wider'} ${tc.textColor}`}>
+          {isMinimal ? 'Appearance' : 'APPEARANCE'}
+        </h3>
+        <div className="flex items-center justify-between mt-3">
+          <div className="flex-1 pr-3">
+            <p className={`text-xs font-medium ${tc.textColor}`}>
+              {isMinimal ? 'Magnetic footer' : 'MAGNETIC_FOOTER'}
+            </p>
+            <p className={`text-xs mt-1 ${tc.textMuted}`}>
+              {isMinimal ? 'Show the footer and its scroll effect on large screens.' : 'SHOW_THE_FOOTER_AND_ITS_SCROLL_EFFECT_ON_LARGE_SCREENS.'}
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={footerEnabled}
+            onClick={onToggleFooterEnabled}
+            className={`relative shrink-0 w-11 h-6 rounded-full transition-colors ${
+              footerEnabled ? 'bg-[#FF5A47]' : 'bg-gray-400'
+            }`}
+          >
+            <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${footerEnabled ? 'translate-x-5' : ''}`} />
+          </button>
         </div>
       </div>
 

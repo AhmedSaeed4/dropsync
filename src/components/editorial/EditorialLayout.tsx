@@ -16,6 +16,7 @@ import { EditorialStatusPanel } from './EditorialStatusPanel';
 import { EditorialThemeSelector } from './EditorialThemeSelector';
 import { EditorialSavedPaths } from './EditorialSavedPaths';
 import { getEditorialThemeColors } from './editorialTheme';
+import { retractFooterIfUp } from '../SmoothScrollProvider';
 import { EditorialTextModal } from './EditorialTextModal';
 import { EditorialMoveDropModal } from './EditorialMoveDropModal';
 import WorkspaceOptionsModal from '@/components/WorkspaceOptionsModal';
@@ -54,6 +55,8 @@ interface EditorialLayoutProps {
   notifPermission?: NotificationPermission;
   notifMuted?: boolean;
   onToggleNotifications?: () => void;
+  footerEnabled?: boolean;
+  onToggleFooterEnabled?: () => void;
   showSettingsModal: boolean;
   setShowSettingsModal: (v: boolean) => void;
   showAuthModal: boolean;
@@ -125,6 +128,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
     chatMode = 'ai', setChatMode,
     unreadCount = 0,
     notifPermission, notifMuted, onToggleNotifications,
+    footerEnabled, onToggleFooterEnabled,
     showSettingsModal, setShowSettingsModal,
     showAuthModal, setShowAuthModal,
     showVerifyModal, setShowVerifyModal,
@@ -238,7 +242,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
   };
 
   return (
-    <div className={`relative min-h-screen overflow-x-hidden ${tc.bg} transition-colors duration-500`}>
+    <div className={`relative flex h-[100dvh] flex-col overflow-x-hidden ${tc.bg} transition-colors duration-500`}>
       {/* Encryption initializing overlay */}
       {encryptionInitializing && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 overscroll-contain">
@@ -257,7 +261,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
       <EditorialHeader
         theme={theme}
         onThemeChange={setTheme}
-        onOpenSettings={() => setShowSettingsModal(true)}
+        onOpenSettings={() => { retractFooterIfUp(); setShowSettingsModal(true); }}
         onToggleChat={onToggleChat}
         chatOpen={showChat}
         unreadCount={unreadCount}
@@ -267,17 +271,17 @@ export function EditorialLayout(props: EditorialLayoutProps) {
         currentWorkspace={currentWorkspace}
         currentUserId={user?.uid || null}
         onSwitch={switchWorkspace}
-        onCreate={() => setShowCreateModal(true)}
-        onJoin={() => setShowJoinModal(true)}
-        onDelete={(ws) => setWorkspaceToDelete(ws)}
-        onLeave={(ws) => setWorkspaceToLeave(ws)}
+        onCreate={() => { retractFooterIfUp(); setShowCreateModal(true); }}
+        onJoin={() => { retractFooterIfUp(); setShowJoinModal(true); }}
+        onDelete={(ws) => { retractFooterIfUp(); setWorkspaceToDelete(ws); }}
+        onLeave={(ws) => { retractFooterIfUp(); setWorkspaceToLeave(ws); }}
         mentionedWorkspaceIds={mentionedWorkspaceIds}
       />
 
       {/* Main content - responsive: stacked on mobile/tablet, side-by-side on desktop */}
-      <main className={`flex flex-col wide:flex-row py-6 wide:py-[45px] transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] px-4 sm:px-6 lg:px-[80px] ${showChat ? 'wide:gap-8' : 'wide:gap-[60px]'} gap-6`} style={{ minHeight: 'calc(100vh - 65px)' }}>
+      <main id="app-main" className={`flex flex-col wide:flex-row flex-1 min-h-0 overflow-y-auto overscroll-contain wide:overflow-hidden py-6 wide:py-[45px] transition-[gap,padding] duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] px-4 sm:px-6 lg:px-[80px] ${showChat ? 'wide:gap-8' : 'wide:gap-[60px]'} gap-6`}>
         {/* Left column: DropZone + Status + Theme */}
-        <div className={`wide:border-r ${tc.border} overflow-y-auto transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] wide:pr-5 w-full min-w-0 ${showChat ? 'wide:flex-[1.2_0_0px] wide:pl-1.5' : 'wide:flex-1 wide:pl-11'}`}>
+        <div className={`wide:border-r ${tc.border} wide:overflow-y-auto wide:min-h-0 transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] wide:pr-5 w-full min-w-0 ${showChat ? 'wide:flex-[1.2_0_0px] wide:pl-1.5' : 'wide:flex-1 wide:pl-11'}`}>
           <div className="space-y-6">
             <EditorialDropZone
               theme={theme}
@@ -310,7 +314,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
         </div>
 
         {/* Right column: Drops + Saved Paths */}
-        <div className={`shrink-0 overflow-y-auto transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] w-full ${showChat ? 'wide:w-[480px] wide:min-w-[480px]' : 'wide:w-[520px] wide:min-w-[520px]'}`}>
+        <div className={`shrink-0 wide:overflow-y-auto wide:min-h-0 transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] w-full ${showChat ? 'wide:w-[480px] wide:min-w-[480px]' : 'wide:w-[520px] wide:min-w-[520px]'}`}>
           <div>
             <EditorialDropList
               drops={drops}
@@ -338,7 +342,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
 
         {/* Chat panel: full screen overlay on mobile/tablet, slides in as third column on desktop */}
         <div
-          className={`${showChat ? `absolute top-0 left-0 right-0 z-40 ${tc.bg} h-[100dvh] wide:static wide:inset-auto wide:z-auto wide:h-[calc(100vh-160px)]` : 'hidden wide:block wide:w-0 wide:opacity-0 wide:translate-x-[30px]'} wide:shrink-0 wide:relative overflow-hidden transition-[width,opacity,transform,padding] duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${showChat ? 'wide:w-[420px] wide:opacity-100 wide:translate-x-0 wide:pl-0' : ''}`}
+          className={`${showChat ? `absolute top-0 left-0 right-0 z-40 ${tc.bg} h-[100dvh] wide:static wide:inset-auto wide:z-auto wide:h-full wide:min-h-0` : 'hidden wide:block wide:w-0 wide:opacity-0 wide:translate-x-[30px]'} wide:shrink-0 wide:relative overflow-hidden transition-[width,opacity,transform,padding] duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${showChat ? 'wide:w-[420px] wide:opacity-100 wide:translate-x-0 wide:pl-0' : ''}`}
         >
           {showChat && (
             <EditorialChatPanel
@@ -523,6 +527,8 @@ export function EditorialLayout(props: EditorialLayoutProps) {
           notifPermission={notifPermission}
           notifMuted={notifMuted}
           onToggleNotifications={onToggleNotifications}
+          footerEnabled={footerEnabled}
+          onToggleFooterEnabled={onToggleFooterEnabled}
         />
       )}
     </div>

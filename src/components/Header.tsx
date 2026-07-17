@@ -50,7 +50,7 @@ export function Header({ theme = 'light', onThemeChange, onOpenSettings, onToggl
 
   if (loading) {
     return (
-      <header className={`border-b ${styles.borderColor} ${styles.bgColor} sticky top-0 z-40 transition-colors duration-500`}>
+      <header className={`border-b ${styles.borderColor} ${styles.bgColor} relative z-40 shrink-0 transition-colors duration-500`}>
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <div className={`w-10 h-10 ${isMinimal ? 'bg-[#1A1A1A]/20' : isDark ? 'bg-white/20' : 'bg-[#1A1A1A]'} animate-pulse ${isMinimal ? 'rounded-full' : ''}`} />
@@ -63,7 +63,7 @@ export function Header({ theme = 'light', onThemeChange, onOpenSettings, onToggl
   // Minimal theme header - clean and elegant
   if (isMinimal) {
     return (
-      <header className="border-b border-[#1A1A1A]/10 bg-[#C5C9B8] sticky top-0 z-40 transition-colors duration-500">
+      <header className="border-b border-[#1A1A1A]/10 bg-[#C5C9B8] relative z-40 shrink-0 transition-colors duration-500">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between">
           <div className="flex items-center gap-2 sm:gap-3">
             <div className="w-8 h-8 bg-[#1A1A1A] rounded-full flex items-center justify-center shrink-0">
@@ -141,7 +141,7 @@ export function Header({ theme = 'light', onThemeChange, onOpenSettings, onToggl
 
   // Light/Dark theme header - operational intelligence
   return (
-    <header className={`border-b ${styles.borderColor} ${styles.bgColor} sticky top-0 z-40 transition-colors duration-500`}>
+    <header className={`border-b ${styles.borderColor} ${styles.bgColor} relative z-40 shrink-0 transition-colors duration-500`}>
       <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 sm:py-4 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-3 sm:gap-4">
           <div className="w-10 h-10 sm:w-12 sm:h-12 bg-[#FF5A47] flex items-center justify-center relative overflow-hidden shrink-0">

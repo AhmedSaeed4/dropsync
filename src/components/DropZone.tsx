@@ -8,6 +8,7 @@ import { TextModal } from './TextModal';
 import { ForeverLockedModal } from './ForeverLockedModal';
 import { Tooltip } from './Tooltip';
 import { ExpirationOption, Drop } from '@/types';
+import { retractFooterIfUp } from './SmoothScrollProvider';
 
 interface DropZoneProps {
   theme?: 'light' | 'dark' | 'minimal';
@@ -333,6 +334,7 @@ export function DropZone({
           <button
             onClick={(e) => {
               e.stopPropagation();
+              retractFooterIfUp();
               setShowTextModal(true);
             }}
             className={`flex-1 border-r ${tc.borderColor} px-4 py-3 text-xs tracking-wider ${tc.textColor} hover:bg-[#1A1A1A] hover:text-white transition-colors flex items-center justify-center gap-2 ${isMinimal ? 'rounded-bl-lg' : ''}`}

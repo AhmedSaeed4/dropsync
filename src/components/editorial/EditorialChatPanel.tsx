@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import { auth } from '@/lib/firebase';
+import { getLenis, lockScroll, unlockScroll } from '../SmoothScrollProvider';
 import { useTypingStatus, formatTypingText } from '@/hooks/useTypingStatus';
 import { useNearBottom } from '@/hooks/useNearBottom';
 import { useDelayedUnmount } from '@/hooks/useDelayedUnmount';
@@ -296,6 +297,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
         document.body.style.overflow = 'hidden';
         document.body.style.height = '100%';
         document.body.style.scrollbarGutter = 'auto';
+        lockScroll(); // freeze smooth-scroll while the chat overlay locks the page (ref-counted)
         locked = true;
       } else if (!isMobile && locked) {
         document.documentElement.style.overflow = '';
@@ -303,6 +305,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
         document.body.style.overflow = '';
         document.body.style.height = '';
         document.body.style.scrollbarGutter = '';
+        unlockScroll();
         locked = false;
       }
     };
@@ -316,7 +319,19 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
       document.body.style.overflow = '';
       document.body.style.height = '';
       document.body.style.scrollbarGutter = '';
-      if (locked) window.scrollTo(0, scrollY);
+      if (locked) {
+        // Route the position-restore through Lenis so its internal target stays in sync
+        // (raw window.scrollTo would desync → a jump on the next wheel). Native fallback
+        // when Lenis is off (reduced-motion). unlockScroll() (ref-counted) resumes Lenis
+        // only if no other overlay still holds the lock.
+        const lenis = getLenis();
+        unlockScroll();
+        if (lenis) {
+          lenis.scrollTo(scrollY, { immediate: true });
+        } else {
+          window.scrollTo(0, scrollY);
+        }
+      }
     };
   }, []);
 
