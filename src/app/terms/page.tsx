@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { cookies } from "next/headers";
 
 export const metadata: Metadata = {
   title: "Terms of Service — DropSync",
@@ -31,21 +30,13 @@ type Section = {
 
 const LAST_UPDATED = "July 17, 2026";
 
-// Editorial palette per theme (tokens verified against editorialTheme.ts). The <style>
-// is built server-side for the user's APP theme (read from the share-theme cookie), so
-// the page follows the app theme, not the visitor's OS setting.
-function buildThemeStyle(theme: 'light' | 'dark'): string {
-  const p = theme === 'dark'
-    ? { bg: '#0D0D0D', text: '#ffffff', muted: '#888', heading: '#ffffff', border: '#333', link: '#ffffff' }
-    : { bg: '#FFFEF5', text: '#1a1a1a', muted: '#666', heading: '#1a1a1a', border: '#e0e0e0', link: '#1a1a1a' };
-  return `:root{--bg:${p.bg};--text:${p.text};--muted:${p.muted};--heading:${p.heading};--border:${p.border};--link:${p.link};}html,body{background-color:${p.bg} !important;color:${p.text} !important;}`;
-}
-
-// Copies the app's `dropsync_theme` localStorage value into the `share-theme` cookie
-// during HTML parse (before hydration), so this page matches the app theme on the NEXT
-// load. Cloned byte-for-byte from src/app/privacy/page.tsx (only light/dark sync; minimal
-// → light).
-const SYNC_THEME = `(function(){try{var t=localStorage.getItem('dropsync_theme');if(t==='dark'||t==='light'){document.cookie='share-theme='+t+';path=/;max-age=31536000;SameSite=Lax';}}catch(e){}})();`;
+// COOKIE-FREE theme pre-paint. Reads the app's `dropsync_theme` localStorage value during
+// HTML parse (BEFORE first paint) and sets this page's editorial CSS vars + body bg/color on
+// document.body.style, so /terms follows the app theme with NO cookie and NO flash. Mirrors
+// src/app/docs/page.tsx's PREPAINT (vars on document.body.style, NEVER documentElement). Same
+// collapse rule the cookie read used: dark → dark, everything else (light/minimal/missing) →
+// light. Palette tokens are byte-identical to the old server-side buildThemeStyle output.
+const PREPAINT = `(function(){try{var t=localStorage.getItem('dropsync_theme');var bg,text,muted,heading,border,link;if(t==='dark'){bg='#0D0D0D';text='#ffffff';muted='#888';heading='#ffffff';border='#333';link='#ffffff';}else{bg='#FFFEF5';text='#1a1a1a';muted='#666';heading='#1a1a1a';border='#e0e0e0';link='#1a1a1a';}var r=document.body.style;r.setProperty('--bg',bg);r.setProperty('--text',text);r.setProperty('--muted',muted);r.setProperty('--heading',heading);r.setProperty('--border',border);r.setProperty('--link',link);r.background=bg;r.color=text;}catch(e){}})();`;
 
 const sections: Section[] = [
   {
@@ -193,16 +184,10 @@ const sections: Section[] = [
   },
 ];
 
-export default async function TermsPage() {
-  const c = await cookies();
-  const initialTheme: 'light' | 'dark' =
-    c.get('share-theme')?.value === 'dark' ? 'dark' : 'light';
-  const themeStyle = buildThemeStyle(initialTheme);
-
+export default function TermsPage() {
   return (
     <main className="min-h-screen bg-[var(--bg)] text-[var(--text)] antialiased">
-      <script dangerouslySetInnerHTML={{ __html: SYNC_THEME }} />
-      <style dangerouslySetInnerHTML={{ __html: themeStyle }} />
+      <script dangerouslySetInnerHTML={{ __html: PREPAINT }} />
       <article className="mx-auto max-w-2xl rounded-lg px-6 py-16 sm:py-20">
         {/* Header / logo */}
         <header className="mb-10">

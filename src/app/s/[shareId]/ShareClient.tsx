@@ -44,10 +44,14 @@ export default function ShareClient({ initialTheme }: { initialTheme: ShareTheme
   // the content-pane spinner overlay covers the browser's native loading. Reset when the src
   // actually changes (binary streams fileUrl immediately; legacy sets a blob URL once loaded).
   const [videoReady, setVideoReady] = useState(false);
-  // Theme is provided by the SERVER entry (page.tsx) from the `share-theme` cookie, so SSR
-  // already paints the user's real theme — no light-first-paint flash for dark users. The
-  // toggle below keeps both the cookie (next server render) and localStorage in sync.
+  // Cookie-free theme memory. The server can't read localStorage, so page.tsx's PREPAINT paints
+  // the share palette (--ds-*) on document.body BEFORE first paint (no flash); SSR + first paint
+  // use `initialTheme` (this page's default) and the remembered theme is applied on mount below.
+  // `themeResolved` gates the body-vars effect so PREPAINT's correct first-paint vars are never
+  // overwritten by the unresolved `initialTheme` default — the effect only takes over once the
+  // remembered theme (or a no-storage fallback) has settled. See the two effects below.
   const [theme, setTheme] = useState<ShareTheme>(initialTheme);
+  const [themeResolved, setThemeResolved] = useState(false);
   // null until the post-mount effect resolves the pick → ShareStage shows the neutral
   // placeholder (no canvas) during SSR + first paint. Lifted here (from ShareStage) so the
   // content pane can be design-aware too.
@@ -80,6 +84,38 @@ export default function ShareClient({ initialTheme }: { initialTheme: ShareTheme
     }
     setDesign(pick);
   }, []);
+
+  // Apply the remembered theme on mount (cookie-free). Same collapse rule as PREPAINT:
+  // light → light, everything else → dark. Marks the theme resolved afterwards (even if storage
+  // is unavailable — in which case `initialTheme` stands) so the body-vars effect can take over.
+  useEffect(() => {
+    try {
+      const t = window.localStorage.getItem(SHARE_THEME_KEY);
+      setTheme(t === 'light' ? 'light' : 'dark');
+    } catch {
+      /* ignore (private mode / disabled storage) */
+    }
+    setThemeResolved(true);
+  }, []);
+
+  // Own the --ds-* palette vars on document.body.style. PREPAINT (page.tsx) sets them from
+  // localStorage before first paint so SSR + first paint are already the user's theme. Gated on
+  // `themeResolved` so PREPAINT's correct first-paint values are NOT overwritten by the unresolved
+  // `initialTheme` default on the effect's first mount run — the effect only takes over once the
+  // remembered theme has settled, then keeps the vars in sync with the live theme + resolved
+  // design (incl. the wave-dark navy palette) and through toggle changes. Cleanup clears the vars
+  // on unmount so other routes are unaffected.
+  useEffect(() => {
+    if (!themeResolved) return;
+    const vars = shareCssVars(theme, design);
+    const bodyStyle = document.body.style;
+    for (const [k, v] of Object.entries(vars)) {
+      bodyStyle.setProperty(k, String(v));
+    }
+    return () => {
+      for (const k of Object.keys(vars)) bodyStyle.removeProperty(k);
+    };
+  }, [theme, design, themeResolved]);
 
   // Loading→content handoff: when real content arrives, fade the loading pane out (~400ms),
   // THEN mount the content pane (which feeds in via its own staggered entrance). The ~420ms
@@ -157,14 +193,14 @@ export default function ShareClient({ initialTheme }: { initialTheme: ShareTheme
     setVideoReady(false);
   }, [videoSrc]);
 
-  // Light/dark toggle. Persists to BOTH the `share-theme` cookie (so the SERVER renders the
-  // right theme next load → no flash) and the app's `dropsync_theme` localStorage key.
+  // Light/dark toggle. Persists to the app's `dropsync_theme` localStorage key; the body-vars
+  // effect above live-updates the --ds-* palette so the toggle is instant. (No cookie — the
+  // share page is cookie-free; PREPAINT + this effect handle the theme end-to-end.)
   const toggleTheme = () => {
     setTheme((t) => {
       const next: ShareTheme = t === 'dark' ? 'light' : 'dark';
       try {
         window.localStorage.setItem(SHARE_THEME_KEY, next);
-        document.cookie = `share-theme=${next}; path=/; max-age=31536000; SameSite=Lax`;
       } catch {
         /* ignore (private mode / disabled storage) */
       }
@@ -197,11 +233,13 @@ export default function ShareClient({ initialTheme }: { initialTheme: ShareTheme
   // success → ShareContentPane; otherwise → ShareStatusPane (loading / expired / error), so
   // the themed design stays visible in every state instead of early-returning a plain screen.
   return (
-    // Outer wrapper carries the --ds-* CSS vars + Raleway so the fixed toggle button (a child)
-    // can read them too. Split layout inside: animated stage (left, swaps design each load) +
-    // content pane (right). Stacks on mobile (≤640). Palette is design-aware — wave+dark gets
-    // the blue-tinted dark content side; everything else is neutral/cream.
-    <div data-ds-share className="font-[family-name:var(--font-raleway)]" style={shareCssVars(theme, design)}>
+    // Outer wrapper (Raleway font). The --ds-* palette vars live on document.body — set by
+    // page.tsx's PREPAINT before first paint, then owned by the body-vars effect above — so the
+    // fixed toggle button (a child) and all content read them via DOM ancestry. Split layout
+    // inside: animated stage (left, swaps design each load) + content pane (right). Stacks on
+    // mobile (≤640). Palette is design-aware — wave+dark gets the blue-tinted dark content side;
+    // everything else is neutral/cream.
+    <div data-ds-share className="font-[family-name:var(--font-raleway)]">
       {/* Light/dark toggle — fixed top-right, SOLID bg (no backdrop-filter/blur), styled via
           --ds-* so it matches the content side and stays readable over the stage banner too. */}
       <button

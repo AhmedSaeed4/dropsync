@@ -360,7 +360,7 @@ export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false
                 <div className="overflow-hidden">
                   <div className="aspect-video">
                     <iframe
-                      src={`https://www.youtube.com/embed/${youtubeVideoId}`}
+                      src={`https://www.youtube-nocookie.com/embed/${youtubeVideoId}`}
                       className="w-full h-full"
                       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                       allowFullScreen
