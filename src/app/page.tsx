@@ -47,6 +47,16 @@ type LayoutMode = 'classic' | 'editorial';
 type TosStatus = 'unknown' | 'accepted' | 'needed' | 'error';
 
 const THEME_STORAGE_KEY = 'dropsync_theme';
+// COOKIE-FREE theme pre-paint. This module-level string is rendered as an inline <script> by the
+// !themeLoaded branch below (the branch SSR always renders, since themeLoaded starts false). It runs
+// during HTML parse — BEFORE first paint — reads `dropsync_theme` from localStorage, and paints
+// document.body.background so the hard-refresh first paint is the user's real theme color, NOT the
+// browser default white nor the globals.css cream. 2-way map that MATCHES the post-mount body-bg
+// useEffect below (L281-284: dark → #000000, else → '' which reverts to the CSS cream #F5F2ED), so
+// there is NO color-swap once React mounts and that effect takes over the live bg. Mutates
+// document.body.style ONLY — NEVER document.documentElement (layout.tsx <html> has no
+// suppressHydrationWarning → a pre-hydration mutation there would cause a hydration mismatch).
+const PREPAINT_BG = `(function(){try{var t=localStorage.getItem('dropsync_theme');var bg=(t==='dark')?'#000000':'#F5F2ED';document.body.style.background=bg;document.body.style.color=(t==='dark')?'#ffffff':'#1a1a1a';}catch(e){}})();`;
 const LAYOUT_STORAGE_KEY = 'dropsync_layout';
 
 // One-shot reassurance banner shown on the login screen after a user declines the Terms (misclick
@@ -1064,9 +1074,11 @@ export default function Home() {
     signOutUser();
   };
 
-  // Wait for theme to load to prevent flash
+  // Wait for theme to load to prevent flash. While waiting, emit the PREPAINT_BG <script> (runs
+  // during parse, before first paint) so the body background is the saved theme color immediately —
+  // closing the white/cream hard-refresh flash. This branch is what SSR renders.
   if (!themeLoaded) {
-    return null;
+    return <script dangerouslySetInnerHTML={{ __html: PREPAINT_BG }} />;
   }
 
   // Editorial-style loading screen
