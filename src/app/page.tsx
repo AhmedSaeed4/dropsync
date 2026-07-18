@@ -268,10 +268,6 @@ export default function Home() {
   useEffect(() => {
     if (themeLoaded) {
       localStorage.setItem(THEME_STORAGE_KEY, theme);
-      // Mirror the share page: also write the `share-theme` cookie so public
-      // server-rendered pages (e.g. /privacy) can paint the app theme on the next
-      // load. Public pages only do light/dark, so minimal (and any non-dark) → light.
-      try { document.cookie = `share-theme=${theme === 'dark' ? 'dark' : 'light'};path=/;max-age=31536000;SameSite=Lax`; } catch {}
     }
   }, [theme, themeLoaded]);
 

@@ -25,7 +25,21 @@ interface AdminClientProps {
  * exact email.
  */
 export function AdminClient({ initialTheme }: AdminClientProps) {
-  const tc = getEditorialThemeColors(initialTheme);
+  // Cookie-free theme memory. The server can't read localStorage, so the shell's PREPAINT
+  // (page.tsx) paints --bg/--text/... before first paint; this client UI reads the remembered
+  // `dropsync_theme` on mount so its editorial (tc.*) theming follows the app theme too. SSR +
+  // first paint use `initialTheme` (no hydration mismatch); the `resolving` gate below hides
+  // the brief initial state until the remembered theme is applied.
+  const [theme, setTheme] = useState<'light' | 'dark'>(initialTheme);
+  useEffect(() => {
+    try {
+      const t = window.localStorage.getItem('dropsync_theme');
+      setTheme(t === 'dark' ? 'dark' : 'light');
+    } catch {
+      /* ignore (private mode / disabled storage) */
+    }
+  }, []);
+  const tc = getEditorialThemeColors(theme);
   const { user, loading: authLoading } = useAuth();
 
   const [ownerUid, setOwnerUid] = useState<string | null>(null);

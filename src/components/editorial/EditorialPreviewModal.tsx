@@ -328,7 +328,7 @@ export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoadin
                 <div className="overflow-hidden">
                   <div className="aspect-video rounded-lg overflow-hidden">
                     <iframe
-                      src={`https://www.youtube.com/embed/${youtubeVideoId}`}
+                      src={`https://www.youtube-nocookie.com/embed/${youtubeVideoId}`}
                       className="w-full h-full"
                       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                       allowFullScreen

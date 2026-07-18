@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { cookies } from "next/headers";
 import { AdminClient } from "./AdminClient";
 
 export const metadata: Metadata = {
@@ -9,33 +8,24 @@ export const metadata: Metadata = {
 };
 
 /**
- * Owner-only admin shell. Standalone editorial page mirroring /privacy: reads the share-theme
- * cookie, injects the SYNC_THEME script + an editorial palette <style>, and hands off to the
- * client component for the interactive UI. The Firestore rules are the real enforcement; the
+ * Owner-only admin shell. Standalone editorial page mirroring /privacy: a parse-time PREPAINT
+ * script reads `dropsync_theme` from localStorage and paints this page's editorial CSS vars on
+ * document.body.style BEFORE first paint (NO cookie, NO flash), then hands off to the client
+ * component for the interactive UI. The Firestore rules are the real enforcement; the
  * client-side owner check in AdminClient is UX only.
  */
-function buildThemeStyle(theme: 'light' | 'dark'): string {
-  const p = theme === 'dark'
-    ? { bg: '#0D0D0D', text: '#ffffff', muted: '#888', heading: '#ffffff', border: '#333', link: '#ffffff' }
-    : { bg: '#FFFEF5', text: '#1a1a1a', muted: '#666', heading: '#1a1a1a', border: '#e0e0e0', link: '#1a1a1a' };
-  return `:root{--bg:${p.bg};--text:${p.text};--muted:${p.muted};--heading:${p.heading};--border:${p.border};--link:${p.link};}`;
-}
+// COOKIE-FREE theme pre-paint — mirrors /privacy + /docs. Same collapse rule the cookie read
+// used: dark → dark, everything else (light/minimal/missing) → light. Tokens byte-identical to
+// the old server-side buildThemeStyle output.
+const PREPAINT = `(function(){try{var t=localStorage.getItem('dropsync_theme');var bg,text,muted,heading,border,link;if(t==='dark'){bg='#0D0D0D';text='#ffffff';muted='#888';heading='#ffffff';border='#333';link='#ffffff';}else{bg='#FFFEF5';text='#1a1a1a';muted='#666';heading='#1a1a1a';border='#e0e0e0';link='#1a1a1a';}var r=document.body.style;r.setProperty('--bg',bg);r.setProperty('--text',text);r.setProperty('--muted',muted);r.setProperty('--heading',heading);r.setProperty('--border',border);r.setProperty('--link',link);r.background=bg;r.color=text;}catch(e){}})();`;
 
-// Verbatim from src/app/privacy/page.tsx (and src/app/s/[shareId]/page.tsx). Copies the app's
-// dropsync_theme localStorage value into the share-theme cookie during HTML parse so /admin
-// matches the app theme on the next load.
-const SYNC_THEME = `(function(){try{var t=localStorage.getItem('dropsync_theme');if(t==='dark'||t==='light'){document.cookie='share-theme='+t+';path=/;max-age=31536000;SameSite=Lax';}}catch(e){}})();`;
-
-export default async function AdminPage() {
-  const c = await cookies();
-  const initialTheme: 'light' | 'dark' =
-    c.get('share-theme')?.value === 'dark' ? 'dark' : 'light';
-  const themeStyle = buildThemeStyle(initialTheme);
-
+export default function AdminPage() {
+  // Cookie-free: the server can't read localStorage, so SSR + first paint rely on PREPAINT
+  // (above) for the shell theme. AdminClient reads `dropsync_theme` itself on mount so its
+  // editorial (tc.*) theming follows the app theme too — see AdminClient.tsx.
   return (
     <main className="min-h-screen bg-[var(--bg)] text-[var(--text)] antialiased">
-      <script dangerouslySetInnerHTML={{ __html: SYNC_THEME }} />
-      <style dangerouslySetInnerHTML={{ __html: themeStyle }} />
+      <script dangerouslySetInnerHTML={{ __html: PREPAINT }} />
       <article className="mx-auto max-w-2xl rounded-lg px-6 py-16 sm:py-20">
         <header className="mb-10">
           <Link href="/" className="inline-flex items-center gap-2 text-[var(--link)]">
@@ -54,7 +44,7 @@ export default async function AdminPage() {
           </p>
         </header>
 
-        <AdminClient initialTheme={initialTheme} />
+        <AdminClient initialTheme="light" />
 
         <footer className="mt-16 border-t border-[var(--border)] pt-8">
           <p className="text-sm text-[var(--muted)]">

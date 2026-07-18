@@ -1,4 +1,4 @@
-import { cookies, headers } from 'next/headers';
+import { headers } from 'next/headers';
 import type { Metadata } from 'next';
 import { cache } from 'react';
 import ShareClient from './ShareClient';
@@ -95,7 +95,7 @@ export async function generateMetadata({
     // prod, on Vercel preview deploys, and on any future custom domain — never a hardcoded guess.
     // Prod (Vercel) sets x-forwarded-host/x-forwarded-proto; dev exposes `host`. The literal is only
     // the impossible no-host fallback (the real production origin). headers() opts this into dynamic
-    // rendering (intended — origin is per-request); SharePage (cookies + ShareClient) is untouched.
+    // rendering (intended — origin is per-request); SharePage (PREPAINT + ShareClient) is cookie-free.
     const h = await headers();
     const host = h.get('x-forwarded-host') || h.get('host');
     const proto = h.get('x-forwarded-proto')?.split(',')[0] || 'https';
@@ -160,25 +160,26 @@ export async function generateMetadata({
   }
 }
 
-// Runs during HTML parse, BEFORE hydration: copies the app's `dropsync_theme` localStorage
-// value into the `share-theme` cookie so the SERVER renders the right theme on the NEXT load
-// (no flash from the second visit on, for users who set dark on the main app). It only sets a
-// cookie for the next load — it never touches the current render, so there's no hydration
-// mismatch. Only light/dark are synced; minimal (app-only) falls back to light.
-const SYNC_THEME = `(function(){try{var t=localStorage.getItem('dropsync_theme');if(t==='dark'||t==='light'){document.cookie='share-theme='+t+';path=/;max-age=31536000;SameSite=Lax';}}catch(e){}})();`;
+// COOKIE-FREE theme pre-paint. Reads the app's `dropsync_theme` localStorage value during HTML
+// parse (BEFORE first paint) and paints the share page's --ds-* palette vars on
+// document.body.style, so the stage + content follow the user's theme with NO cookie and NO
+// flash. Same collapse rule the cookie read used: light → light, everything else
+// (dark/minimal/missing) → dark (the share page's default). Palette tokens are byte-identical to
+// SHARE_PALETTES.light/.dark in src/components/share/shareTheme.ts (array order: paper, paper2,
+// card, ink, muted, faint, hair, hair2). ShareClient.tsx takes over these vars on mount,
+// incl. the wave-dark navy palette once the design resolves.
+const PREPAINT = `(function(){try{var t=localStorage.getItem('dropsync_theme');var p;if(t==='light'){p=['#FFFEF5','#FBF9EE','#FDFCF9','#1a1a1a','#666','#999','#e0e0e0','#ececec'];}else{p=['#0D0D0D','#141414','#1a1a1a','#ffffff','#9a9a9a','#666','#2a2a2a','#222222'];}var r=document.body.style;r.setProperty('--ds-paper',p[0]);r.setProperty('--ds-paper-2',p[1]);r.setProperty('--ds-card',p[2]);r.setProperty('--ds-ink',p[3]);r.setProperty('--ds-muted',p[4]);r.setProperty('--ds-faint',p[5]);r.setProperty('--ds-hair',p[6]);r.setProperty('--ds-hair-2',p[7]);}catch(e){}})();`;
 
-export default async function SharePage() {
-  // The cookie is set by the toggle (live) and by the SYNC_THEME script (from the app's
-  // localStorage). Reading it here lets the SERVER paint the user's real theme at first
-  // paint — no light-first-paint flash for dark users. No cookie yet → safe 'light' default.
-  const c = await cookies();
-  const t = c.get('share-theme')?.value;
-  const initialTheme: 'light' | 'dark' = t === 'light' ? 'light' : 'dark';
-
+export default function SharePage() {
+  // Cookie-free: PREPAINT (above) paints the share palette (--ds-*) from localStorage before
+  // first paint, and ShareClient reads `dropsync_theme` on mount and owns the vars from then on.
+  // `initialTheme` is now just the SSR/first-paint default (dark, this page's default); the
+  // remembered theme is applied client-side. The stage/content read --ds-* from document.body, so
+  // first paint is already correct — no flash, no cookie.
   return (
     <>
-      <script dangerouslySetInnerHTML={{ __html: SYNC_THEME }} />
-      <ShareClient initialTheme={initialTheme} />
+      <script dangerouslySetInnerHTML={{ __html: PREPAINT }} />
+      <ShareClient initialTheme="dark" />
     </>
   );
 }
