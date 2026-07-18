@@ -269,6 +269,7 @@ export function createWorkspacesListener(
     workspaces.sort((a, b) => a.name.localeCompare(b.name));
     callback(workspaces);
   }, (error) => {
+    if (error?.code === 'permission-denied') return; // expected during sign-out teardown — ignore
     console.error('Workspaces listener error:', error);
     callback([]);
   });
