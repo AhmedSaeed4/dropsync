@@ -38,13 +38,45 @@ import {
 } from '@/lib/notifications';
 import { reauthenticateUser } from '@/lib/auth';
 import { db } from '@/lib/firebase';
-import { collection, query, orderBy, limit, onSnapshot, getDocs, getDoc, doc, updateDoc, waitForPendingWrites, Timestamp } from 'firebase/firestore';
+import { CURRENT_TERMS_VERSION } from '@/lib/termsVersion';
+import { TermsConsentGate } from '@/components/TermsConsentGate';
+import { collection, query, orderBy, limit, onSnapshot, getDocs, getDoc, doc, setDoc, serverTimestamp, updateDoc, waitForPendingWrites, Timestamp } from 'firebase/firestore';
 
 type Theme = 'light' | 'dark' | 'minimal';
 type LayoutMode = 'classic' | 'editorial';
+type TosStatus = 'unknown' | 'accepted' | 'needed' | 'error';
 
 const THEME_STORAGE_KEY = 'dropsync_theme';
 const LAYOUT_STORAGE_KEY = 'dropsync_layout';
+
+// One-shot reassurance banner shown on the login screen after a user declines the Terms (misclick
+// recovery). EDITORIAL: an in-flow, borderless line above the Sign In button (heartbeat pulse).
+// CLASSIC (+ minimal via isMinimal): a floating top-center card. Variant-aware via layoutMode.
+function TosDeclinedNote({ theme, layoutMode }: { theme: Theme; layoutMode: LayoutMode }) {
+  if (layoutMode === 'editorial') {
+    const tc = getEditorialThemeColors(theme);
+    return (
+      <p className={`mb-3 text-center text-xs leading-snug ${tc.muted} ${tc.fontClass} animate-[dropsync-heartbeat_2.4s_ease-in-out_infinite]`}>
+        <span aria-hidden>✓ </span>Your drops and workspaces are kept — sign in to accept the Terms and continue.
+      </p>
+    );
+  }
+  // classic
+  const isDark = theme === 'dark';
+  const isMinimal = theme === 'minimal';
+  const bg = isMinimal ? 'bg-[#D4D8C8]' : isDark ? 'bg-[#1A1A1A]' : 'bg-[#FAF7F2]';
+  const border = isMinimal ? 'border-[#1A1A1A]/20' : isDark ? 'border-white/10' : 'border-[#1A1A1A]';
+  const text = isMinimal || !isDark ? 'text-[#1A1A1A]' : 'text-white';
+  return (
+    <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-sm">
+      <div className={`${bg} border ${border} ${isMinimal ? 'rounded-lg' : ''} shadow-xl px-4 py-3`}>
+        <p className={`text-xs ${text} leading-relaxed text-center`}>
+          You&apos;re signed out. Your drops and workspaces are kept — sign in and accept the Terms to continue.
+        </p>
+      </div>
+    </div>
+  );
+}
 
 export default function Home() {
   const router = useRouter();
@@ -58,6 +90,16 @@ export default function Home() {
   const [layoutTransition, setLayoutTransition] = useState<'none' | 'fade-out' | 'fade-in'>('none');
   const [pendingLayout, setPendingLayout] = useState<LayoutMode | null>(null);
   const [pageTransition, setPageTransition] = useState<'none' | 'fade-out' | 'fade-in'>('fade-in');
+
+  // ToS consent gate — 4-state machine (never a boolean). 'unknown' until the users/{uid} onSnapshot
+  // resolves; a loader is shown meanwhile so already-accepted users never see the gate flash.
+  const [tosStatus, setTosStatus] = useState<TosStatus>('unknown');
+  // Bumped by the gate's Retry on a read error/time-out → re-runs the onSnapshot subscription.
+  const [consentRetry, setConsentRetry] = useState(0);
+  // One-shot "declined" flag for the login-screen reassurance note (read once on first render).
+  const [tosDeclinedNote, setTosDeclinedNote] = useState<boolean>(
+    () => typeof window !== 'undefined' && window.sessionStorage.getItem('tosDeclined') === '1'
+  );
 
   // Auth modal states
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -965,6 +1007,67 @@ export default function Home() {
   // when the footer is absent. No-ops on login/loading/verify.
   useMagnet(footerActive);
 
+  // ToS consent: reactive read of users/{uid}.tosAcceptedVersion. onSnapshot (NOT a one-shot getDoc)
+  // so it self-corrects the first-login race and auto-dismisses the gate in other open tabs. A read
+  // error or an 8s time-out surfaces the 'error' screen — never silently 'needed' (which would lock
+  // users out offline). Resets to 'unknown' on sign-out / uid change.
+  useEffect(() => {
+    if (!user?.uid) {
+      setTosStatus('unknown');
+      return;
+    }
+    setTosStatus('unknown');
+    let resolved = false;
+    const timeout = window.setTimeout(() => {
+      if (!resolved) setTosStatus('error');
+    }, 8000);
+    const unsubscribe = onSnapshot(
+      doc(db, 'users', user.uid),
+      (snap) => {
+        resolved = true;
+        const v = snap.exists() ? (snap.get('tosAcceptedVersion') ?? 0) : 0;
+        setTosStatus(v >= CURRENT_TERMS_VERSION ? 'accepted' : 'needed');
+      },
+      (error) => {
+        resolved = true;
+        if (error?.code === 'permission-denied') return; // expected during sign-out teardown — ignore
+        console.error('tos consent read error', error);
+        setTosStatus('error');
+      }
+    );
+    return () => {
+      resolved = true;
+      window.clearTimeout(timeout);
+      unsubscribe();
+    };
+  }, [user?.uid, consentRetry]);
+
+  // Consume the post-Decline banner at the correct boundary — SIGN-IN. Clears BOTH the live
+  // tosDeclinedNote state AND the durable sessionStorage flag, so the note survives remounts
+  // (route changes to /about or /privacy, refresh, dev HMR) between Decline and sign-in, and
+  // stays gone after sign-in (no re-show on a later normal logout). On Decline itself user goes
+  // truthy→falsy, so this no-ops then; it only fires when the user actually returns.
+  useEffect(() => {
+    if (user) {
+      setTosDeclinedNote(false);
+      try { window.sessionStorage.removeItem('tosDeclined'); } catch {}
+    }
+  }, [user]);
+
+  // Decline = non-destructive sign-out (clears this device's FCM token + ends the session; touches
+  // NO Firestore data, so a misclick loses nothing). Sets a one-shot flag so the login screen can
+  // show a reassurance note.
+  const handleDecline = () => {
+    try {
+      window.sessionStorage.setItem('tosDeclined', '1');
+    } catch {}
+    // Flip the note state live so the banner shows on this same-session re-render (the lazy
+    // useState initializer only runs once at first mount, so without this the banner wouldn't
+    // appear until a cold reload).
+    setTosDeclinedNote(true);
+    signOutUser();
+  };
+
   // Wait for theme to load to prevent flash
   if (!themeLoaded) {
     return null;
@@ -1182,6 +1285,7 @@ export default function Home() {
             {/* Auth section - MOBILE ONLY: above cards, smaller buttons */}
             <div className="auth-section text-center sm:hidden mb-8" style={{ opacity: 0, animation: 'fadeInUp 800ms ease 600ms forwards' }}>
               <p className="text-xs uppercase tracking-[0.15em] mb-3 font-[family-name:var(--font-raleway)]" style={{ color: mutedColor }}>GET STARTED</p>
+              {tosDeclinedNote && <TosDeclinedNote theme={theme} layoutMode={layoutMode} />}
               <div className="flex flex-col items-center gap-2">
                 <button
                   onClick={signIn}
@@ -1335,6 +1439,7 @@ export default function Home() {
               {/* Auth section - DESKTOP ONLY */}
               <div className="auth-section text-center mt-12 hidden sm:block" style={{ opacity: 0, animation: 'fadeInUp 800ms ease 800ms forwards' }}>
                 <p className="text-xs uppercase tracking-[0.15em] mb-4 font-[family-name:var(--font-raleway)]" style={{ color: mutedColor }}>GET STARTED</p>
+                {tosDeclinedNote && <TosDeclinedNote theme={theme} layoutMode={layoutMode} />}
                 <div className="flex flex-col items-center gap-3">
                   <button
                     onClick={signIn}
@@ -1399,6 +1504,8 @@ export default function Home() {
     if (theme === 'minimal') {
       return (
         <div className="min-h-screen bg-[#C5C9B8] flex flex-col transition-colors duration-500">
+          {tosDeclinedNote && <TosDeclinedNote theme={theme} layoutMode={layoutMode} />}
+
           {/* Top Navigation */}
           <header className="flex items-center justify-between px-8 py-6">
             <div className="text-sm font-medium tracking-wide text-[#1A1A1A] uppercase">
@@ -1491,6 +1598,7 @@ export default function Home() {
     // Original Operational Intelligence login (light/dark)
     return (
       <div className="min-h-screen flex flex-col">
+        {tosDeclinedNote && <TosDeclinedNote theme={theme} layoutMode={layoutMode} />}
         <div className="flex-1 flex">
           <div className={`flex-1 ${themeColors.isDark ? 'bg-[#FF5A47]' : 'bg-[#FF5A47]'} flex items-center justify-center p-12`}>
             <div className="max-w-md">
@@ -1678,6 +1786,51 @@ export default function Home() {
           </div>
         </div>
     </div>
+    );
+  }
+
+  // ToS consent gate — after login + verified email, before the main app. Four states; the gate is
+  // NEVER painted from 'unknown' (a loader is shown instead, so already-accepted users never see it
+  // flash). 'accepted' falls through to the main app below.
+  if (user && tosStatus === 'unknown') {
+    const tc = getEditorialThemeColors(theme);
+    return (
+      <div className={`min-h-screen flex flex-col items-center justify-center ${tc.bg} transition-colors duration-500`}>
+        <div className="flex flex-col items-center gap-4">
+          <span className={`text-lg ${tc.text} font-medium tracking-[-0.3px] ${tc.fontClass}`}>
+            <span className="inline-block mr-2">&#9670;</span>DropSync
+          </span>
+          <div className={`w-5 h-5 border border-current/30 border-t-current animate-spin rounded-full ${tc.text}`} />
+          <p className={`text-xs ${tc.muted} ${tc.fontClass}`}>Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (user && tosStatus === 'error') {
+    return (
+      <TermsConsentGate
+        status="error"
+        variant={layoutMode === 'editorial' ? 'editorial' : 'classic'}
+        theme={theme}
+        uid={user.uid}
+        onAccepted={() => setTosStatus('accepted')}
+        onDecline={handleDecline}
+        onRetry={() => setConsentRetry((n) => n + 1)}
+      />
+    );
+  }
+
+  if (user && tosStatus === 'needed') {
+    return (
+      <TermsConsentGate
+        status="needed"
+        variant={layoutMode === 'editorial' ? 'editorial' : 'classic'}
+        theme={theme}
+        uid={user.uid}
+        onAccepted={() => setTosStatus('accepted')}
+        onDecline={handleDecline}
+      />
     );
   }
 

@@ -148,6 +148,7 @@ export function createCategoriesListener(
     categories.sort((a, b) => a.name.localeCompare(b.name));
     callback(categories);
   }, (error) => {
+    if (error?.code === 'permission-denied') return; // expected during sign-out teardown — ignore
     console.error('Firestore categories listener error:', error);
     callback([]);
   });
