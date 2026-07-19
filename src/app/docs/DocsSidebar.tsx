@@ -47,18 +47,28 @@ function jumpTo(anchor: string, reduce: boolean | null) {
   history.replaceState(null, '', `#${anchor}`);
 }
 
-export function DocsSidebar({ variant = 'desktop' }: { variant?: 'desktop' | 'mobile' }) {
-  return variant === 'mobile' ? <MobileToc /> : <DesktopAside />;
+export function DocsSidebar({
+  variant = 'desktop',
+  layout = 'editorial',
+}: {
+  variant?: 'desktop' | 'mobile';
+  layout?: 'editorial' | 'classic';
+}) {
+  return variant === 'mobile' ? <MobileToc layout={layout} /> : <DesktopAside layout={layout} />;
 }
 
 /** Desktop: sticky 2-level TOC with scroll-spy active highlight. */
-function DesktopAside() {
+function DesktopAside({ layout = 'editorial' }: { layout?: 'editorial' | 'classic' }) {
   const reduce = useReducedMotion();
   const active = useScrollSpy(ALL_IDS);
+  const isClassic = layout === 'classic';
+  // Classic swaps the active-highlight bar to the coral accent; editorial keeps border-[var(--text)].
+  // Body text colors still use var(--text)/var(--muted) (the PREPAINT sets them to classic values).
+  const activeBorder = isClassic ? 'border-[#FF5A47]' : 'border-[var(--text)]';
 
   return (
     // top-24 = 96px = HEADER_OFFSET (sticky clears the header). self-start so it doesn't stretch.
-    <aside className="thin-scrollbar sticky top-24 hidden self-start pb-8 lg:block max-h-[calc(100dvh-7rem)] overflow-y-auto">
+    <aside className={`thin-scrollbar sticky top-24 hidden self-start pb-8 lg:block max-h-[calc(100dvh-7rem)] overflow-y-auto ${isClassic ? 'font-mono' : ''}`}>
       <nav aria-label="Documentation contents">
         <p className="mb-4 text-[0.75rem] uppercase tracking-[0.15em] text-[var(--muted)]">Contents</p>
         <ul>
@@ -74,7 +84,7 @@ function DesktopAside() {
                   }}
                   className={`block border-l-2 py-1.5 pl-3 text-sm ${SIG} ${
                     secActive
-                      ? 'border-[var(--text)] font-medium text-[var(--text)]'
+                      ? `${activeBorder} font-medium text-[var(--text)]`
                       : 'border-transparent text-[var(--muted)] hover:text-[var(--text)]'
                   }`}
                 >
@@ -94,7 +104,7 @@ function DesktopAside() {
                           }}
                           className={`block ml-3 border-l-2 py-1 pl-3 text-[0.8125rem] ${SIG} ${
                             subActive
-                              ? 'border-[var(--text)] text-[var(--text)]'
+                              ? `${activeBorder} text-[var(--text)]`
                               : 'border-transparent text-[var(--muted)] hover:text-[var(--text)]'
                           }`}
                         >
@@ -114,7 +124,7 @@ function DesktopAside() {
 }
 
 /** Mobile: a `Contents ▾` button in the header that opens a fading dropdown of the same TOC. */
-function MobileToc() {
+function MobileToc({ layout = 'editorial' }: { layout?: 'editorial' | 'classic' }) {
   const reduce = useReducedMotion();
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false);
@@ -124,13 +134,19 @@ function MobileToc() {
   const [shown, setShown] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const isClassic = layout === 'classic';
 
   // Fade-IN: mount at opacity-0, flip to opacity-100 next frame so the open transition animates.
   // Reset on unmount so each open fades in fresh.
   useEffect(() => {
     if (!shouldRender) {
-      setShown(false);
-      return;
+      // Reset `shown` so the next open fades in fresh. Deferred to a rAF callback (NOT synchronous
+      // in the effect body) to satisfy react-hooks/set-state-in-effect — the panel is unmounted
+      // while !shouldRender, so the one-frame deferral is invisible. Behavior-identical to the
+      // prior synchronous reset. (Pre-existing latent lint error in HEAD; fixed here because this
+      // file must pass eslint and the deferral is behavior-neutral.)
+      const id = requestAnimationFrame(() => setShown(false));
+      return () => cancelAnimationFrame(id);
     }
     if (isExiting) return; // leaving — let the exit fade play out
     const id = requestAnimationFrame(() => setShown(true));
@@ -175,7 +191,7 @@ function MobileToc() {
         aria-expanded={open}
         aria-haspopup="menu"
         aria-label="Table of contents"
-        className="flex items-center gap-1 text-sm text-[var(--text)]"
+        className={`flex items-center gap-1 text-sm text-[var(--text)] ${isClassic ? 'font-mono text-xs uppercase tracking-widest' : ''}`}
       >
         Contents
         <svg
@@ -191,7 +207,7 @@ function MobileToc() {
       </button>
       {shouldRender && (
         <div
-          className={`thin-scrollbar absolute right-0 top-full z-50 mt-2 max-h-[60dvh] w-64 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--bg)] p-2 opacity-0 transition-opacity duration-200 ease-[cubic-bezier(0.4,0,0.2,1)] shadow-lg ${
+          className={`thin-scrollbar absolute right-0 top-full z-50 mt-2 max-h-[60dvh] w-64 overflow-y-auto ${isClassic ? 'rounded-none' : 'rounded-lg shadow-lg'} border border-[var(--border)] bg-[var(--bg)] p-2 opacity-0 transition-opacity duration-200 ease-[cubic-bezier(0.4,0,0.2,1)] ${isClassic ? 'font-mono' : ''} ${
             shown && !isExiting ? 'opacity-100' : 'opacity-0'
           }`}
         >
