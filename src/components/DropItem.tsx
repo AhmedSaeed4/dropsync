@@ -28,6 +28,9 @@ interface DropItemProps {
   allDrops?: Drop[];
   // Creator/workspace owner — may still delete a locked drop. Non-creators see a faded gate.
   canMutate?: boolean;
+  // Reminder glow (viewer-dependent) — turns the title coral + shows a clock badge. Computed by the
+  // parent list via isReminderGlowingForViewer so this item stays presentational.
+  reminderGlow?: boolean;
 }
 
 function isTextFile(drop: Drop): boolean {
@@ -51,7 +54,7 @@ function getFileContent(drop: Drop): string {
   return '';
 }
 
-export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect, selectionMode, theme = 'light', currentUserId, onPin, onUnpin, allDrops = [], canMutate = false }: DropItemProps) {
+export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect, selectionMode, theme = 'light', currentUserId, onPin, onUnpin, allDrops = [], canMutate = false, reminderGlow = false }: DropItemProps) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [copied, setCopied] = useState(false);
   const [decryptedContent, setDecryptedContent] = useState<string>('');
@@ -373,9 +376,17 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
         {/* Info */}
         <div className="flex-1 min-w-0 px-4 py-3">
           <div className="flex items-center gap-2">
-            <h3 className={`text-sm ${isMinimal ? 'font-medium tracking-wide' : 'font-semibold uppercase tracking-wider'} line-clamp-1 ${selected ? 'text-white' : tc.textColor}`} title={drop.name}>
+            <h3 className={`text-sm ${isMinimal ? 'font-medium tracking-wide' : 'font-semibold uppercase tracking-wider'} line-clamp-1 ${reminderGlow && !selected ? 'text-[#FF5A47]' : selected ? 'text-white' : tc.textColor}`} title={drop.name}>
               {drop.name}
             </h3>
+            {reminderGlow && (
+              <span className={`shrink-0 flex items-center gap-1 px-1.5 py-0.5 ${isMinimal ? 'bg-[#1A1A1A]/80 text-[#D4D8C8]' : isDark ? 'bg-white/80 text-[#1A1A1A]' : 'bg-[#FF5A47] text-white'} ${isMinimal ? 'text-[7px] font-sans tracking-wide' : 'text-[7px] font-mono uppercase tracking-wider'}`} title="Reminder active">
+                <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5" aria-hidden="true">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M12 7v5l3 2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </span>
+            )}
             {drop.creatorName && (
               <span className={`text-[10px] px-2 py-0.5 rounded-full ${selected ? 'bg-white/20 text-white' : isMinimal ? 'bg-[#1A1A1A]/10 text-[#1A1A1A]/60' : isDark ? 'bg-white/10 text-white/50' : 'bg-[#1A1A1A]/10 text-[#1A1A1A]/50'}`}>
                 {drop.creatorName}

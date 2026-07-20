@@ -7,7 +7,7 @@ import { DropItem } from './DropItem';
 import { UndoToast } from './UndoToast';
 import { Toast } from './Toast';
 import { CategoryFilter } from './CategoryFilter';
-import { deleteDrop, moveDrop, copyDrop, pinDrop, unpinDrop } from '@/lib/drops';
+import { deleteDrop, moveDrop, copyDrop, pinDrop, unpinDrop, isReminderGlowingForViewer } from '@/lib/drops';
 import { usePendingDeletions, requestDelete, undo, dismiss } from '@/lib/pendingDeletions';
 import { ensureCategoriesForTarget } from '@/lib/categories';
 import { MoveDropModal } from '@/components/MoveDropModal';
@@ -471,6 +471,7 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
                   selectionMode={selectionMode}
                   theme={theme}
                   currentUserId={currentUserId}
+                  reminderGlow={isReminderGlowingForViewer(drop, currentUserId ?? null, new Date())}
                   canMutate={!!currentUserId && (currentUserId === drop.userId || (!!currentWorkspace && currentUserId === currentWorkspace.ownerId))}
                   onPin={handlePinDrop}
                   onUnpin={handlePinDrop}

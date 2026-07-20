@@ -185,7 +185,8 @@ export function EditorialDropZone({
     imageFile?: File,
     categories?: string[],
     isDrawing?: boolean,
-    locked: boolean = false
+    locked: boolean = false,
+    reminderAt?: Date | null
   ) => {
     // Defense-in-depth: the text modal can't be opened mid-upload (Add Text is disabled + the
     // heading click area is pointer-events-none while busy), so this is normally unreachable — but
@@ -211,7 +212,8 @@ export function EditorialDropZone({
         imageFile,
         categories,
         isDrawing,
-        locked
+        locked,
+        reminderAt ?? null
       );
       if (!drop) {
         setUploadState({ status: 'error', message: 'Failed to create text drop. Please try again.' });

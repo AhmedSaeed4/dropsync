@@ -401,6 +401,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
           }}
           allDrops={drops}
           onPreview={handlePreview}
+          currentUserId={user?.uid}
         />
       )}
 
