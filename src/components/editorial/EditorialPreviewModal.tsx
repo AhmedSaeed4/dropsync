@@ -4,7 +4,8 @@ import { useState, useEffect } from 'react';
 import { Drop } from '@/types';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useModalBackClose } from '@/hooks/useModalBackClose';
-import { formatFileSize, getYouTubeVideoId } from '@/lib/drops';
+import { useNow } from '@/hooks/useNow';
+import { formatFileSize, getYouTubeVideoId, updateDropMetadata, isReminderGlowingForViewer, formatReminderFire } from '@/lib/drops';
 import { createShare } from '@/lib/shares';
 import { downloadBinaryFromUrl } from '@/lib/download';
 import { contentToPlainText } from '@/lib/dropTagUtils';
@@ -26,6 +27,8 @@ interface EditorialPreviewModalProps {
   onPreview?: (drop: Drop) => void;
   // Creator/workspace owner — may still Edit/Move a locked drop. Non-creators see faded gates.
   canMutate?: boolean;
+  // Current viewer — drives the per-viewer reminder glow (dismiss visibility) + the reminder-setBy.
+  currentUserId?: string;
 }
 
 function isTextFile(drop: Drop): boolean {
@@ -36,7 +39,7 @@ function isTextFile(drop: Drop): boolean {
          textExtensions.some(ext => drop.name.toLowerCase().endsWith(ext));
 }
 
-export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoading = false, onEdit, onMove, allDrops = [], onPreview, canMutate = false }: EditorialPreviewModalProps) {
+export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoading = false, onEdit, onMove, allDrops = [], onPreview, canMutate = false, currentUserId }: EditorialPreviewModalProps) {
   useBodyScrollLock();
   useModalBackClose(true, onClose);
   const [copied, setCopied] = useState(false);
@@ -128,6 +131,24 @@ export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoadin
   }, [videoSrc]);
 
   const tc = getEditorialThemeColors(theme);
+
+  // In-app reminder DISMISS (footer, next to Edit). The set/change/turn-off controls moved to the
+  // Edit modal (EditorialTextModal). Light path via updateDropMetadata (never updateTextDrop).
+  // Live "now" drives the header fire-time countdown AND the per-viewer glow (a reminder that fires
+  // while the modal is open starts glowing without a reopen). 30s tick — light.
+  const now = useNow();
+  const reminderGlowing = isReminderGlowingForViewer(drop, currentUserId, now);
+  // Header fire-time preview (next to the drop name) when this drop has a reminder. "Due …" once past.
+  const reminderFire = drop.reminderAt ? formatReminderFire(drop.reminderAt, now) : null;
+  const handleReminderDismiss = async () => {
+    if (!currentUserId) return;
+    // On a locked drop only creator/owner (canMutate) may write; the Dismiss button is gated to
+    // LockedActionButton below, so this is defense-in-depth.
+    if (drop.locked && !canMutate) return;
+    // Any dismiss clears the glow for non-creators; the creator keeps glowing until they dismiss
+    // themselves (see isReminderGlowingForViewer).
+    await updateDropMetadata(drop.id, { reminderDismissedBy: currentUserId });
+  };
 
   const getTextContent = () => {
     if (drop.type === 'text' && drop.content) return drop.content;
@@ -246,6 +267,11 @@ export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoadin
               <h2 className={`${tc.fontClass} ${tc.text} font-medium text-[15px] line-clamp-2 max-w-[280px]`} title={drop.name}>
                 {drop.name}
               </h2>
+              {reminderFire && (
+                <p className={`text-xs ${tc.muted} ${tc.fontClass}`}>
+                  {reminderFire.fired ? 'Due ' : 'Fires '}{reminderFire.absolute}{reminderFire.remaining ? ` · ${reminderFire.remaining}` : ''}
+                </p>
+              )}
               {drop.fileSize && (
                 <p className={`text-xs ${tc.muted} ${tc.fontClass}`}>
                   {formatFileSize(drop.fileSize)}
@@ -515,6 +541,38 @@ export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoadin
                     <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
                   </svg>
                   <span className="hidden sm:inline">{drop.isDrawing ? 'Edit drawing' : 'Edit'}</span>
+                </button>
+              )
+            )}
+
+            {/* Dismiss reminder — only when the reminder is glowing for THIS viewer. Light path:
+                writes reminderDismissedBy (any dismiss clears it for non-creators; the creator keeps
+                glowing until they dismiss). Locked-gated: only creator/owner may dismiss on a locked drop. */}
+            {reminderGlowing && (
+              drop.locked && !canMutate ? (
+                <LockedActionButton
+                  context="edit"
+                  variant="editorial"
+                  theme={theme}
+                  className={`flex items-center gap-2 px-2 sm:px-4 py-2 rounded-md border ${tc.border} ${tc.text} transition-all text-sm ${tc.fontClass}`}
+                  icon={
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                      <circle cx="12" cy="12" r="9" />
+                      <path d="M12 7v5l3 2" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  }
+                />
+              ) : (
+                <button
+                  onClick={handleReminderDismiss}
+                  className={`flex items-center gap-2 px-2 sm:px-4 py-2 rounded-md border ${tc.border} ${tc.text} hover:border-[#1a1a1a] transition-all text-sm ${tc.fontClass}`}
+                  title="Dismiss reminder"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 7v5l3 2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  <span className="hidden sm:inline">Dismiss</span>
                 </button>
               )
             )}

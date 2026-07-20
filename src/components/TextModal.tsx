@@ -6,15 +6,18 @@ import { Drop, ExpirationOption } from '@/types';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useModalBackClose } from '@/hooks/useModalBackClose';
 import { useUserTier } from '@/hooks/useUserTier';
-import { decryptDrop } from '@/lib/drops';
+import { decryptDrop, updateDropMetadata, getExpirationDate, formatReminderFire } from '@/lib/drops';
 import { dedupeCategoryNames } from '@/lib/categories';
 import { ForeverLockedModal } from './ForeverLockedModal';
 import { DrawingCanvas, BG_COLORS } from './DrawingCanvas';
 import { DropPickerRow } from './DropPickerRow';
 import { useMentionEditor } from '@/hooks/useMentionEditor';
+import { useReminder, REMINDER_PRESETS } from '@/hooks/useReminder';
+import { useNow } from '@/hooks/useNow';
+import type { ReminderUnit } from '@/lib/drops';
 
 interface TextModalProps {
-  onSubmit: (name: string, content: string, expiration: ExpirationOption, category?: string, imageFile?: File, categories?: string[], isDrawing?: boolean, locked?: boolean) => Promise<void>;
+  onSubmit: (name: string, content: string, expiration: ExpirationOption, category?: string, imageFile?: File, categories?: string[], isDrawing?: boolean, locked?: boolean, reminderAt?: Date | null) => Promise<void>;
   onClose: () => void;
   theme?: 'light' | 'dark' | 'minimal';
   customCategories?: string[];
@@ -62,6 +65,34 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
     }
   }, [isEditMode, editDrop]);
   const { tier, loading: tierLoading } = useUserTier();
+  // In-app reminder. CREATE mode threads reminderAt through onSubmit (createTextDrop). EDIT mode
+  // (UI below) writes it via updateDropMetadata as a SEPARATE light-path call (never updateTextDrop,
+  // which re-encrypts). In EDIT mode the cap is the drop's CONCRETE expiry (a drop already partly
+  // elapsed has less remaining lifetime than now+option, so getExpirationDate(option) would
+  // overestimate it and let a reminder fire after the drop is gone); if the user just changed the
+  // expiry option it's a fresh window. Create mode passes undefined (hook derives from the option).
+  const reminderCap: Date | null | undefined = !isEditMode
+    ? undefined
+    : expiration === 'forever'
+      ? null
+      : expiration === editDrop?.expirationOption
+        ? (editDrop?.expiresAt ?? null)
+        : getExpirationDate(expiration);
+  const {
+    reminderEnabled, reminderPreset, reminderCustomValue, reminderCustomUnit,
+    reminderAt: reminderAtValue, reminderInvalid: reminderInvalidValue, warning: reminderWarningValue,
+    setReminderEnabled, setReminderPreset, setReminderCustomValue, setReminderCustomUnit,
+    pickerActive, reminderDirty,
+  } = useReminder(expiration, reminderCap, editDrop?.reminderAt);
+  // Live "now" for the fire-time preview's remaining-countdown freshness (the absolute fire time is
+  // fixed; only the "in Xm" drifts). 30s tick — light. Reactivity to SELECTION comes from the hook's
+  // memo, not this tick.
+  const now = useNow();
+  // Precomputed fire-time preview (null when there's nothing valid to show — the warning renders
+  // instead). Shared by the create + edit reminder blocks.
+  const reminderFire = reminderEnabled && !reminderInvalidValue && reminderAtValue
+    ? formatReminderFire(reminderAtValue, now)
+    : null;
   const [selectedCategories, setSelectedCategories] = useState<string[]>(
     editDrop?.categories || (editDrop?.category ? [editDrop.category] : [])
   );
@@ -167,6 +198,9 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isFileDrop && !content.trim() && !drawingFile) return;
+    // The submit button is disabled while the reminder is invalid; guard anyway so a keyboard
+    // submit can't slip a bad reminder through (both modes — the edit Save folds the reminder in).
+    if (reminderEnabled && reminderInvalidValue) return;
 
     // Standard users editing a forever drop can't save it (the rules reject the write). Show the
     // edit popup instead. Switching to a timed option and saving still works (that's a downgrade).
@@ -190,8 +224,26 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
         // field-guard rejects the save.
         ...(canMutate ? { locked } : {}),
       });
+      // Reminder — folded into the MAIN Save (no separate button). LIGHT path via updateDropMetadata,
+      // a SEPARATE call from the content updateTextDrop onEdit fired above (never route through it).
+      // Written ONLY when the reminder actually changed and the new state is valid. Toggle OFF clears.
+      if (!isFileDrop && currentUserId && reminderDirty && !reminderInvalidValue) {
+        // Isolated so a thrown reminder write (defensive — updateDropMetadata already catches
+        // internally) can never skip setLoading(false) below and leave a stuck spinner. Content
+        // (onEdit → updateTextDrop) already ran above; a failed reminder write is non-fatal.
+        try {
+          await updateDropMetadata(
+            editDrop.id,
+            reminderEnabled
+              ? { reminderAt: reminderAtValue, reminderSetByUid: currentUserId, reminderDismissedBy: null }
+              : { reminderAt: null, reminderSetByUid: null, reminderDismissedBy: null }
+          );
+        } catch (err) {
+          console.error('Reminder save failed:', err);
+        }
+      }
     } else {
-      await onSubmit(name.trim() || (isMinimal ? 'Text snippet' : 'TEXT_SNIPPET'), content, expiration, selectedCategories[0] || undefined, imageToUpload, selectedCategories, !!drawingFile, locked);
+      await onSubmit(name.trim() || (isMinimal ? 'Text snippet' : 'TEXT_SNIPPET'), content, expiration, selectedCategories[0] || undefined, imageToUpload, selectedCategories, !!drawingFile, locked, reminderEnabled && !reminderInvalidValue ? reminderAtValue : null);
     }
     setLoading(false);
   };
@@ -320,7 +372,8 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
     !!attachedImage ||
     imageRemoved ||
     !!drawingFile ||
-    locked !== (editDrop.locked ?? false)
+    locked !== (editDrop.locked ?? false) ||
+    reminderDirty
   ) : true;
 
   const handleModeSwitch = (newMode: 'text' | 'draw') => {
@@ -895,6 +948,96 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
             </div>
           )}
 
+          {/* Reminder — in-app. CREATE mode threads reminderAt through onSubmit (createTextDrop); EDIT
+              mode persists it via updateDropMetadata inside the main Save (light path, never
+              updateTextDrop). The toggle handles on/off; the picker picks the fire time; the live
+              "Fires" preview is reactive to the selection (and truthful to the drop's existing reminder
+              on open). Hidden for file drops — a file drop cannot carry a reminder. */}
+          {(!isEditMode || !isFileDrop) && (
+            <div>
+              <label className={`block ${tc.fontClass} ${tc.textMuted} mb-2`}>
+                {isMinimal ? 'Reminder' : 'REMINDER'}
+              </label>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setReminderEnabled(!reminderEnabled)}
+                  className={`px-3 py-2 text-xs ${isMinimal ? 'rounded-full' : ''} border transition-colors ${
+                    reminderEnabled
+                      ? 'bg-[#FF5A47] text-white border-[#FF5A47]'
+                      : `${tc.borderColor} ${tc.textColor} hover:bg-[#1A1A1A]/10`
+                  }`}
+                >
+                  {reminderEnabled ? (isMinimal ? 'On' : 'ON') : (isMinimal ? 'Off' : 'OFF')}
+                </button>
+                {reminderEnabled && (
+                  <>
+                    {REMINDER_PRESETS.map((p) => (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => setReminderPreset(p)}
+                        className={`px-3 py-2 text-xs ${isMinimal ? 'rounded-full' : ''} border transition-colors ${
+                          pickerActive && reminderPreset === p
+                            ? 'bg-[#1A1A1A] text-white border-[#1A1A1A]'
+                            : `${tc.borderColor} ${tc.textColor} hover:bg-[#1A1A1A]/10`
+                        }`}
+                      >
+                        {isMinimal ? p : p.toUpperCase()}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setReminderPreset('custom')}
+                      className={`px-3 py-2 text-xs ${isMinimal ? 'rounded-full' : ''} border transition-colors ${
+                        pickerActive && reminderPreset === 'custom'
+                          ? 'bg-[#1A1A1A] text-white border-[#1A1A1A]'
+                          : `${tc.borderColor} ${tc.textColor} hover:bg-[#1A1A1A]/10`
+                      }`}
+                    >
+                      {isMinimal ? 'Custom' : 'CUSTOM'}
+                    </button>
+                    {reminderPreset === 'custom' && (
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          step="any"
+                          min="0"
+                          value={reminderCustomValue}
+                          onChange={(e) => setReminderCustomValue(e.target.value)}
+                          placeholder="0"
+                          className={`w-16 px-3 py-2 text-xs border ${tc.borderColor} ${tc.inputBg} ${tc.textColor} focus:outline-none ${isMinimal ? 'rounded-full' : ''}`}
+                        />
+                        <select
+                          value={reminderCustomUnit}
+                          onChange={(e) => setReminderCustomUnit(e.target.value as ReminderUnit)}
+                          className={`px-2 py-2 text-xs border ${tc.borderColor} ${tc.inputBg} ${tc.textColor} focus:outline-none ${isMinimal ? 'rounded-full' : ''}`}
+                        >
+                          <option value="minutes">{isMinimal ? 'min' : 'MIN'}</option>
+                          <option value="hours">{isMinimal ? 'hr' : 'HR'}</option>
+                          <option value="days">{isMinimal ? 'day' : 'DAY'}</option>
+                        </select>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+              {reminderFire?.fired ? (
+                <p className={`text-[10px] text-[#FF5A47] mt-1 ${isMinimal ? 'font-sans' : 'font-mono uppercase tracking-wider'}`}>
+                  This reminder has fired — pick a new time to re-arm, or turn it off.
+                </p>
+              ) : reminderWarningValue ? (
+                <p className={`text-[10px] text-[#FF5A47] mt-1 ${isMinimal ? 'font-sans' : 'font-mono uppercase tracking-wider'}`}>
+                  {reminderWarningValue}
+                </p>
+              ) : reminderFire && !reminderFire.fired ? (
+                <p className={`text-[10px] mt-1 ${isMinimal ? 'font-sans' : 'font-mono uppercase tracking-wider'} ${tc.textMuted}`}>
+                  Fires {reminderFire.absolute}{reminderFire.remaining ? ` · ${reminderFire.remaining}` : ''}
+                </p>
+              ) : null}
+            </div>
+          )}
+
           <div className="flex gap-3 pt-2">
             <button
               type="button"
@@ -905,7 +1048,7 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
             </button>
             <button
               type="submit"
-              disabled={loading || (isEditMode && !hasChanges) || (!isFileDrop && !content.trim() && !drawingFile)}
+              disabled={loading || (isEditMode && !hasChanges) || (!isFileDrop && !content.trim() && !drawingFile) || (reminderEnabled && reminderInvalidValue)}
               className={`flex-1 bg-[#1A1A1A] text-white py-3 text-xs tracking-wider hover:bg-[#2A2A2A] disabled:bg-[#C4C4C4] disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2 ${isMinimal ? 'rounded-full' : ''}`}
             >
               {loading ? (

@@ -31,13 +31,145 @@ const DROPS_COLLECTION = 'drops';
 const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB limit
 const MAX_ENCRYPTION_SIZE = 10 * 1024 * 1024; // 10MB - files larger than this won't be encrypted
 
-// Calculate expiration date based on option
-function getExpirationDate(option: ExpirationOption): Date | null {
+// Calculate expiration date based on option. EXPORTED so the reminder create/edit UIs can validate a
+// reminder time against the drop's own expiry (forever → no cap) without re-deriving the math locally.
+export function getExpirationDate(option: ExpirationOption): Date | null {
   if (option === 'forever') return null;
 
   const now = new Date();
   const hours = parseInt(option.replace('h', ''));
   return new Date(now.getTime() + hours * 60 * 60 * 1000);
+}
+
+// =============================================
+// Reminder helpers (pure — reused everywhere; do NOT inline per component)
+// =============================================
+
+export type ReminderPreset = '15m' | '30m' | '1h' | '2h' | 'custom';
+export type ReminderUnit = 'minutes' | 'hours' | 'days';
+
+// Millisecond offset for a reminder, from a preset OR a custom decimal value + unit (decimals allowed
+// — e.g. 0.05 min ≈ 3s for testing). Returns 0 for an unparseable custom value (0 is invalid: the
+// caller's validity check requires offsetMs > 0). Shared by the 4 create surfaces + the edit modal so
+// the offset math can't drift between them.
+export function reminderOffsetMs(
+  preset: ReminderPreset,
+  customValue: string,
+  customUnit: ReminderUnit
+): number {
+  if (preset !== 'custom') {
+    switch (preset) {
+      case '15m': return 15 * 60 * 1000;
+      case '30m': return 30 * 60 * 1000;
+      case '1h': return 60 * 60 * 1000;
+      case '2h': return 2 * 60 * 60 * 1000;
+    }
+    return 0;
+  }
+  const n = parseFloat(customValue);
+  if (!isFinite(n)) return 0;
+  const perUnit: Record<ReminderUnit, number> = {
+    minutes: 60 * 1000,
+    hours: 60 * 60 * 1000,
+    days: 24 * 60 * 60 * 1000,
+  };
+  return n * perUnit[customUnit];
+}
+
+// Viewer-INDEPENDENT — drives the SHARED sort position. A reminder is "fired" for ORDERING when its
+// time has arrived AND no one has dismissed it. (Dismiss clears the shared position for everyone; the
+// per-viewer glow has its own rule in isReminderGlowingForViewer.)
+export function isReminderFiredShared(drop: Drop, now: Date): boolean {
+  return (
+    !!drop.reminderAt &&
+    drop.reminderAt.getTime() <= now.getTime() &&
+    !drop.reminderDismissedBy
+  );
+}
+
+// Viewer-DEPENDENT — drives ONLY the title color + clock badge, NEVER the order. The creator keeps
+// glowing until THEY dismiss (even after another member dismisses); any non-creator stops glowing as
+// soon as ANYONE dismisses. This asymmetry is the whole point — the setter is guaranteed to see it.
+export function isReminderGlowingForViewer(
+  drop: Drop,
+  viewerUid: string | null | undefined,
+  now: Date
+): boolean {
+  const fired = !!drop.reminderAt && drop.reminderAt.getTime() <= now.getTime();
+  if (!fired) return false;
+  const isCreator = !!viewerUid && viewerUid === drop.reminderSetByUid;
+  if (isCreator) {
+    // creator keeps glowing until they themselves dismiss
+    return drop.reminderDismissedBy !== drop.reminderSetByUid;
+  }
+  // non-creator: any dismiss clears the glow
+  return drop.reminderDismissedBy == null;
+}
+
+// Sort: fired-shared FIRST (earliest-fire-first within the tier), then pinned, then createdAt-desc.
+// Returns a NEW array (never mutates the input) so React sees a fresh ref and re-renders — the 30s
+// re-sort tick in useDrops relies on this. Order is SHARED (viewer-independent).
+export function sortDrops(drops: Drop[], now: Date): Drop[] {
+  return [...drops].sort((a, b) => {
+    const af = isReminderFiredShared(a, now) ? 1 : 0;
+    const bf = isReminderFiredShared(b, now) ? 1 : 0;
+    if (af !== bf) return bf - af; // fired tier first
+    if (af === 1) {
+      // both fired (reminderAt non-null by predicate) — earliest fire first
+      return a.reminderAt!.getTime() - b.reminderAt!.getTime();
+    }
+    const ap = a.pinned ? 1 : 0;
+    const bp = b.pinned ? 1 : 0;
+    if (ap !== bp) return bp - ap; // then pinned
+    return b.createdAt.getTime() - a.createdAt.getTime(); // newest first
+  });
+}
+
+// Human-readable reminder fire time for the live previews (Edit picker + View-modal header). Pure
+// (no Date.now) so it's safe to call during render; pass the live `now` from useNow for the
+// remaining-countdown freshness. `fired` lets the caller swap "Fires … in X" for "Due …" once past.
+export function formatReminderFire(
+  reminderAt: Date,
+  now: Date
+): { absolute: string; remaining: string | null; fired: boolean } {
+  const diffMs = reminderAt.getTime() - now.getTime();
+  return {
+    absolute: formatFireAbsolute(reminderAt, now),
+    remaining: diffMs <= 0 ? null : formatFireRemaining(diffMs),
+    fired: diffMs <= 0,
+  };
+}
+
+function formatFireAbsolute(at: Date, now: Date): string {
+  const atMidnight = new Date(at.getFullYear(), at.getMonth(), at.getDate());
+  const nowMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const dayMs = 24 * 60 * 60 * 1000;
+  const dayDiff = Math.round((atMidnight.getTime() - nowMidnight.getTime()) / dayMs);
+  const time = at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  if (dayDiff === 0) return `Today, ${time}`;
+  if (dayDiff === 1) return `Tomorrow, ${time}`;
+  const sameYear = at.getFullYear() === now.getFullYear();
+  const datePart = at.toLocaleDateString(
+    [],
+    sameYear
+      ? { weekday: 'short', month: 'short', day: 'numeric' }
+      : { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }
+  );
+  return `${datePart}, ${time}`;
+}
+
+function formatFireRemaining(ms: number): string {
+  const totalMinutes = Math.floor(ms / (60 * 1000));
+  if (totalMinutes < 1) return 'in <1m';
+  const days = Math.floor(totalMinutes / (24 * 60));
+  const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
+  const minutes = totalMinutes % 60;
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0) parts.push(`${hours}h`);
+  // Drop minutes once we're into days (brevity); under a day show minutes too.
+  if (minutes > 0 && days === 0) parts.push(`${minutes}m`);
+  return `in ${parts.length > 0 ? parts.join(' ') : '<1m'}`;
 }
 
 export function createDropListener(
@@ -105,19 +237,19 @@ export function createDropListener(
           pinned: data.pinned || false,
           isDrawing: data.isDrawing || false,
           locked: data.locked || false,
+          reminderAt: data.reminderAt?.toDate() || null,
+          reminderSetByUid: data.reminderSetByUid || null,
+          reminderDismissedBy: data.reminderDismissedBy || null,
           fileFormat: data.fileFormat,
         });
       }
     });
 
-    // Sort: pinned first, then by createdAt desc
-    drops.sort((a, b) => {
-      const aPinned = a.pinned ? 1 : 0;
-      const bPinned = b.pinned ? 1 : 0;
-      if (aPinned !== bPinned) return bPinned - aPinned;
-      return b.createdAt.getTime() - a.createdAt.getTime();
-    });
-    callback(drops);
+    // Sort: fired-reminders first, then pinned, then createdAt-desc. SHARED (viewer-independent) —
+    // the per-viewer glow (isReminderGlowingForViewer) never affects order, so every member sees the
+    // same position. sortDrops returns a NEW array ref (`drops` is const, so we pass the sorted copy).
+    const sortedDrops = sortDrops(drops, now);
+    callback(sortedDrops);
   }, (error) => {
     // Handle permission errors gracefully (e.g., workspace deleted)
     if (error.code === 'permission-denied' || error.message?.includes('permissions')) {
@@ -143,7 +275,10 @@ export async function createTextDrop(
   imageFile?: File,
   categories?: string[],
   isDrawing?: boolean,
-  locked: boolean = false
+  locked: boolean = false,
+  // In-app reminder (pure client-side on the doc). null/absent = no reminder. reminderSetByUid +
+  // reminderDismissedBy are derived from reminderAt + userId inside this fn; callers pass only the time.
+  reminderAt?: Date | null
 ): Promise<Drop | null> {
   try {
     const now = new Date();
@@ -237,6 +372,9 @@ export async function createTextDrop(
       expirationOption,
       workspaceId,
       locked,
+      reminderAt: reminderAt ? Timestamp.fromDate(reminderAt) : null,
+      reminderSetByUid: reminderAt ? userId : null,
+      reminderDismissedBy: null,
       category: null,
       categories: categories && categories.length > 0 ? categories : (category ? [category] : []),
     };
@@ -518,6 +656,10 @@ export async function updateDropMetadata(
     categories?: string[];
     expirationOption?: ExpirationOption;
     locked?: boolean;
+    // Reminder (light path — does NOT re-encrypt). reminderAt: Date = set/re-arm, null = turn off.
+    reminderAt?: Date | null;
+    reminderSetByUid?: string | null;
+    reminderDismissedBy?: string | null;
   }
 ): Promise<boolean> {
   try {
@@ -536,6 +678,18 @@ export async function updateDropMetadata(
     // Lock state — write only when the caller explicitly passes it (never default/synthesize).
     if (updates.locked !== undefined) {
       updateData.locked = updates.locked;
+    }
+    // Reminder fields — light path (no re-encrypt). Write each only when explicitly passed. A null
+    // reminderAt turns the reminder OFF; a Date sets/re-arms it (caller also passes setByUid + null
+    // dismissedBy to re-arm). Mirrors the locked "write only when passed" pattern.
+    if (updates.reminderAt !== undefined) {
+      updateData.reminderAt = updates.reminderAt ? Timestamp.fromDate(updates.reminderAt) : null;
+    }
+    if (updates.reminderSetByUid !== undefined) {
+      updateData.reminderSetByUid = updates.reminderSetByUid ?? null;
+    }
+    if (updates.reminderDismissedBy !== undefined) {
+      updateData.reminderDismissedBy = updates.reminderDismissedBy ?? null;
     }
     // Hoisted so it stays in scope for the best-effort share-expiry sync below. getExpirationDate
     // only runs when the expiry is actually changing, so this is behavior-identical to before.

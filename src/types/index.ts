@@ -56,6 +56,14 @@ export interface Drop {
   isDrawing?: boolean;
   // Lock state — when true only the creator/workspace owner can edit/move/delete the drop
   locked?: boolean;
+  // Reminder state (in-app only — pure client-side on the drop doc; no server route, no FCM).
+  // reminderAt != null means the reminder is ON (NO separate boolean). reminderSetByUid = the uid of
+  // whoever set/last-edited the reminder (the "creator" for the keeps-glowing rule).
+  // reminderDismissedBy = uid of whoever dismissed, or null. See isReminderFiredShared /
+  // isReminderGlowingForViewer in lib/drops.ts.
+  reminderAt?: Date | null;
+  reminderSetByUid?: string | null;
+  reminderDismissedBy?: string | null;
   // Storage format flag. 'binary' = the R2 object is real binary (streamable); absence (legacy)
   // = data-URI text the player must fetch + decode. Only set on NEW unencrypted large files.
   fileFormat?: 'binary';

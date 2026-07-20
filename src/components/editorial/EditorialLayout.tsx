@@ -380,6 +380,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
           }}
           allDrops={drops}
           onPreview={handlePreview}
+          currentUserId={user?.uid}
         />
       )}
 

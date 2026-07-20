@@ -39,6 +39,9 @@ interface EditorialDropItemProps {
   allDrops?: Drop[];
   // Creator/workspace owner — may still delete a locked drop. Non-creators see a faded gate.
   canMutate?: boolean;
+  // Reminder glow (viewer-dependent) — adds the rainbow title animation + a clock badge. Computed by
+  // the parent list via isReminderGlowingForViewer so this item stays presentational.
+  reminderGlow?: boolean;
 }
 
 function isTextFile(drop: Drop): boolean {
@@ -167,6 +170,7 @@ export const EditorialDropItem = memo(function EditorialDropItem({
   dragHandleProps,
   allDrops = [],
   canMutate = false,
+  reminderGlow = false,
 }: EditorialDropItemProps) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -535,12 +539,20 @@ export const EditorialDropItem = memo(function EditorialDropItem({
           <div className="flex items-center gap-2">
             <h3
               className={`text-sm ${font} font-medium tracking-tight line-clamp-2 ${
-                selected ? tc.activePillText : tc.text
-              }`}
+                reminderGlow && !selected ? 'animate-text-rgb' : ''
+              } ${selected ? tc.activePillText : tc.text}`}
               title={drop.name}
             >
               {drop.name}
             </h3>
+            {reminderGlow && (
+              <span className={`shrink-0 flex items-center gap-1 px-1.5 h-5 ${tc.roundedClass} ${theme === 'dark' ? 'bg-white/10 text-white/70' : 'bg-[#1A1A1A]/10 text-[#1A1A1A]/60'}`} title="Reminder active">
+                <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" aria-hidden="true">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M12 7v5l3 2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </span>
+            )}
             {drop.creatorName && (
               <span className={`text-[10px] px-2 py-0.5 ${tc.roundedClass} ${tc.inactivePillBg} ${tc.inactivePillText} flex-shrink-0`}>
                 {drop.creatorName}

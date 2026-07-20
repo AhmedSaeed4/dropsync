@@ -9,7 +9,7 @@ import { Drop, Workspace, Category } from '@/types';
 import { EditorialDropItem } from './EditorialDropItem';
 import { UndoToast } from '@/components/UndoToast';
 import { Toast } from '@/components/Toast';
-import { deleteDrop, moveDrop, copyDrop, pinDrop, unpinDrop } from '@/lib/drops';
+import { deleteDrop, moveDrop, copyDrop, pinDrop, unpinDrop, isReminderFiredShared, isReminderGlowingForViewer } from '@/lib/drops';
 import { usePendingDeletions, requestDelete, undo, dismiss } from '@/lib/pendingDeletions';
 import { ensureCategoriesForTarget } from '@/lib/categories';
 import { EditorialMoveDropModal } from './EditorialMoveDropModal';
@@ -520,9 +520,15 @@ export function EditorialDropList({
     commitManualOrder(arrayMove(ids, oldIndex, newIndex));
   }, [currentManualIds, commitManualOrder]);
 
-  // Filter drops based on category, search, and mention
-  // Filter drops based on category, search, and mention, then sort (pins always on top).
+  // Filter drops by category/search/mention, then sort into 3 SHARED tiers:
+  //   FIRED reminders (earliest-fire-first) > pinned (newest-first) > unpinned (selected sort).
+  // `now` is captured INSIDE the memo: a due reminder jumps tiers on the 30s re-sort tick, which
+  // changes the `drops` ref → `visibleDrops` → this memo recomputes with a fresh `now`. Keeping
+  // `now` out of the deps avoids busting the memo on every render (selection toggles etc.). Order
+  // is SHARED/viewer-independent — every member sees the same position; the per-viewer glow
+  // (isReminderGlowingForViewer, applied at render) never affects order.
   const filteredDrops = useMemo(() => {
+    const now = new Date();
     const filtered = visibleDrops.filter(drop => {
       if (searchQuery && !drop.name.toLowerCase().includes(searchQuery.toLowerCase())) {
         return false;
@@ -535,13 +541,25 @@ export function EditorialDropList({
       if (selectedCategory === 'uncategorized') return drop.type === 'text' && getCategories(drop).length === 0;
       return hasCategory(drop, selectedCategory);
     });
-    // Pinned always on top (newest-first); unpinned follow the selected sort.
+    // Fired reminders always on top (earliest-fire-first). A pinned drop that fires moves UP into
+    // the fired tier, so fired is excluded from BOTH the pinned and unpinned buckets (no double-count).
+    const fired = filtered
+      .filter((d) => isReminderFiredShared(d, now))
+      .sort((a, b) => a.reminderAt!.getTime() - b.reminderAt!.getTime());
     const pinned = filtered
-      .filter((d) => d.pinned)
+      .filter((d) => d.pinned && !isReminderFiredShared(d, now))
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-    const unpinned = sortUnpinned(filtered.filter((d) => !d.pinned), sortMode, manualOrder);
-    return [...pinned, ...unpinned];
+    const unpinned = sortUnpinned(
+      filtered.filter((d) => !d.pinned && !isReminderFiredShared(d, now)),
+      sortMode,
+      manualOrder
+    );
+    return [...fired, ...pinned, ...unpinned];
   }, [visibleDrops, selectedCategory, searchQuery, mentionFilter, sortMode, manualOrder]);
+
+  // Fresh `now` for the render-side fired filters + the per-viewer glow prop. Recomputed each render;
+  // the 30s tick (drops ref change) drives re-renders so a due reminder updates glow/order in-window.
+  const now = new Date();
 
   // Manual reorder controls: only in Manual mode, not while filtered or selecting.
   const showMoveControls = sortMode === 'manual' && !isFiltered && !selectionMode;
@@ -1027,8 +1045,8 @@ export function EditorialDropList({
           ) : enableDrag ? (
             <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
               <div className="p-3 space-y-2">
-                {/* Pinned drops — not draggable, stay on top */}
-                {filteredDrops.filter((d) => d.pinned).map((drop) => (
+                {/* Fired-reminder drops — top tier, not draggable */}
+                {filteredDrops.filter((d) => isReminderFiredShared(d, now)).map((drop) => (
                   <EditorialDropItem
                     key={drop.id}
                     drop={drop}
@@ -1040,15 +1058,37 @@ export function EditorialDropList({
                     selectionMode={selectionMode}
                     theme={theme}
                     currentUserId={currentUserId}
+                    reminderGlow={isReminderGlowingForViewer(drop, currentUserId ?? null, now)}
                     canMutate={!!currentUserId && (currentUserId === drop.userId || (!!currentWorkspace && currentUserId === currentWorkspace.ownerId))}
                     onPin={handlePinDrop}
                     onUnpin={handlePinDrop}
                     allDrops={allDrops}
                   />
                 ))}
-                {/* Unpinned drops — sortable; drag starts from the grip handle */}
-                <SortableContext items={filteredDrops.filter((d) => !d.pinned).map((d) => d.id)} strategy={verticalListSortingStrategy}>
-                  {filteredDrops.filter((d) => !d.pinned).map((drop) => (
+                {/* Pinned drops — not draggable, sit under the fired tier */}
+                {filteredDrops.filter((d) => d.pinned && !isReminderFiredShared(d, now)).map((drop) => (
+                  <EditorialDropItem
+                    key={drop.id}
+                    drop={drop}
+                    onDelete={handleDeleteWithUndo}
+                    onPreview={onPreview}
+                    onEdit={onEdit}
+                    selected={selectedIds.has(drop.id)}
+                    onSelect={toggleSelect}
+                    selectionMode={selectionMode}
+                    theme={theme}
+                    currentUserId={currentUserId}
+                    reminderGlow={isReminderGlowingForViewer(drop, currentUserId ?? null, now)}
+                    canMutate={!!currentUserId && (currentUserId === drop.userId || (!!currentWorkspace && currentUserId === currentWorkspace.ownerId))}
+                    onPin={handlePinDrop}
+                    onUnpin={handlePinDrop}
+                    allDrops={allDrops}
+                  />
+                ))}
+                {/* Unpinned drops — sortable; drag starts from the grip handle. Fired drops are
+                    excluded from the sortable set so a fired drop can't be dragged out of its top tier. */}
+                <SortableContext items={filteredDrops.filter((d) => !d.pinned && !isReminderFiredShared(d, now)).map((d) => d.id)} strategy={verticalListSortingStrategy}>
+                  {filteredDrops.filter((d) => !d.pinned && !isReminderFiredShared(d, now)).map((drop) => (
                     <SortableEditorialDropItem
                       key={drop.id}
                       drop={drop}
@@ -1060,6 +1100,7 @@ export function EditorialDropList({
                       selectionMode={selectionMode}
                       theme={theme}
                       currentUserId={currentUserId}
+                      reminderGlow={isReminderGlowingForViewer(drop, currentUserId ?? null, now)}
                       canMutate={!!currentUserId && (currentUserId === drop.userId || (!!currentWorkspace && currentUserId === currentWorkspace.ownerId))}
                       onPin={handlePinDrop}
                       onUnpin={handlePinDrop}
@@ -1093,6 +1134,7 @@ export function EditorialDropList({
                         selectionMode={selectionMode}
                         theme={theme}
                         currentUserId={currentUserId}
+                        reminderGlow={isReminderGlowingForViewer(drop, currentUserId ?? null, now)}
                         canMutate={!!currentUserId && (currentUserId === drop.userId || (!!currentWorkspace && currentUserId === currentWorkspace.ownerId))}
                         onPin={handlePinDrop}
                         onUnpin={handlePinDrop}
@@ -1124,6 +1166,7 @@ export function EditorialDropList({
                     selectionMode={selectionMode}
                     theme={theme}
                     currentUserId={currentUserId}
+                    reminderGlow={isReminderGlowingForViewer(drop, currentUserId ?? null, now)}
                     canMutate={!!currentUserId && (currentUserId === drop.userId || (!!currentWorkspace && currentUserId === currentWorkspace.ownerId))}
                     onPin={handlePinDrop}
                     onUnpin={handlePinDrop}

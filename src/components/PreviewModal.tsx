@@ -4,7 +4,8 @@ import { useState, useEffect } from 'react';
 import { Drop } from '@/types';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useModalBackClose } from '@/hooks/useModalBackClose';
-import { formatFileSize, getYouTubeVideoId } from '@/lib/drops';
+import { useNow } from '@/hooks/useNow';
+import { formatFileSize, getYouTubeVideoId, updateDropMetadata, isReminderGlowingForViewer, formatReminderFire } from '@/lib/drops';
 import { createShare } from '@/lib/shares';
 import { downloadBinaryFromUrl } from '@/lib/download';
 import { contentToPlainText } from '@/lib/dropTagUtils';
@@ -23,6 +24,8 @@ interface PreviewModalProps {
   onPreview?: (drop: Drop) => void;
   // Creator/workspace owner — may still Edit/Move a locked drop. Non-creators see faded gates.
   canMutate?: boolean;
+  // Current viewer — drives the per-viewer reminder glow (dismiss visibility) + the reminder-setBy.
+  currentUserId?: string;
 }
 
 function isTextFile(drop: Drop): boolean {
@@ -33,7 +36,7 @@ function isTextFile(drop: Drop): boolean {
          textExtensions.some(ext => drop.name.toLowerCase().endsWith(ext));
 }
 
-export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false, onEdit, onMove, allDrops = [], onPreview, canMutate = false }: PreviewModalProps) {
+export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false, onEdit, onMove, allDrops = [], onPreview, canMutate = false, currentUserId }: PreviewModalProps) {
   useBodyScrollLock();
   useModalBackClose(true, onClose);
   const [copied, setCopied] = useState(false);
@@ -230,6 +233,24 @@ export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false
 
   const tc = getThemeColors();
 
+  // In-app reminder DISMISS (footer button next to Edit). The set/change/turn-off controls moved to
+  // the Edit modal (TextModal). Light path via updateDropMetadata (never updateTextDrop).
+  // Live "now" drives the header fire-time countdown AND the per-viewer glow (a reminder that fires
+  // while the modal is open starts glowing without a reopen). 30s tick — light.
+  const now = useNow();
+  const reminderGlowing = isReminderGlowingForViewer(drop, currentUserId, now);
+  // Header fire-time preview (next to the drop name) when this drop has a reminder. "Due …" once past.
+  const reminderFire = drop.reminderAt ? formatReminderFire(drop.reminderAt, now) : null;
+  const handleReminderDismiss = async () => {
+    if (!currentUserId) return;
+    // On a locked drop only creator/owner (canMutate) may write; the Dismiss button is gated to
+    // LockedActionButton below, so this is defense-in-depth.
+    if (drop.locked && !canMutate) return;
+    // Any dismiss clears the glow for non-creators; the creator keeps glowing until they dismiss
+    // themselves (see isReminderGlowingForViewer).
+    await updateDropMetadata(drop.id, { reminderDismissedBy: currentUserId });
+  };
+
   return (
     <div
       className={`fixed inset-0 ${tc.overlayBg} flex items-center justify-center z-50 p-4 transition-colors duration-300 overscroll-contain`}
@@ -262,6 +283,11 @@ export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false
               <h2 className={`${isMinimal ? 'text-sm font-medium' : 'text-sm font-bold uppercase tracking-wider'} text-white truncate max-w-[300px]`} title={drop.name}>
                 {drop.name}
               </h2>
+              {reminderFire && (
+                <p className={`${tc.fontClass} text-white/70`}>
+                  {reminderFire.fired ? (isMinimal ? 'Due ' : 'DUE ') : (isMinimal ? 'Fires ' : 'FIRES ')}{reminderFire.absolute}{reminderFire.remaining ? ` · ${reminderFire.remaining}` : ''}
+                </p>
+              )}
               {drop.fileSize && (
                 <p className={`${tc.fontClass} text-white/60`}>
                   {isMinimal ? formatFileSize(drop.fileSize).toLowerCase() : formatFileSize(drop.fileSize)}
@@ -552,6 +578,36 @@ export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false
                   ? (isMinimal ? 'Edit drawing' : 'EDIT_DRAWING')
                   : (isMinimal ? 'Edit' : 'EDIT')
                 }
+              </button>
+            )
+          )}
+          {/* Dismiss reminder — only when the reminder is glowing for THIS viewer. Light path: writes
+              reminderDismissedBy (any dismiss clears it for non-creators; the creator keeps glowing
+              until they dismiss). Locked-gated: only creator/owner may dismiss on a locked drop. */}
+          {reminderGlowing && (
+            drop.locked && !canMutate ? (
+              <LockedActionButton
+                context="edit"
+                variant="classic"
+                theme={theme}
+                className={`border ${tc.borderColor} ${tc.textColor} px-3 py-1.5 sm:px-5 sm:py-2 text-xs tracking-wider transition-colors flex items-center gap-2 ${isMinimal ? 'rounded-full' : ''}`}
+                icon={
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 7v5l3 2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                }
+              />
+            ) : (
+              <button
+                onClick={handleReminderDismiss}
+                className={`border ${tc.borderColor} ${tc.textColor} px-3 py-1.5 sm:px-5 sm:py-2 text-xs tracking-wider hover:bg-[#1A1A1A] hover:text-white transition-colors flex items-center gap-2 ${isMinimal ? 'rounded-full' : ''}`}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M12 7v5l3 2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                {isMinimal ? 'Dismiss' : 'DISMISS'}
               </button>
             )
           )}
