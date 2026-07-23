@@ -339,5 +339,12 @@ service cloud.firestore {
         }
       }
     }
+
+    // Agent usage counters (per-user quota) — written ONLY by the backend Admin SDK,
+    // keyed on the Firebase-verified uid (the Admin SDK bypasses firestore.rules). Clients
+    // never read or write this doc; deny all as defense-in-depth.
+    match /usage/{uid} {
+      allow read, write: if false;
+    }
   }
 }

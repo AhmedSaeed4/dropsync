@@ -461,9 +461,23 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: 'Request failed' }));
+        if (res.status === 429) {
+          // Rate-limit (per-user quota): show a transient toast, not a saved error turn.
+          // Returning here skips the catch's saveMessage(...'Error: ...'), so the limit
+          // string isn't persisted or replayed to the model as history on later sends.
+          showSystemNotice(
+            err.detail || "You've reached the agent message limit. Please try again shortly.",
+            8000,
+          );
+          return;
+        }
         throw new Error(err.detail || `Error ${res.status}`);
       }
 
+      // Successful send: clear any lingering rate-limit notice (in case the reset countdown hasn't fired yet).
+      if (noticeTimer.current) clearTimeout(noticeTimer.current);
+      setNoticeLeaving(false);
+      setSystemNotice(null);
       const data = await res.json();
       let response = data.response;
 
@@ -1156,19 +1170,6 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
             </div>
           </div>
 
-          {/* Text notice — subtle divider; always mounted; height + opacity animate */}
-          <div className={`grid transition-[grid-template-rows] duration-[300ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${(!clearConfirm && systemNotice) ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
-            <div className={`min-h-0 overflow-hidden transition-opacity duration-[300ms] ${(!clearConfirm && systemNotice && !noticeLeaving) ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
-              <div ref={!clearConfirm && systemNotice ? systemNoticeRef : undefined} className="flex items-center justify-center gap-3 py-3">
-                <div className={`h-0.5 w-8 sm:w-12 ${s.borderColor}`} />
-                <span className={`text-[11px] ${s.fontClass} ${s.muted} uppercase tracking-wider text-center min-w-0 font-medium`}>
-                  {systemNotice}
-                </span>
-                <div className={`h-0.5 w-8 sm:w-12 ${s.borderColor}`} />
-              </div>
-            </div>
-          </div>
-
           {menuMsg && (
             <MessageContextMenu
               x={menuMsg.x}
@@ -1196,6 +1197,19 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
           )}
         </div>
       )}
+
+          {/* Text notice — subtle divider; always mounted; height + opacity animate */}
+          <div className={`grid transition-[grid-template-rows] duration-[300ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${(!clearConfirm && systemNotice) ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
+            <div className={`min-h-0 overflow-hidden transition-opacity duration-[300ms] ${(!clearConfirm && systemNotice && !noticeLeaving) ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+              <div ref={!clearConfirm && systemNotice ? systemNoticeRef : undefined} className="flex items-center justify-center gap-3 py-3">
+                <div className={`h-0.5 w-8 sm:w-12 ${s.borderColor}`} />
+                <span className={`text-[11px] ${s.fontClass} ${s.muted} uppercase tracking-wider text-center min-w-0 font-medium`}>
+                  {systemNotice}
+                </span>
+                <div className={`h-0.5 w-8 sm:w-12 ${s.borderColor}`} />
+              </div>
+            </div>
+          </div>
 
       {/* Input */}
       <div className={`border-t ${s.borderColor} p-3 shrink-0 ${chatMode === 'group' ? 'relative' : ''}`}>

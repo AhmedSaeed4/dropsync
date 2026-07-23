@@ -446,9 +446,23 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: 'Request failed' }));
+        if (res.status === 429) {
+          // Rate-limit (per-user quota): show a transient toast, not a saved error turn.
+          // Returning here skips the catch's saveMessage(...'Error: ...'), so the limit
+          // string isn't persisted or replayed to the model as history on later sends.
+          showSystemNotice(
+            err.detail || "You've reached the agent message limit. Please try again shortly.",
+            8000,
+          );
+          return;
+        }
         throw new Error(err.detail || `Error ${res.status}`);
       }
 
+      // Successful send: clear any lingering rate-limit notice (in case the reset countdown hasn't fired yet).
+      if (noticeTimer.current) clearTimeout(noticeTimer.current);
+      setNoticeLeaving(false);
+      setSystemNotice(null);
       const data = await res.json();
       let response = data.response;
 
@@ -1134,19 +1148,6 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
             </div>
           </div>
 
-          {/* Text notice — subtle divider; always mounted; height + opacity animate */}
-          <div className={`grid transition-[grid-template-rows] duration-[300ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${(!clearConfirm && systemNotice) ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
-            <div className={`min-h-0 overflow-hidden transition-opacity duration-[300ms] ${(!clearConfirm && systemNotice && !noticeLeaving) ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
-              <div ref={!clearConfirm && systemNotice ? systemNoticeRef : undefined} className="flex items-center justify-center gap-3 py-3">
-                <div className={`h-0.5 w-8 sm:w-12 ${tc.border}`} />
-                <span className={`text-[11px] ${tc.fontClass} ${tc.muted} uppercase tracking-wider text-center min-w-0 font-medium`}>
-                  {systemNotice}
-                </span>
-                <div className={`h-0.5 w-8 sm:w-12 ${tc.border}`} />
-              </div>
-            </div>
-          </div>
-
           {menuMsg && (
             <MessageContextMenu
               x={menuMsg.x}
@@ -1177,6 +1178,19 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
       )}
 
       {/* Input area with staggered fade-in */}
+          {/* Text notice — subtle divider; always mounted; height + opacity animate */}
+          <div className={`grid transition-[grid-template-rows] duration-[300ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${(!clearConfirm && systemNotice) ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
+            <div className={`min-h-0 overflow-hidden transition-opacity duration-[300ms] ${(!clearConfirm && systemNotice && !noticeLeaving) ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+              <div ref={!clearConfirm && systemNotice ? systemNoticeRef : undefined} className="flex items-center justify-center gap-3 py-3">
+                <div className={`h-0.5 w-8 sm:w-12 ${tc.border}`} />
+                <span className={`text-[11px] ${tc.fontClass} ${tc.muted} uppercase tracking-wider text-center min-w-0 font-medium`}>
+                  {systemNotice}
+                </span>
+                <div className={`h-0.5 w-8 sm:w-12 ${tc.border}`} />
+              </div>
+            </div>
+          </div>
+
       <div className={`border-t ${tc.border} p-4 shrink-0 relative transition-all duration-300 ease-out ${showInputArea ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-[10px]'}`} style={{ touchAction: 'none' }}>
         {/* Typing indicator — a zero-space overlay above the composer (group + at bottom + someone
             typing). Plain dots + muted text, no background (the original in-flow look). Anchored to
