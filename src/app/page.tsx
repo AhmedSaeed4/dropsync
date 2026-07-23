@@ -1012,6 +1012,27 @@ export default function Home() {
   // through on sustained intent). Desktop-pointer (wheel) only; off under reduced-motion; inert
   // when the footer is absent. No-ops on login/loading/verify.
   useMagnet(footerActive);
+  // Block Space from scrolling the page (which would pop the footer) when focus is not
+  // on something that legitimately uses Space (typing / activating buttons / toggles).
+  useEffect(() => {
+    if (!footerActive) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== ' ') return;
+      const t = e.target as HTMLElement | null;
+      if (!t) return;
+      if (t.isContentEditable) return; // typing in a rich-text composer
+      const interactive = t.closest(
+        'button, input, textarea, select, summary, ' +
+        '[role="button"], [role="checkbox"], [role="radio"], [role="tab"], ' +
+        '[role="switch"], [role="menuitem"], [role="menuitemcheckbox"], ' +
+        '[role="menuitemradio"], [role="option"], [role="treeitem"], [role="combobox"]'
+      );
+      if (interactive) return; // Space has a real job here — let it work
+      e.preventDefault(); // otherwise Space's default = scroll page + pop footer → block it
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [footerActive]);
 
   // ToS consent: reactive read of users/{uid}.tosAcceptedVersion. onSnapshot (NOT a one-shot getDoc)
   // so it self-corrects the first-login race and auto-dismisses the gate in other open tabs. A read
