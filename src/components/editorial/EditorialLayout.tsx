@@ -279,9 +279,9 @@ export function EditorialLayout(props: EditorialLayoutProps) {
       />
 
       {/* Main content - responsive: stacked on mobile/tablet, side-by-side on desktop */}
-      <main id="app-main" className={`flex flex-col wide:flex-row flex-1 min-h-0 overflow-y-auto overscroll-contain wide:overflow-hidden py-6 wide:py-[45px] transition-[gap,padding] duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] px-4 sm:px-6 lg:px-[80px] ${showChat ? 'wide:gap-8' : 'wide:gap-[60px]'} gap-6`}>
+      <main id="app-main" className={`flex flex-col wide:flex-row flex-1 min-h-0 overflow-y-auto overscroll-contain editorial-scroll-hide wide:overflow-hidden py-6 wide:py-[45px] transition-[gap,padding] duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] px-4 sm:px-6 lg:px-[80px] ${showChat ? 'wide:gap-8' : 'wide:gap-[60px]'} gap-6`}>
         {/* Left column: DropZone + Status + Theme */}
-        <div className={`wide:border-r ${tc.border} wide:overflow-y-auto wide:min-h-0 transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] wide:pr-5 w-full min-w-0 ${showChat ? 'wide:flex-[1.2_0_0px] wide:pl-1.5' : 'wide:flex-1 wide:pl-11'}`}>
+        <div className={`wide:border-r ${tc.border} wide:overflow-y-auto editorial-scroll-hide wide:min-h-0 transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] wide:pr-5 w-full min-w-0 ${showChat ? 'wide:flex-[1.2_0_0px] wide:pl-1.5' : 'wide:flex-1 wide:pl-11'}`}>
           <div className="space-y-6">
             <EditorialDropZone
               theme={theme}
@@ -314,7 +314,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
         </div>
 
         {/* Right column: Drops + Saved Paths */}
-        <div className={`shrink-0 wide:overflow-y-auto wide:min-h-0 transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] w-full ${showChat ? 'wide:w-[480px] wide:min-w-[480px]' : 'wide:w-[520px] wide:min-w-[520px]'}`}>
+        <div className={`shrink-0 wide:overflow-y-auto editorial-scroll-hide wide:min-h-0 transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] w-full ${showChat ? 'wide:w-[480px] wide:min-w-[480px]' : 'wide:w-[520px] wide:min-w-[520px]'}`}>
           <div>
             <EditorialDropList
               drops={drops}
