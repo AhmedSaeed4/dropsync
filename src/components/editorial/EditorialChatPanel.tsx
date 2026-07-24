@@ -1335,7 +1335,6 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Type a message..."
-              disabled={loading}
               rows={1}
               className={`flex-1 px-4 py-3 text-[14px] ${tc.fontClass} ${tc.bg} ${tc.text} border ${tc.border} rounded-lg resize-none focus:outline-none focus:border-[#1a1a1a] disabled:opacity-50 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] ${theme === 'dark' ? 'placeholder:text-white/30' : 'placeholder:text-[#1A1A1A]/30'}`}
               style={{ maxHeight: '120px', touchAction: 'none' }}

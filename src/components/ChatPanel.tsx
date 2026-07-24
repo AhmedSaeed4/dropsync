@@ -1260,7 +1260,6 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder={theme === 'minimal' ? 'Ask anything...' : 'QUERY...'}
-              disabled={loading}
               className={`flex-1 px-3 py-2 text-xs ${s.inputBg} ${s.inputText} ${s.placeholder} ${s.fontClass} tracking-wider border ${s.inputBorder} ${s.roundedClass} focus:outline-none focus:ring-1 ${s.focusRing} disabled:opacity-50`}
             />
             <button
