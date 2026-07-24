@@ -335,6 +335,30 @@ export async function deleteWorkspace(userId: string, workspaceId: string): Prom
       console.error('Failed to query categories for cleanup:', error);
     }
 
+    // Best-effort: delete this workspace's encryption key SERVER-SIDE via the Admin SDK (the client
+    // cannot — firestore.rules has no `allow delete` on workspaceKeys). MUST run BEFORE the workspace-
+    // doc delete below, while the route can still re-verify ownership. A failure logs and falls
+    // through to today's behavior (workspace still deletes; the key may orphan — inert, as before).
+    try {
+      const idToken = await getAuth().currentUser?.getIdToken();
+      if (idToken) {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 4000);
+        try {
+          await fetch('/api/cleanup-workspace-key', {
+            method: 'POST',
+            headers: { Authorization: 'Bearer ' + idToken, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ workspaceId }),
+            signal: ctrl.signal,
+          });
+        } finally {
+          clearTimeout(t);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to clean workspace key server-side:', e);
+    }
+
     // Delete the workspace
     await deleteDoc(workspaceRef);
 

@@ -211,6 +211,29 @@ export async function deleteAccount(
           for (const dropDoc of workspaceDropsSnap.docs) {
             await deleteDropWithAttachments(dropDoc);
           }
+          // Best-effort: delete this workspace's encryption key SERVER-SIDE via the Admin SDK (the
+          // client cannot — firestore.rules has no `allow delete` on workspaceKeys). MUST run BEFORE
+          // the workspace-doc delete below, while the route can still re-verify ownership. A failure
+          // logs and falls through to today's behavior (workspace still deletes; the key may orphan —
+          // inert, as before). Uses the in-scope current user's token (same one Step 4's FCM cleanup
+          // uses); workspaceDoc.id is this owned workspace's id.
+          try {
+            const idToken = await firebaseUser.getIdToken();
+            const ctrl = new AbortController();
+            const t = setTimeout(() => ctrl.abort(), 4000);
+            try {
+              await fetch('/api/cleanup-workspace-key', {
+                method: 'POST',
+                headers: { Authorization: 'Bearer ' + idToken, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ workspaceId: workspaceDoc.id }),
+                signal: ctrl.signal,
+              });
+            } finally {
+              clearTimeout(t);
+            }
+          } catch (e) {
+            console.error('Failed to clean workspace key server-side:', e);
+          }
           // Delete workspace
           await deleteDoc(workspaceRef);
         } else {
