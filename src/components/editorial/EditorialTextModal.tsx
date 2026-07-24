@@ -8,6 +8,7 @@ import { useModalBackClose } from '@/hooks/useModalBackClose';
 import { useUserTier } from '@/hooks/useUserTier';
 import { getEditorialThemeColors } from './editorialTheme';
 import { ForeverLockedModal } from '../ForeverLockedModal';
+import { Toast } from '../Toast';
 import { decryptDrop, updateDropMetadata, getExpirationDate, formatReminderFire } from '@/lib/drops';
 import { dedupeCategoryNames } from '@/lib/categories';
 import { DrawingCanvas, BG_COLORS } from '../DrawingCanvas';
@@ -78,6 +79,8 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
   const [creatingCategory, setCreatingCategory] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
+  // Voice limit / transcription-failure message surfaced via <Toast> (the route's 429/413/500 error).
+  const [voiceError, setVoiceError] = useState<string | null>(null);
   const [attachedImage, setAttachedImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [existingImageUrl, setExistingImageUrl] = useState<string | null>(null);
@@ -367,6 +370,12 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
               headers: { Authorization: `Bearer ${token}` },
               body: formData,
             });
+            if (!res.ok) {
+              const b = await res.json().catch(() => ({}));
+              setVoiceError(b.error || 'Transcription failed. Please try again.');
+              setIsTranscribing(false);
+              return;
+            }
             const data = await res.json();
             if (data.text) {
               setContent(prev => prev ? prev + '\n' + data.text : data.text);
@@ -1028,6 +1037,15 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
       </div>
       {showForeverLocked && (
         <ForeverLockedModal context={foreverContext} variant="editorial" theme={theme} onClose={() => setShowForeverLocked(false)} />
+      )}
+      {voiceError && (
+        <Toast
+          message={voiceError}
+          duration={6}
+          theme={theme}
+          editorial={true}
+          onDone={() => setVoiceError(null)}
+        />
       )}
     </div>
   );

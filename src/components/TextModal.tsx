@@ -9,6 +9,7 @@ import { useUserTier } from '@/hooks/useUserTier';
 import { decryptDrop, updateDropMetadata, getExpirationDate, formatReminderFire } from '@/lib/drops';
 import { dedupeCategoryNames } from '@/lib/categories';
 import { ForeverLockedModal } from './ForeverLockedModal';
+import { Toast } from './Toast';
 import { DrawingCanvas, BG_COLORS } from './DrawingCanvas';
 import { DropPickerRow } from './DropPickerRow';
 import { useMentionEditor } from '@/hooks/useMentionEditor';
@@ -101,6 +102,8 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
   const [creatingCategory, setCreatingCategory] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
+  // Voice limit / transcription-failure message surfaced via <Toast> (the route's 429/413/500 error).
+  const [voiceError, setVoiceError] = useState<string | null>(null);
   const [attachedImage, setAttachedImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [existingImageUrl, setExistingImageUrl] = useState<string | null>(null);
@@ -310,6 +313,12 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
               headers: { Authorization: `Bearer ${token}` },
               body: formData,
             });
+            if (!res.ok) {
+              const b = await res.json().catch(() => ({}));
+              setVoiceError(b.error || 'Transcription failed. Please try again.');
+              setIsTranscribing(false);
+              return;
+            }
             const data = await res.json();
             if (data.text) {
               setContent(prev => prev ? prev + '\n' + data.text : data.text);
@@ -1068,6 +1077,15 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
       </div>
       {showForeverLocked && (
         <ForeverLockedModal context={foreverContext} variant="classic" theme={theme} onClose={() => setShowForeverLocked(false)} />
+      )}
+      {voiceError && (
+        <Toast
+          message={voiceError}
+          duration={6}
+          theme={theme}
+          editorial={false}
+          onDone={() => setVoiceError(null)}
+        />
       )}
     </div>
   );

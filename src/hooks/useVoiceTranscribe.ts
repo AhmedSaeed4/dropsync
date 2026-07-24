@@ -75,15 +75,20 @@ export function useVoiceTranscribe({ onTranscript, onError }: UseVoiceTranscribe
               body: formData,
             });
             if (!res.ok) {
-              onErrorRef.current?.('Transcription failed. Please try again.');
+              // Surface the server's message (the 429 daily-limit/reset text, the 413 size error, or
+              // a generic failure) and bail BEFORE reading data.text. setIsTranscribing(false) first —
+              // the early return skips the trailing reset at the bottom of onstop.
+              const body = await res.json().catch(() => ({}));
+              onErrorRef.current?.(body.error || 'Transcription failed. Please try again.');
+              setIsTranscribing(false);
+              return;
+            }
+            const data = await res.json();
+            const text = typeof data.text === 'string' ? data.text.trim() : '';
+            if (text) {
+              onTranscriptRef.current?.(text);
             } else {
-              const data = await res.json();
-              const text = typeof data.text === 'string' ? data.text.trim() : '';
-              if (text) {
-                onTranscriptRef.current?.(text);
-              } else {
-                onErrorRef.current?.('No speech detected. Try again.');
-              }
+              onErrorRef.current?.('No speech detected. Try again.');
             }
           }
         } catch (err) {
