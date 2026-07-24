@@ -22,6 +22,8 @@ import {
 import { subscribeToGroupMessages, sendGroupMessage, editGroupMessage, deleteGroupMessage, clearGroupChat, getSeenBy } from '@/lib/groupChat';
 import { useInPanelMarkRead } from '@/hooks/useInPanelMarkRead';
 import { useMentionEditor } from '@/hooks/useMentionEditor';
+import { useVoiceTranscribe } from '@/hooks/useVoiceTranscribe';
+import { Toast } from '@/components/Toast';
 import { Drop, GroupChatMessage } from '@/types';
 import { DropPickerRow } from './DropPickerRow';
 import { DropMentionContent } from './DropMentionContent';
@@ -199,6 +201,23 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
   // editMention is a single top-level instance (Rules of Hooks); its contentEditable renders only
   // for the message being edited (editingMsgId === msg.id).
   const editMention = useMentionEditor({ content: editDraft, setContent: setEditDraft, allDrops: workspaceDrops, foundClassName: mentionFoundClass, deletedClassName: mentionDeletedClass, memberClassName: mentionMemberClass });
+  // Voice-to-text mic — reuses the shared useVoiceTranscribe hook (extracted from TextModal).
+  // onTranscript APPENDS to the currently-shown composer: the group composer keeps raw text
+  // (newlines render as <br>); the classic AI box is a single-line <input>, so flatten newlines.
+  // The hook stabilizes these callbacks via latest-refs, so a mode switch mid-recording still
+  // routes the transcript to the right composer.
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const voice = useVoiceTranscribe({
+    onTranscript: (text) => {
+      if (chatMode === 'group') {
+        setGroupInput((prev) => (prev ? prev + ' ' + text : text));
+      } else {
+        const flat = text.replace(/\n/g, ' ').trim();
+        setInput((prev) => (prev ? prev + ' ' + flat : flat));
+      }
+    },
+    onError: setVoiceError,
+  });
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -1263,6 +1282,30 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
               className={`flex-1 px-3 py-2 text-xs ${s.inputBg} ${s.inputText} ${s.placeholder} ${s.fontClass} tracking-wider border ${s.inputBorder} ${s.roundedClass} focus:outline-none focus:ring-1 ${s.focusRing} disabled:opacity-50`}
             />
             <button
+              type="button"
+              onPointerDown={(e) => e.preventDefault()}
+              onClick={voice.toggle}
+              disabled={voice.isTranscribing}
+              aria-label={voice.isRecording ? 'Stop recording' : voice.isTranscribing ? 'Transcribing' : 'Voice to text'}
+              className={`px-3 py-2 text-xs transition-colors flex items-center justify-center border ${s.roundedClass} ${
+                voice.isRecording
+                  ? 'bg-red-500 border-red-500 text-white'
+                  : voice.isTranscribing
+                    ? `${s.inputBorder} ${s.placeholder} opacity-50 cursor-wait`
+                    : `${s.inputBorder} ${s.inputText} hover:bg-[#1A1A1A] hover:text-white`
+              }`}
+            >
+              {voice.isTranscribing ? (
+                <div className="w-4 h-4 border border-current/30 border-t-current animate-spin rounded-full" />
+              ) : voice.isRecording ? (
+                <span className="w-3 h-3 bg-white rounded-sm" />
+              ) : (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
+                </svg>
+              )}
+            </button>
+            <button
               type="submit"
               onPointerDown={(e) => e.preventDefault()}
               disabled={loading || !input.trim()}
@@ -1366,6 +1409,30 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
                 />
               </div>
               <button
+                type="button"
+                onPointerDown={(e) => e.preventDefault()}
+                onClick={voice.toggle}
+                disabled={voice.isTranscribing}
+                aria-label={voice.isRecording ? 'Stop recording' : voice.isTranscribing ? 'Transcribing' : 'Voice to text'}
+                className={`px-3 py-2 text-xs transition-colors flex items-center justify-center border ${s.roundedClass} ${
+                  voice.isRecording
+                    ? 'bg-red-500 border-red-500 text-white'
+                    : voice.isTranscribing
+                      ? `${s.inputBorder} ${s.placeholder} opacity-50 cursor-wait`
+                      : `${s.inputBorder} ${s.inputText} hover:bg-[#1A1A1A] hover:text-white`
+                }`}
+              >
+                {voice.isTranscribing ? (
+                  <div className="w-4 h-4 border border-current/30 border-t-current animate-spin rounded-full" />
+                ) : voice.isRecording ? (
+                  <span className="w-3 h-3 bg-white rounded-sm" />
+                ) : (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
+                  </svg>
+                )}
+              </button>
+              <button
                 type="submit"
                 onPointerDown={(e) => e.preventDefault()}
                 disabled={groupSending || !groupInput.trim()}
@@ -1379,6 +1446,17 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
           </>
         )}
       </div>
+
+      {/* Voice-to-text failure toast */}
+      {voiceError && (
+        <Toast
+          message={voiceError}
+          duration={4}
+          theme={theme}
+          editorial={false}
+          onDone={() => setVoiceError(null)}
+        />
+      )}
 
       {/* Copied toast */}
       {copiedMsgId && (
