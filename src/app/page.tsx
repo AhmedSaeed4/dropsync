@@ -154,6 +154,7 @@ export default function Home() {
   const [workspaceToDelete, setWorkspaceToDelete] = useState<Workspace | null>(null);
   const [workspaceToLeave, setWorkspaceToLeave] = useState<Workspace | null>(null);
   const [isDeletingWorkspace, setIsDeletingWorkspace] = useState(false);
+  const [workspaceDeleteError, setWorkspaceDeleteError] = useState<string | null>(null);
   const [isLeavingWorkspace, setIsLeavingWorkspace] = useState(false);
   const [isKickingMember, setIsKickingMember] = useState(false);
   const [removedNotice, setRemovedNotice] = useState<string | null>(null);
@@ -354,8 +355,18 @@ export default function Home() {
     if (workspaceToDelete) {
       setIsDeletingWorkspace(true);
       try {
-        await deleteWS(workspaceToDelete.id);
-        setWorkspaceToDelete(null);
+        const ok = await deleteWS(workspaceToDelete.id);
+        if (ok) {
+          setWorkspaceToDelete(null);
+          setWorkspaceDeleteError(null);
+        } else {
+          // Failed: surface it and KEEP the modal open so the user can retry (the cleanup route is
+          // idempotent, so retry self-heals). The spinner is cleared in `finally` below — required,
+          // not a leak: WorkspaceOptionsModal disables every button while isDeleting (busy) is true,
+          // so leaving it up would brick the modal and block the very retry we want. The error Toast
+          // portals to document.body, so it renders above the still-open modal.
+          setWorkspaceDeleteError("Couldn't delete the workspace — please try again.");
+        }
       } finally {
         setIsDeletingWorkspace(false);
       }
@@ -1919,6 +1930,15 @@ export default function Home() {
           theme={theme}
           editorial={layoutMode === 'editorial'}
           onDone={handleRemovedNoticeDone}
+        />
+      )}
+      {workspaceDeleteError && (
+        <Toast
+          message={workspaceDeleteError}
+          duration={6}
+          theme={theme}
+          editorial={layoutMode === 'editorial'}
+          onDone={() => setWorkspaceDeleteError(null)}
         />
       )}
     </>
