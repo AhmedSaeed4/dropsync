@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 interface ToastProps {
@@ -13,14 +13,21 @@ interface ToastProps {
 
 export function Toast({ message, duration = 3, theme = 'light', editorial = false, onDone }: ToastProps) {
   const [visible, setVisible] = useState(true);
+  // Latest-callback ref: callers (chat panels, DropList) pass an inline onDone that is a NEW
+  // function identity on every render. Keeping onDone OUT of the effect deps below means the
+  // dismiss timer is armed exactly once on mount and is NOT reset on every parent re-render —
+  // otherwise a frequently-re-rendering parent (live listeners, typing/presence ticks, keystrokes)
+  // would keep clearing the timer and the toast would never dismiss.
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
 
   useEffect(() => {
     const timer = setTimeout(() => {
       setVisible(false);
-      onDone();
+      onDoneRef.current?.();
     }, duration * 1000);
     return () => clearTimeout(timer);
-  }, [duration, onDone]);
+  }, [duration]);
 
   if (!visible) return null;
 

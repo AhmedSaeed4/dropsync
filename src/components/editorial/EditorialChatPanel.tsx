@@ -22,6 +22,8 @@ import {
 import { subscribeToGroupMessages, sendGroupMessage, editGroupMessage, deleteGroupMessage, clearGroupChat, getSeenBy } from '@/lib/groupChat';
 import { useInPanelMarkRead } from '@/hooks/useInPanelMarkRead';
 import { useMentionEditor } from '@/hooks/useMentionEditor';
+import { useVoiceTranscribe } from '@/hooks/useVoiceTranscribe';
+import { Toast } from '../Toast';
 import { Drop, GroupChatMessage } from '@/types';
 import { getEditorialThemeColors } from './editorialTheme';
 import { EditorialDropPickerRow } from './EditorialDropPickerRow';
@@ -115,6 +117,22 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   // editMention is a single top-level instance (Rules of Hooks); its contentEditable renders only
   // for the message being edited (editingMsgId === msg.id).
   const editMention = useMentionEditor({ content: editDraft, setContent: setEditDraft, allDrops: workspaceDrops, foundClassName: mentionFoundClass, deletedClassName: mentionDeletedClass, memberClassName: mentionMemberClass });
+  // Voice-to-text mic — reuses the shared useVoiceTranscribe hook (extracted from TextModal).
+  // onTranscript APPENDS to the currently-shown composer. Editorial's AI input is a <textarea>
+  // (multi-line) so newlines are kept; the group composer is contentEditable (newlines → <br>).
+  // The hook stabilizes these callbacks via latest-refs, so a mode switch mid-recording still
+  // routes the transcript to the right composer.
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const voice = useVoiceTranscribe({
+    onTranscript: (text) => {
+      if (chatMode === 'group') {
+        setGroupInput((prev) => (prev ? prev + ' ' + text : text));
+      } else {
+        setInput((prev) => (prev ? prev + ' ' + text : text));
+      }
+    },
+    onError: setVoiceError,
+  });
 
   const [switchingConv, setSwitchingConv] = useState<string | null>(null);
   const [animateMessages, setAnimateMessages] = useState(false);
@@ -1341,6 +1359,30 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
             />
           )}
           <button
+            type="button"
+            onPointerDown={(e) => e.preventDefault()}
+            onClick={voice.toggle}
+            disabled={voice.isTranscribing}
+            aria-label={voice.isRecording ? 'Stop recording' : voice.isTranscribing ? 'Transcribing' : 'Voice to text'}
+            className={`w-10 h-10 shrink-0 flex items-center justify-center rounded-lg transition-colors ${
+              voice.isRecording
+                ? 'bg-red-500 text-white'
+                : voice.isTranscribing
+                  ? 'bg-[#1a1a1a] text-white opacity-50 cursor-wait'
+                  : 'bg-[#1a1a1a] text-white hover:bg-[#333]'
+            }`}
+          >
+            {voice.isTranscribing ? (
+              <div className="w-4 h-4 border border-current/30 border-t-current animate-spin rounded-full" />
+            ) : voice.isRecording ? (
+              <span className="w-3 h-3 bg-white rounded-sm" />
+            ) : (
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
+              </svg>
+            )}
+          </button>
+          <button
             onPointerDown={(e) => e.preventDefault()}
             onClick={chatMode === 'group' ? handleGroupSend : handleSend}
             disabled={chatMode === 'group' ? (groupSending || !groupInput.trim()) : (loading || !input.trim())}
@@ -1352,6 +1394,17 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
           </button>
         </div>
       </div>
+
+      {/* Voice-to-text failure toast */}
+      {voiceError && (
+        <Toast
+          message={voiceError}
+          duration={4}
+          theme={theme}
+          editorial={true}
+          onDone={() => setVoiceError(null)}
+        />
+      )}
 
       {/* Copied toast */}
       {copiedMsgId && (
