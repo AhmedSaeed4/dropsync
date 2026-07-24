@@ -80,6 +80,16 @@ html {
   background: transparent;
 }
 
+/* Editorial scrollbar hide: invisible bar but keep scrolling (wheel/trackpad/touch/keyboard).
+   Editorial-only class — does NOT affect classic or the document scrollbar. */
+.editorial-scroll-hide {
+  scrollbar-width: none;        /* Firefox */
+  -ms-overflow-style: none;     /* legacy IE/Edge */
+}
+.editorial-scroll-hide::-webkit-scrollbar {
+  display: none;                /* Chrome / Safari / Edge / Opera */
+}
+
 /* Line clamp utility */
 .line-clamp-3 {
   display: -webkit-box;
