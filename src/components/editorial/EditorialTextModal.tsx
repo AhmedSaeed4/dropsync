@@ -88,6 +88,9 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
   const [decryptingImage, setDecryptingImage] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  // Guards against a fast double-click during the getUserMedia/permission latency:
+  // a 2nd click would start a 2nd recorder and orphan the 1st (leaking its mic stream).
+  const startingRef = useRef(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const [mode, setMode] = useState<'text' | 'draw'>(
     isEditMode && editDrop?.isDrawing ? 'draw' : 'text'
@@ -343,6 +346,11 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
       return;
     }
 
+    // Ignore a fast 2nd click while the 1st is still acquiring the mic (permission-prompt
+    // latency) — otherwise the 2nd getUserMedia orphans the 1st recorder and leaks its stream.
+    if (startingRef.current) return;
+    startingRef.current = true;
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
@@ -391,8 +399,26 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
       setIsRecording(true);
     } catch (err) {
       console.error('Mic access denied:', err);
+    } finally {
+      startingRef.current = false;
     }
   }, [isRecording]);
+
+  // If the modal unmounts mid-recording (closed via X / backdrop / Cancel / hardware-back),
+  // stop the recorder so onstop fires and releases the mic tracks (turns the OS mic indicator
+  // off). (onstop may still run; setState on an unmounted component is a harmless no-op.)
+  useEffect(() => {
+    return () => {
+      const mr = mediaRecorderRef.current;
+      if (mr && mr.state !== 'inactive') {
+        try {
+          mr.stop();
+        } catch {
+          /* already stopped */
+        }
+      }
+    };
+  }, []);
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
