@@ -111,6 +111,10 @@ export function isReminderGlowingForViewer(
 // re-sort tick in useDrops relies on this. Order is SHARED (viewer-independent).
 export function sortDrops(drops: Drop[], now: Date): Drop[] {
   return [...drops].sort((a, b) => {
+    // Live calls pin ABOVE everything (a call is the most time-sensitive, interactive drop).
+    const al = a.type === 'call' ? 1 : 0;
+    const bl = b.type === 'call' ? 1 : 0;
+    if (al !== bl) return bl - al; // live-call tier first
     const af = isReminderFiredShared(a, now) ? 1 : 0;
     const bf = isReminderFiredShared(b, now) ? 1 : 0;
     if (af !== bf) return bf - af; // fired tier first
@@ -241,6 +245,10 @@ export function createDropListener(
           reminderSetByUid: data.reminderSetByUid || null,
           reminderDismissedBy: data.reminderDismissedBy || null,
           fileFormat: data.fileFormat,
+          callHostUid: data.callHostUid || undefined,
+          callStartedAt: data.callStartedAt?.toDate() || null,
+          callParticipantUids: data.callParticipantUids || undefined,
+          callState: data.callState || undefined,
         });
       }
     });
@@ -1136,6 +1144,9 @@ export async function moveDrop(
   resolvedCategories?: CategoryNameMap
 ): Promise<{ success: boolean; error?: string }> {
   try {
+    // A call is bound to its workspace (one-call-per-workspace, route-managed roster) and is a live
+    // shared state — it cannot be moved.
+    if (drop.type === 'call') return { success: false, error: 'Calls cannot be moved.' };
     // Step 1: Decrypt the drop to get plaintext
     const decrypted = await decryptDrop(drop, currentUserId);
     if (drop.encrypted && !decrypted.content && drop.type === 'text' && !drop.isDrawing) {
@@ -1453,6 +1464,8 @@ export async function copyDrop(
   resolvedCategories?: CategoryNameMap
 ): Promise<{ success: boolean; error?: string }> {
   try {
+    // A call is a live, shared, ephemeral workspace state — it cannot be duplicated.
+    if (drop.type === 'call') return { success: false, error: 'Calls cannot be copied.' };
     // Step 1: Decrypt the drop to get plaintext.
     const decrypted = await decryptDrop(drop, currentUserId);
     if (drop.encrypted && !decrypted.content && drop.type === 'text' && !drop.isDrawing) {
@@ -1788,6 +1801,9 @@ async function getUserDisplayName(userId: string): Promise<string | null> {
 
 // Decrypt a drop's content
 export async function decryptDrop(drop: Drop, currentUserId: string): Promise<Drop> {
+  // Call drops carry no encrypted content (no content/fileUrl/encrypted fields) — return as-is so
+  // they never enter the crypto/R2 path (which would no-op anyway, but this is explicit + fast).
+  if (drop.type === 'call') return drop;
   // If not encrypted, still need to fetch R2 files
   if (!drop.encrypted) {
     // Binary files live in R2 as real binary. Fetching them as TEXT (below) corrupts the bytes,

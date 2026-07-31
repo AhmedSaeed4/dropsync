@@ -28,9 +28,14 @@ interface DropListProps {
   workspaceMembers?: MemberInfo[];
   // Current space's drops — forwarded to DropItem for inline mention chips.
   allDrops?: Drop[];
+  // LIVE CALL — threaded to DropItem → LiveCallDropTile. onJoinCall dispatches to the page; members
+  // resolve the host avatar; isReopenCallId flips the button to "Reopen"; hoverable gates desktop.
+  onJoinCall?: (drop: Drop) => void;
+  isReopenCallId?: string;
+  hoverable?: boolean;
 }
 
-export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspaces = [], theme = 'light', currentUserId, categories = [], onDeleteCategory, currentWorkspace, workspaceMembers, allDrops = [] }: DropListProps) {
+export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspaces = [], theme = 'light', currentUserId, categories = [], onDeleteCategory, currentWorkspace, workspaceMembers, allDrops = [], onJoinCall, isReopenCallId, hoverable = false }: DropListProps) {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
@@ -132,7 +137,8 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
     if (drop.pinned) {
       await unpinDrop(drop.id);
     } else {
-      const pinnedCount = visibleDrops.filter(d => d.pinned).length;
+      // Call drops don't count toward the 2-pin limit (they're always-top, never pinned).
+      const pinnedCount = visibleDrops.filter(d => d.pinned && d.type !== 'call').length;
       if (pinnedCount >= 2) {
         setPinLimitToast(true);
         return;
@@ -476,6 +482,10 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
                   onPin={handlePinDrop}
                   onUnpin={handlePinDrop}
                   allDrops={allDrops}
+                  onJoinCall={onJoinCall}
+                  members={workspaceMembers}
+                  isReopenCallId={isReopenCallId}
+                  hoverable={hoverable}
                 />
               </div>
             ))

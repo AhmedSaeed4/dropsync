@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { createFileDrop, createTextDrop } from '@/lib/drops';
+import { startCallRoute } from '@/lib/callRoutes';
 import { useAuth } from '@/hooks/useAuth';
 import { useUserTier } from '@/hooks/useUserTier';
 import { TextModal } from './TextModal';
@@ -18,6 +19,9 @@ interface DropZoneProps {
   onCreateCategory?: (name: string) => Promise<string | null>;
   editModalOpen?: boolean;
   mentionableDrops?: Drop[];
+  // LIVE CALL: page handler invoked after the start route creates the call drop. Receives the
+  // callDropId + the preview stream (the mesh adopts the stream + joins).
+  onStartCall?: (callDropId: string, stream: MediaStream | null) => void;
 }
 
 const EXPIRATION_OPTIONS: { value: ExpirationOption; label: string }[] = [
@@ -36,6 +40,7 @@ export function DropZone({
   onCreateCategory,
   editModalOpen = false,
   mentionableDrops = [],
+  onStartCall,
 }: DropZoneProps) {
   const { user } = useAuth();
   const [isDragging, setIsDragging] = useState(false);
@@ -115,6 +120,24 @@ export function DropZone({
     await createTextDrop(user.uid, name, content, textExpiration, workspaceId, workspaceMembers, category, creatorName, imageFile, categories, isDrawing, locked, reminderAt ?? null);
     setUploading(false);
     setShowTextModal(false);
+  };
+
+  // LIVE CALL start — the host pressed Start in the TextModal's Call mode. The start route is the
+  // SOLE creator of a call drop (one-call-per-workspace enforced server-side on the deterministic
+  // doc id); on success, hand the callDropId + the preview stream up to the page so the mesh can
+  // adopt the stream + join. The modal closes regardless (Start owns the submit, not the form).
+  const handleStartCall = async (stream: MediaStream | null) => {
+    retractFooterIfUp();
+    if (!workspaceId || !user) return;
+    try {
+      const { callDropId } = await startCallRoute(workspaceId);
+      onStartCall?.(callDropId, stream);
+    } catch (err) {
+      console.error('Failed to start call:', err);
+      setError('Failed to start the call. Please try again.');
+    } finally {
+      setShowTextModal(false);
+    }
   };
 
   // Handle clipboard paste (Ctrl+V) for images
@@ -378,6 +401,7 @@ export function DropZone({
           onCreateCategory={onCreateCategory}
           mentionableDrops={mentionableDrops}
           isWorkspace={!!workspaceId}
+          onStartCall={handleStartCall}
         />
       )}
 

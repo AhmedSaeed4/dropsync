@@ -33,6 +33,10 @@ interface EditorialDropListProps {
   workspaceMembers?: MemberInfo[];
   // Current space's drops — forwarded to EditorialDropItem for inline mention chips.
   allDrops?: Drop[];
+  // LIVE CALL — threaded to EditorialDropItem → LiveCallDropTile.
+  onJoinCall?: (drop: Drop) => void;
+  isReopenCallId?: string;
+  hoverable?: boolean;
 }
 
 const BUILT_IN_CATEGORIES = [
@@ -165,6 +169,9 @@ export function EditorialDropList({
   currentWorkspace,
   workspaceMembers,
   allDrops = [],
+  onJoinCall,
+  isReopenCallId,
+  hoverable = false,
 }: EditorialDropListProps) {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -286,7 +293,8 @@ export function EditorialDropList({
     if (drop.pinned) {
       await unpinDrop(drop.id);
     } else {
-      const pinnedCount = visibleDrops.filter(d => d.pinned).length;
+      // Call drops don't count toward the 2-pin limit (they're always-top, never pinned).
+      const pinnedCount = visibleDrops.filter(d => d.pinned && d.type !== 'call').length;
       if (pinnedCount >= 2) {
         setPinLimitToast(true);
         return;
@@ -541,20 +549,23 @@ export function EditorialDropList({
       if (selectedCategory === 'uncategorized') return drop.type === 'text' && getCategories(drop).length === 0;
       return hasCategory(drop, selectedCategory);
     });
-    // Fired reminders always on top (earliest-fire-first). A pinned drop that fires moves UP into
-    // the fired tier, so fired is excluded from BOTH the pinned and unpinned buckets (no double-count).
+    // LIVE calls pin above everything (a 4th bucket). Each lower bucket excludes calls so a call
+    // never double-counts into fired/pinned/unpinned. THIS is the editorial footgun: sortDrops alone
+    // fixes classic, but editorial has its OWN bucket memo — without these exclusions + the live
+    // bucket, calls would silently land in the unpinned bucket and NOT sit above fired reminders.
+    const live = filtered.filter((d) => d.type === 'call');
     const fired = filtered
-      .filter((d) => isReminderFiredShared(d, now))
+      .filter((d) => isReminderFiredShared(d, now) && d.type !== 'call')
       .sort((a, b) => a.reminderAt!.getTime() - b.reminderAt!.getTime());
     const pinned = filtered
-      .filter((d) => d.pinned && !isReminderFiredShared(d, now))
+      .filter((d) => d.pinned && !isReminderFiredShared(d, now) && d.type !== 'call')
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
     const unpinned = sortUnpinned(
-      filtered.filter((d) => !d.pinned && !isReminderFiredShared(d, now)),
+      filtered.filter((d) => !d.pinned && !isReminderFiredShared(d, now) && d.type !== 'call'),
       sortMode,
       manualOrder
     );
-    return [...fired, ...pinned, ...unpinned];
+    return [...live, ...fired, ...pinned, ...unpinned];
   }, [visibleDrops, selectedCategory, searchQuery, mentionFilter, sortMode, manualOrder]);
 
   // Fresh `now` for the render-side fired filters + the per-viewer glow prop. Recomputed each render;
@@ -569,7 +580,7 @@ export function EditorialDropList({
     if (showMoveControls) {
       let i = 0;
       for (const d of filteredDrops) {
-        if (!d.pinned) m.set(d.id, i++);
+        if (!d.pinned && d.type !== 'call') m.set(d.id, i++);
       }
     }
     return m;
@@ -1045,6 +1056,27 @@ export function EditorialDropList({
           ) : enableDrag ? (
             <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
               <div className="p-3 space-y-2">
+                {/* LIVE call drops — top tier (above fired), not draggable */}
+                {filteredDrops.filter((d) => d.type === 'call').map((drop) => (
+                  <EditorialDropItem
+                    key={drop.id}
+                    drop={drop}
+                    onDelete={handleDeleteWithUndo}
+                    onPreview={onPreview}
+                    onEdit={onEdit}
+                    selected={selectedIds.has(drop.id)}
+                    onSelect={toggleSelect}
+                    selectionMode={selectionMode}
+                    theme={theme}
+                    currentUserId={currentUserId}
+                    canMutate={!!currentUserId && (currentUserId === drop.userId || (!!currentWorkspace && currentUserId === currentWorkspace.ownerId))}
+                    allDrops={allDrops}
+                    onJoinCall={onJoinCall}
+                    members={workspaceMembers}
+                    isReopenCallId={isReopenCallId}
+                    hoverable={hoverable}
+                  />
+                ))}
                 {/* Fired-reminder drops — top tier, not draggable */}
                 {filteredDrops.filter((d) => isReminderFiredShared(d, now)).map((drop) => (
                   <EditorialDropItem
@@ -1087,8 +1119,8 @@ export function EditorialDropList({
                 ))}
                 {/* Unpinned drops — sortable; drag starts from the grip handle. Fired drops are
                     excluded from the sortable set so a fired drop can't be dragged out of its top tier. */}
-                <SortableContext items={filteredDrops.filter((d) => !d.pinned && !isReminderFiredShared(d, now)).map((d) => d.id)} strategy={verticalListSortingStrategy}>
-                  {filteredDrops.filter((d) => !d.pinned && !isReminderFiredShared(d, now)).map((drop) => (
+                <SortableContext items={filteredDrops.filter((d) => !d.pinned && !isReminderFiredShared(d, now) && d.type !== 'call').map((d) => d.id)} strategy={verticalListSortingStrategy}>
+                  {filteredDrops.filter((d) => !d.pinned && !isReminderFiredShared(d, now) && d.type !== 'call').map((drop) => (
                     <SortableEditorialDropItem
                       key={drop.id}
                       drop={drop}
@@ -1139,6 +1171,10 @@ export function EditorialDropList({
                         onPin={handlePinDrop}
                         onUnpin={handlePinDrop}
                         allDrops={allDrops}
+                        onJoinCall={onJoinCall}
+                        members={workspaceMembers}
+                        isReopenCallId={isReopenCallId}
+                        hoverable={hoverable}
                         showMoveControls={moveIdx !== undefined}
                         canMoveUp={moveIdx !== undefined && moveIdx > 0}
                         canMoveDown={moveIdx !== undefined && moveIdx < manualCount - 1}
@@ -1171,6 +1207,10 @@ export function EditorialDropList({
                     onPin={handlePinDrop}
                     onUnpin={handlePinDrop}
                     allDrops={allDrops}
+                    onJoinCall={onJoinCall}
+                    members={workspaceMembers}
+                    isReopenCallId={isReopenCallId}
+                    hoverable={hoverable}
                     showMoveControls={moveIdx !== undefined}
                     canMoveUp={moveIdx !== undefined && moveIdx > 0}
                     canMoveDown={moveIdx !== undefined && moveIdx < manualCount - 1}

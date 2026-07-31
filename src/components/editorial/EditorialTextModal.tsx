@@ -13,6 +13,8 @@ import { decryptDrop, updateDropMetadata, getExpirationDate, formatReminderFire 
 import { dedupeCategoryNames } from '@/lib/categories';
 import { DrawingCanvas, BG_COLORS } from '../DrawingCanvas';
 import { EditorialDropPickerRow } from './EditorialDropPickerRow';
+import { CallStartScreen } from '../call/CallStartScreen';
+import { useIsHoverable } from '@/hooks/useIsHoverable';
 import { useMentionEditor } from '@/hooks/useMentionEditor';
 import { useReminder, REMINDER_PRESETS } from '@/hooks/useReminder';
 import { useNow } from '@/hooks/useNow';
@@ -29,6 +31,9 @@ interface EditorialTextModalProps {
   currentUserId?: string;
   // Drops in the current space, used for the #-mention autocomplete in the content field.
   mentionableDrops?: Drop[];
+  // LIVE CALL mode (create only): fired with the preview stream (ownership handed off to the mesh)
+  // when the host presses Start. DropZone.handleStartCall does the route call; this bubbles the stream.
+  onStartCall?: (stream: MediaStream | null) => void;
   // Whether the create flow is for a shared workspace (the lock toggle is workspace-only).
   isWorkspace?: boolean;
   // Creator/workspace owner — may toggle the lock on an existing workspace drop in edit mode.
@@ -48,11 +53,14 @@ const BUILT_IN_CATEGORIES = [
   { value: 'link', label: 'Link' },
 ];
 
-export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customCategories = [], onCreateCategory, editDrop, onEdit, currentUserId, mentionableDrops = [], isWorkspace = false, canMutate = false }: EditorialTextModalProps) {
+export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customCategories = [], onCreateCategory, editDrop, onEdit, currentUserId, mentionableDrops = [], isWorkspace = false, canMutate = false, onStartCall }: EditorialTextModalProps) {
   useBodyScrollLock();
   useModalBackClose(true, onClose);
   const isEditMode = !!editDrop;
   const isFileDrop = isEditMode && editDrop?.type === 'file';
+  // Live calls are desktop-only — the Call mode + its Start button gate on this (useIsHoverable, NOT
+  // a width breakpoint; defaults false pre-mount/SSR so mobile never sees a half-open call modal).
+  const hoverable = useIsHoverable();
   // Show the toggle for a new shared-workspace drop, or when editing one as creator/owner
   // (canMutate). Personal drops and non-creator edits never show it.
   const showLockToggle = (!isEditMode && isWorkspace) || (isEditMode && canMutate && !!editDrop?.workspaceId);
@@ -92,7 +100,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
   // a 2nd click would start a 2nd recorder and orphan the 1st (leaking its mic stream).
   const startingRef = useRef(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
-  const [mode, setMode] = useState<'text' | 'draw'>(
+  const [mode, setMode] = useState<'text' | 'draw' | 'call'>(
     isEditMode && editDrop?.isDrawing ? 'draw' : 'text'
   );
   const [bgColor, setBgColor] = useState('#ffffff');
@@ -480,7 +488,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
         {/* Header */}
         <div className={`border-b ${tc.border} px-5 py-4 flex items-center justify-between`}>
           <h2 className={`${tc.fontClass} ${tc.text} font-medium text-[15px]`}>
-            {isFileDrop ? 'Edit file' : isEditMode ? 'Edit drop' : 'Add text snippet'}
+            {mode === 'call' ? 'Start call' : isFileDrop ? 'Edit file' : isEditMode ? 'Edit drop' : 'Add text snippet'}
           </h2>
           <button
             onClick={onClose}
@@ -493,6 +501,16 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
         </div>
 
         <form onSubmit={handleSubmit} className="flex flex-col min-h-0 flex-1">
+          {mode === 'call' && !isEditMode ? (
+            <div className="flex-1 overflow-y-auto p-5 space-y-4">
+              <div className="flex gap-2">
+                <button type="button" onClick={() => handleModeSwitch('text')} className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${tc.fontClass} ${tc.border} ${tc.text} hover:border-[#1a1a1a]`}>Text</button>
+                <button type="button" onClick={() => handleModeSwitch('draw')} className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${tc.fontClass} ${tc.border} ${tc.text} hover:border-[#1a1a1a]`}>Draw</button>
+                <button type="button" disabled className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${tc.fontClass} ${tc.activePillBg} ${tc.activePillText} border-[#1a1a1a]`}>Call</button>
+              </div>
+              <CallStartScreen theme={theme} variant="editorial" hoverable={hoverable} onStart={(s) => onStartCall?.(s)} />
+            </div>
+          ) : (
           <div className="flex-1 overflow-y-auto p-5 space-y-4">
             {/* Category Selection */}
             <div>
@@ -632,6 +650,22 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
                     <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487z" />
                   </svg>
                   Draw
+                </button>
+                <button
+                  type="button"
+                  disabled={!hoverable}
+                  title={hoverable ? 'Start a live call' : 'Calls are desktop-only'}
+                  onClick={() => { setDrawingFile(null); setHasDrawn(false); setMode('call'); }}
+                  className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${tc.fontClass} ${
+                    mode === 'call'
+                      ? `${tc.activePillBg} ${tc.activePillText} border-[#1a1a1a]`
+                      : `${tc.border} ${tc.text} hover:border-[#1a1a1a]`
+                  } disabled:opacity-40 disabled:cursor-not-allowed`}
+                >
+                  <svg className="w-3.5 h-3.5 inline-block mr-1 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 6.75c0 8.284 6.716 15 15 15h2.25a2.25 2.25 0 002.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106c-.44-.11-.902.055-1.173.417l-.97 1.293c-.282.376-.769.542-1.21.38a12.035 12.035 0 01-7.143-7.143c-.162-.441.004-.928.38-1.21l1.293-.97c.363-.271.527-.734.417-1.173L6.963 3.102a1.125 1.125 0 00-1.091-.852H4.5A2.25 2.25 0 002.25 4.5v2.25z" />
+                  </svg>
+                  Call
                 </button>
               </div>
             </div>
@@ -1059,6 +1093,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
               </button>
             </div>
           </div>
+          )}
         </form>
       </div>
       {showForeverLocked && (

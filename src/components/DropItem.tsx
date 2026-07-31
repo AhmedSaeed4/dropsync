@@ -11,6 +11,8 @@ import { useVideoThumbnail } from '@/hooks/useVideoThumbnail';
 import { DropContextMenu, useContextMenu } from './DropContextMenu';
 import { LockedHintTooltip } from './LockedHintTooltip';
 import { LockedActionButton } from './LockedActionButton';
+import { LiveCallDropTile } from './call/LiveCallDropTile';
+import type { MemberInfo } from '@/lib/workspaces';
 
 interface DropItemProps {
   drop: Drop;
@@ -31,6 +33,13 @@ interface DropItemProps {
   // Reminder glow (viewer-dependent) — turns the title coral + shows a clock badge. Computed by the
   // parent list via isReminderGlowingForViewer so this item stays presentational.
   reminderGlow?: boolean;
+  // LIVE CALL — a call drop renders ONLY a LiveCallDropTile (no normal row). onJoinCall dispatches
+  // to the page's join handler; members resolve the host avatar; isReopenCallId (the viewer's own
+  // active minimized call id, or undefined) flips the button to "Reopen"; hoverable gates desktop.
+  onJoinCall?: (drop: Drop) => void;
+  members?: MemberInfo[];
+  isReopenCallId?: string;
+  hoverable?: boolean;
 }
 
 function isTextFile(drop: Drop): boolean {
@@ -54,7 +63,7 @@ function getFileContent(drop: Drop): string {
   return '';
 }
 
-export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect, selectionMode, theme = 'light', currentUserId, onPin, onUnpin, allDrops = [], canMutate = false, reminderGlow = false }: DropItemProps) {
+export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect, selectionMode, theme = 'light', currentUserId, onPin, onUnpin, allDrops = [], canMutate = false, reminderGlow = false, onJoinCall, members = [], isReopenCallId, hoverable = false }: DropItemProps) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [copied, setCopied] = useState(false);
   const [decryptedContent, setDecryptedContent] = useState<string>('');
@@ -133,6 +142,9 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
 
   const handleShare = async (e: React.MouseEvent) => {
     e.stopPropagation();
+    // A call drop has nothing to share (and never reaches the share button — it early-returns the
+    // LiveCallDropTile). The guard also narrows drop.type to 'file'|'text' for createShare below.
+    if (drop.type === 'call') return;
     setIsSharing(true);
     try {
       const result = await createShare({
@@ -294,6 +306,24 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
   const chipBase = `inline-flex items-center mx-0.5 px-1.5 py-0.5 align-middle text-[11px] ${isMinimal ? 'rounded-full font-sans' : 'font-mono'}`;
   const mentionFoundClass = `${chipBase} ${tc.selectedBg} text-white hover:opacity-80`;
   const mentionDeletedClass = `${chipBase} bg-[#1A1A1A]/10 ${tc.textMuted} line-through cursor-not-allowed`;
+
+  // A call drop renders ONLY the live-call tile — no normal row, no PIN/lock badges, no selection
+  // checkbox, no preview. This early return IS the type-discrimination (call → onJoinCall via the
+  // tile; everything else → the normal row's onPreview below).
+  if (drop.type === 'call') {
+    return (
+      <LiveCallDropTile
+        drop={drop}
+        theme={theme}
+        variant="classic"
+        hoverable={hoverable}
+        members={members}
+        isReopen={isReopenCallId === drop.id}
+        onJoin={() => onJoinCall?.(drop)}
+        onMobileTap={() => onJoinCall?.(drop)}
+      />
+    );
+  }
 
   return (
     <div

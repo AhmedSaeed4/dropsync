@@ -7,7 +7,7 @@ export interface User {
   providerId?: 'password' | 'google.com';
 }
 
-export type ExpirationOption = '1h' | '2h' | '6h' | '24h' | 'forever';
+export type ExpirationOption = '1h' | '2h' | '4h' | '6h' | '24h' | 'forever';
 
 export interface Workspace {
   id: string;
@@ -21,7 +21,7 @@ export interface Workspace {
 export interface Drop {
   id: string;
   userId: string;
-  type: 'file' | 'text';
+  type: 'file' | 'text' | 'call';
   name: string;
   content?: string;
   fileData?: string; // base64 encoded file (encrypted if encrypted=true) - KEEP for backward compatibility
@@ -67,6 +67,16 @@ export interface Drop {
   // Storage format flag. 'binary' = the R2 object is real binary (streamable); absence (legacy)
   // = data-URI text the player must fetch + decode. Only set on NEW unencrypted large files.
   fileFormat?: 'binary';
+  // ---- Call-drop-only fields (type === 'call'). A call drop carries NO content/fileUrl/
+  // encrypted/pinned/locked/reminderAt/categories (those stay undefined). callHostUid is DISPLAY
+  // ONLY (the host name reuses creatorName). callStartedAt (serverTimestamp) drives the "LIVE · Xm"
+  // age. callParticipantUids is the roster mirror (drop-card count + mesh peer list) AND the
+  // single Firestore field the rules + routes key on. callState is 'live' while active
+  // (route-managed; clients never write the call doc). See lib/liveCallSignaling + /api/call/*.
+  callHostUid?: string;
+  callStartedAt?: Date | null;
+  callParticipantUids?: string[];
+  callState?: string;
 }
 
 export interface Category {
