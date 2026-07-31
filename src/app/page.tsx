@@ -8,6 +8,9 @@ import { useDrops } from '@/hooks/useDrops';
 import { useWorkspaces } from '@/hooks/useWorkspaces';
 import { useCategories } from '@/hooks/useCategories';
 import { usePresence } from '@/hooks/usePresence';
+import { useLiveKitCall } from '@/hooks/useLiveKitCall';
+import { useIsHoverable } from '@/hooks/useIsHoverable';
+import { LiveCallMinimizedPill } from '@/components/call/LiveCallMinimizedPill';
 import { ClassicLayout } from '@/components/layouts/ClassicLayout';
 import { EditorialLayout } from '@/components/editorial/EditorialLayout';
 import { EditorialAuthModal } from '@/components/editorial/EditorialAuthModal';
@@ -145,6 +148,15 @@ export default function Home() {
   // Self-excludes; threaded down to both chat panels as the `presence` prop. MUST stay above all
   // early returns (Rules of Hooks) — it self-guards when user/workspace are null.
   const presenceMap = usePresence(user?.uid || null, currentWorkspaceId);
+
+  // ---- Live calls ---- desktop-only (useIsHoverable, NOT a width breakpoint; defaults false
+  // pre-mount/SSR). activeCallDrop + callMinimized are page-level so the call survives the modal
+  // unmounting on minimize; useCallMesh (below) is keyed on callDropId so a call survives a
+  // workspace switch. Declared here (above early returns) so the Rules of Hooks hold.
+  const hoverable = useIsHoverable();
+  const [activeCallDrop, setActiveCallDrop] = useState<Drop | null>(null);
+  const [callMinimized, setCallMinimized] = useState(false);
+  const [callNotice, setCallNotice] = useState<string | null>(null);
 
   // Modal states
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -459,6 +471,84 @@ export default function Home() {
 
   // Get workspace members for encryption
   const workspaceMembers = currentWorkspace?.members || [];
+
+  // Page-level call mesh — called ONCE above all early returns (like usePresence). Keyed on the call
+  // drop id (NOT workspaceId) so a call survives a workspace switch; media persists across modal
+  // minimize/unmount because this hook never unmounts with the modal.
+  const callState = useLiveKitCall({
+    userId: user?.uid ?? null,
+    callDropId: activeCallDrop?.id ?? null,
+    workspaceMembers: resolvedWorkspaceMembers,
+    isDesktop: hoverable,
+  });
+
+  // Host pressed Start in the create-modal's Call mode. Adopt the preview stream (no camera blink),
+  // set the active call drop (the real doc hydrates via createDropListener within ~1s), and join.
+  const handleStartCall = async (callDropId: string, stream: MediaStream | null) => {
+    if (!user) return;
+    retractFooterIfUp();
+    callState.adoptPreviewStream(stream);
+    const hostName = user.displayName || user.email?.split('@')[0] || 'Host';
+    setActiveCallDrop({
+      id: callDropId,
+      userId: user.uid,
+      type: 'call',
+      name: 'Live call',
+      creatorName: hostName,
+      callHostUid: user.uid,
+      callParticipantUids: [user.uid],
+      workspaceId: currentWorkspaceId,
+      callState: 'live',
+      createdAt: new Date(),
+      callStartedAt: new Date(),
+      expiresAt: new Date(Date.now() + 4 * 60 * 60 * 1000),
+      expirationOption: '4h',
+    });
+    setCallMinimized(false);
+    try {
+      await callState.joinCall(callDropId);
+    } catch {
+      setActiveCallDrop(null);
+    }
+  };
+
+  // A member clicked the call drop's Join. Desktop-only is checked up front; capacity is NOT — the
+  // route is the sole enforcer because it first reconciles the roster against LiveKit (dropping ghosts
+  // from hard-killed tabs), so a stale client-side count could wrongly block a real joiner. The 409
+  // (genuinely full) is toasted from the catch below.
+  const handleJoinCall = async (drop: Drop) => {
+    if (!user) return;
+    if (!hoverable) {
+      setCallNotice('🔒 Live calls are desktop-only — please join from a computer.');
+      return;
+    }
+    retractFooterIfUp();
+    setActiveCallDrop(drop);
+    setCallMinimized(false);
+    try {
+      await callState.joinCall(drop.id);
+    } catch (e) {
+      setActiveCallDrop(null);
+      setCallNotice(e instanceof Error ? e.message : 'Failed to join the call.');
+    }
+  };
+
+  const handleMinimizeCall = () => {
+    retractFooterIfUp();
+    setCallMinimized(true);
+  };
+  const handleRestoreCall = () => {
+    retractFooterIfUp();
+    setCallMinimized(false);
+  };
+  const handleLeaveCall = async () => {
+    await callState.leaveCall();
+    setActiveCallDrop(null);
+    setCallMinimized(false);
+  };
+
+  // The drop id of the viewer's own active, minimized call (flips that call's tile button to "Reopen").
+  const reopenCallDropId = activeCallDrop && callMinimized ? activeCallDrop.id : undefined;
 
   // Resolve workspace member display names for @mention search
   useEffect(() => {
@@ -1910,6 +2000,12 @@ export default function Home() {
     signOutUser, updateDisplayName, reauthenticateUser,
     editDrop, setEditDrop, handleEditDrop, handleEditSubmit,
     presenceMap,
+    hoverable,
+    activeCallDrop, callMinimized, callState, reopenCallDropId,
+    onStartCall: handleStartCall,
+    onJoinCall: handleJoinCall,
+    onMinimizeCall: handleMinimizeCall,
+    onLeaveCall: handleLeaveCall,
   };
 
   const transitionClass = layoutTransition === 'fade-out'
@@ -1924,6 +2020,22 @@ export default function Home() {
         {layoutMode === 'editorial' ? <EditorialLayout {...layoutProps} /> : <ClassicLayout {...layoutProps} />}
       </div>
       {footerActive && <Footer onHideFooter={onHideFooter} />}
+      {activeCallDrop && callMinimized && hoverable && (
+        <LiveCallMinimizedPill
+          workspaceName={currentWorkspace?.name || 'Live call'}
+          theme={theme}
+          variant={layoutMode === 'editorial' ? 'editorial' : 'classic'}
+          onRestore={handleRestoreCall}
+        />
+      )}
+      {callNotice && (
+        <Toast
+          message={callNotice}
+          theme={theme}
+          editorial={layoutMode === 'editorial'}
+          onDone={() => setCallNotice(null)}
+        />
+      )}
       {removedNotice && (
         <Toast
           message={removedNotice}

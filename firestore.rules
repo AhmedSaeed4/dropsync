@@ -270,12 +270,16 @@ service cloud.firestore {
     // Drops collection
     match /drops/{dropId} {
       // Create - must be authenticated, own the drop, be trusted to make it last forever, AND be a
-      // member of the target workspace. Personal drops (workspaceId == null) are unaffected.
+      // member of the target workspace. Personal drops (workspaceId == null) are unaffected. Call
+      // drops are created ONLY by /api/call/start (Admin SDK, bypasses rules) — block any client
+      // create of type 'call' so a raw-SDK member can't mint a rogue call drop that escapes the
+      // one-call-per-workspace + capacity-4 invariants the route enforces (§3: "NEVER client-side").
       allow create: if request.auth != null
         && request.auth.uid == request.resource.data.userId
         && (!isForeverWrite() || isTrusted())
         && (request.resource.data.workspaceId == null
-            || request.auth.uid in get(/databases/$(database)/documents/workspaces/$(request.resource.data.workspaceId)).data.members);
+            || request.auth.uid in get(/databases/$(database)/documents/workspaces/$(request.resource.data.workspaceId)).data.members)
+        && request.resource.data.type != 'call';
 
       // Read - authenticated users can read their own drops or workspace drops they're a member of
       allow read: if request.auth != null && (
@@ -285,19 +289,66 @@ service cloud.firestore {
       );
 
       // Update - creator/owner always; a member only if the drop is NOT locked; forever writes still
-      // require a trusted tier; only creator/owner may touch the locked field.
+      // require a trusted tier; only creator/owner may touch the locked field. Call drops are NEVER
+      // client-updatable — liveness lives in callPresence/{uid}.lastSeen and the roster/callState
+      // are route-only (the Admin route bypasses rules). Block ALL client updates to a call drop.
       allow update: if request.auth != null
         && (canMutateDrop() || (!isLockedDrop() && isDropWorkspaceMember()))
         && (!isForeverWrite() || isTrusted())
-        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['locked']) || canMutateDrop());
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['locked']) || canMutateDrop())
+        && !(resource.data.type == 'call');
 
       // Delete - creator/owner always; a member may delete an open drop OR an already-expired drop
       // (so cleanup can remove dead locked drops when only members are online). Live locked + forever
-      // drops stay protected.
+      // drops stay protected. A LIVE call drop is NEVER client-deletable — the leave route owns
+      // deletion (last-leave cascade). The ONE exception: an EXPIRED call (the 4h static backstop
+      // has passed) MAY be client-deleted so cleanupExpiredDrops can reap a total-zombie call where
+      // everyone crashed (§5). (Without this, the §4 client-delete block + §5's "no sweeper edit"
+      // would leave zombie calls undeletable forever.) Subcollection orphans from this rare path are
+      // Admin-only to cascade (noted in the report).
       allow delete: if request.auth != null && (
         canMutateDrop()
         || (isDropWorkspaceMember() && (!isLockedDrop() || isExpiredDrop()))
-      );
+      ) && (resource.data.type != 'call' || isExpiredDrop());
+
+      // ---- Live-call signaling (per peer pair) ---- SDP offer/answer + coalesced ICE candidates
+      // for one pair in a call drop's full mesh. Both ends are authenticated members of the call's
+      // workspace AND listed in the call's roster (callParticipantUids). WebRTC-correct (an offer is
+      // FROM one peer TO another) AND quota-minimal (≤6 pair docs for a 4-person mesh; ICE coalesces
+      // via arrayUnion into two arrays, never one addDoc per candidate). The Admin leave route
+      // cascades these (bypasses rules); clients never delete. Field allowlist on UPDATE keeps a
+      // member from writing anything beyond the signaling keys.
+      match /callSignals/{pairId} {
+        function isCallMember() {
+          return request.auth != null
+            && exists(/databases/$(database)/documents/drops/$(dropId))
+            && get(/databases/$(database)/documents/drops/$(dropId)).data.type == 'call'
+            && request.auth.uid in get(/databases/$(database)/documents/drops/$(dropId)).data.callParticipantUids;
+        }
+        allow read, create: if isCallMember();
+        allow update: if isCallMember()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['offerA', 'offerB', 'answerA', 'answerB', 'candidatesFromA', 'candidatesFromB', 'politeRole', 'updatedAt']);
+        allow delete: if false;
+      }
+
+      // ---- Live-call presence (per-participant heartbeat) ---- lastSeen is a serverTimestamp
+      // SENTINEL (never a client Date — dodges the cross-device clock-skew bug already fixed for
+      // workspace presence/typing/seen-by). Each participant writes ONLY their own doc (self-only)
+      // and ONLY the lastSeen field. reap-stale/leave routes delete these (bypass rules).
+      match /callPresence/{uid} {
+        function isCallPresenceMember() {
+          return request.auth != null
+            && exists(/databases/$(database)/documents/drops/$(dropId))
+            && get(/databases/$(database)/documents/drops/$(dropId)).data.type == 'call'
+            && request.auth.uid in get(/databases/$(database)/documents/drops/$(dropId)).data.callParticipantUids;
+        }
+        allow read: if isCallPresenceMember();
+        allow create: if isCallPresenceMember() && request.auth.uid == uid;
+        allow update: if isCallPresenceMember()
+          && request.auth.uid == uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastSeen']);
+        allow delete: if false;
+      }
     }
 
     // Categories collection. Read/create -> the creator OR, for workspace categories, a member of

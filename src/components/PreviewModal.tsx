@@ -169,6 +169,8 @@ export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false
   const youtubeVideoId = textContent ? getYouTubeVideoId(textContent) : null;
 
   const handleShare = async () => {
+    // A call drop has nothing to share (calls never reach PreviewModal — DropItem dispatches them).
+    if (drop.type === 'call') return;
     setIsSharing(true);
     try {
       const result = await createShare({
@@ -261,7 +263,11 @@ export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false
         <div className={`border-b ${tc.borderColor} px-6 py-4 flex items-center justify-between ${tc.headerBg}`}>
           <div className="flex items-center gap-4">
             <div className={`w-10 h-10 border ${isMinimal ? 'border-white/30 rounded-lg' : 'border-white/30'} flex items-center justify-center`}>
-              {drop.type === 'text' ? (
+              {drop.type === 'call' ? (
+                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 6.75c0 8.284 6.716 15 15 15h2.25a2.25 2.25 0 002.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106c-.44-.11-.902.055-1.173.417l-.97 1.293c-.282.376-.769.542-1.21.38a12.035 12.035 0 01-7.143-7.143c-.162-.441.004-.928.38-1.21l1.293-.97c.363-.271.527-.734.417-1.173L6.963 3.102a1.125 1.125 0 00-1.091-.852H4.5A2.25 2.25 0 002.25 4.5v2.25z" />
+                </svg>
+              ) : drop.type === 'text' ? (
                 <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
                   <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>

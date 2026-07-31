@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect, Fragment } from 'react';
 import { createFileDrop, createTextDrop } from '@/lib/drops';
+import { startCallRoute } from '@/lib/callRoutes';
 import { useAuth } from '@/hooks/useAuth';
 import { useUserTier } from '@/hooks/useUserTier';
 import { EditorialTextModal } from './EditorialTextModal';
@@ -22,6 +23,9 @@ interface EditorialDropZoneProps {
   onToggleChat?: () => void;
   unreadCount?: number;
   mentionableDrops?: Drop[];
+  // LIVE CALL: page handler invoked after the start route creates the call drop. Receives the
+  // callDropId + the preview stream (the mesh adopts the stream + joins).
+  onStartCall?: (callDropId: string, stream: MediaStream | null) => void;
 }
 
 // Richer upload state for the editorial dropzone: idle, a live-uploading view carrying real byte
@@ -52,6 +56,7 @@ export function EditorialDropZone({
   onToggleChat,
   unreadCount = 0,
   mentionableDrops = [],
+  onStartCall,
 }: EditorialDropZoneProps) {
   const { user } = useAuth();
   const [isDragging, setIsDragging] = useState(false);
@@ -222,6 +227,23 @@ export function EditorialDropZone({
       setUploadState({ status: 'done' });
     } catch {
       setUploadState({ status: 'error', message: 'Failed to create text drop. Please try again.' });
+    } finally {
+      setShowTextModal(false);
+    }
+  };
+
+  // LIVE CALL start — the host pressed Start in the TextModal's Call mode. The start route is the
+  // SOLE creator of a call drop (one-call-per-workspace enforced server-side); on success, hand the
+  // callDropId + the preview stream up to the page so the mesh can adopt the stream + join.
+  const handleStartCall = async (stream: MediaStream | null) => {
+    retractFooterIfUp();
+    if (!workspaceId || !user) return;
+    try {
+      const { callDropId } = await startCallRoute(workspaceId);
+      onStartCall?.(callDropId, stream);
+    } catch (err) {
+      console.error('Failed to start call:', err);
+      setUploadState({ status: 'error', message: 'Failed to start the call. Please try again.' });
     } finally {
       setShowTextModal(false);
     }
@@ -547,6 +569,7 @@ export function EditorialDropZone({
           onCreateCategory={onCreateCategory}
           mentionableDrops={mentionableDrops}
           isWorkspace={!!workspaceId}
+          onStartCall={handleStartCall}
         />
       )}
 

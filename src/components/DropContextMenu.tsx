@@ -16,12 +16,17 @@ interface DropContextMenuProps {
   // hide the option rather than show an action that fails silently.
   locked?: boolean;
   canMutate?: boolean;
+  // Call drops can't be pinned (they're always-top; the rules block it). Defense-in-depth: a call
+  // drop's context menu is normally unreachable (DropItem early-returns the LiveCallDropTile), but
+  // suppress Pin here too so a call doc reaching this menu never shows a dead Pin action.
+  isCall?: boolean;
 }
 
-export function DropContextMenu({ x, y, isPinned, onPin, onUnpin, onClose, theme = 'light', editorial, locked = false, canMutate = false }: DropContextMenuProps) {
+export function DropContextMenu({ x, y, isPinned, onPin, onUnpin, onClose, theme = 'light', editorial, locked = false, canMutate = false, isCall = false }: DropContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
-  // Pin/unpin is a mutation the Firestore rules reject for a non-creator on a locked drop.
-  const pinBlocked = locked && !canMutate;
+  // Pin/unpin is a mutation the Firestore rules reject for a non-creator on a locked drop, and call
+  // drops can't be pinned at all (always-top; rules block it).
+  const pinBlocked = (locked && !canMutate) || isCall;
   const [adjustedPos, setAdjustedPos] = useState({ x, y });
 
   // Adjust position so menu doesn't overflow viewport

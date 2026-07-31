@@ -22,6 +22,8 @@ import { useModalBackClose } from '@/hooks/useModalBackClose';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { moveDrop, copyDrop } from '@/lib/drops';
 import { ensureCategoriesForTarget } from '@/lib/categories';
+import { LiveCallModal } from '@/components/call/LiveCallModal';
+import type { CallMeshState } from '@/hooks/useLiveKitCall';
 
 type Theme = 'light' | 'dark' | 'minimal';
 type LayoutMode = 'classic' | 'editorial';
@@ -117,6 +119,16 @@ interface ClassicLayoutProps {
   setEditDrop: (d: Drop | null) => void;
   handleEditDrop: (drop: Drop) => void;
   handleEditSubmit: (drop: Drop, updates: { name?: string; content?: string; category?: string | null; expirationOption?: ExpirationOption; imageFile?: File | null; imageRemoved?: boolean; locked?: boolean }) => Promise<boolean>;
+  // LIVE CALL
+  hoverable: boolean;
+  activeCallDrop: Drop | null;
+  callMinimized: boolean;
+  callState: CallMeshState;
+  reopenCallDropId?: string;
+  onStartCall: (callDropId: string, stream: MediaStream | null) => void;
+  onJoinCall: (drop: Drop) => void;
+  onMinimizeCall: () => void;
+  onLeaveCall: () => void;
 }
 
 export function ClassicLayout(props: ClassicLayoutProps) {
@@ -152,6 +164,8 @@ export function ClassicLayout(props: ClassicLayoutProps) {
     signIn, emailSignIn, signUp, resetPassword, resendVerification,
     signOutUser, updateDisplayName, reauthenticateUser,
     editDrop, setEditDrop, handleEditDrop, handleEditSubmit,
+    hoverable, activeCallDrop, callMinimized, callState, reopenCallDropId,
+    onStartCall, onJoinCall, onMinimizeCall, onLeaveCall,
   } = props;
 
   // Ref to always access the latest drops value (avoids stale closure issues)
@@ -282,6 +296,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
                 onCreateCategory={handleCreateCategory}
                 editModalOpen={!!editDrop}
                 mentionableDrops={drops}
+                onStartCall={onStartCall}
               />
             </section>
             <section>
@@ -299,6 +314,9 @@ export function ClassicLayout(props: ClassicLayoutProps) {
                 currentWorkspace={currentWorkspace}
                 workspaceMembers={resolvedWorkspaceMembers}
                 allDrops={drops}
+                onJoinCall={onJoinCall}
+                isReopenCallId={reopenCallDropId}
+                hoverable={hoverable}
               />
             </section>
           </div>
@@ -402,6 +420,33 @@ export function ClassicLayout(props: ClassicLayoutProps) {
           allDrops={drops}
           onPreview={handlePreview}
           currentUserId={user?.uid}
+        />
+      )}
+
+      {/* Live Call Modal — rendered alongside PreviewModal when a call is active + not minimized */}
+      {activeCallDrop && !callMinimized && (
+        <LiveCallModal
+          drop={activeCallDrop}
+          variant="classic"
+          theme={theme}
+          hoverable={hoverable}
+          status={callState.status}
+          participantUids={callState.participantUids}
+          localStream={callState.localStream}
+          localScreenStream={callState.localScreenStream}
+          remoteStreams={callState.remoteStreams}
+          remoteScreenStreams={callState.remoteScreenStreams}
+          micEnabled={callState.micEnabled}
+          cameraEnabled={callState.cameraEnabled}
+          cameraAvailable={callState.cameraAvailable}
+          screenSharing={callState.screenSharing}
+          members={resolvedWorkspaceMembers}
+          currentUserId={user?.uid}
+          onMinimize={onMinimizeCall}
+          onLeave={onLeaveCall}
+          onToggleMic={callState.toggleMic}
+          onToggleCamera={callState.toggleCamera}
+          onToggleScreenShare={callState.toggleScreenShare}
         />
       )}
 

@@ -12,6 +12,8 @@ import { getEditorialThemeColors } from './editorialTheme';
 import { DropContextMenu, useContextMenu } from '../DropContextMenu';
 import { LockedHintTooltip } from '../LockedHintTooltip';
 import { LockedActionButton } from '../LockedActionButton';
+import { LiveCallDropTile } from '../call/LiveCallDropTile';
+import type { MemberInfo } from '@/lib/workspaces';
 
 interface EditorialDropItemProps {
   drop: Drop;
@@ -42,6 +44,11 @@ interface EditorialDropItemProps {
   // Reminder glow (viewer-dependent) — adds the rainbow title animation + a clock badge. Computed by
   // the parent list via isReminderGlowingForViewer so this item stays presentational.
   reminderGlow?: boolean;
+  // LIVE CALL — a call drop renders ONLY a LiveCallDropTile (no normal row).
+  onJoinCall?: (drop: Drop) => void;
+  members?: MemberInfo[];
+  isReopenCallId?: string;
+  hoverable?: boolean;
 }
 
 function isTextFile(drop: Drop): boolean {
@@ -171,6 +178,10 @@ export const EditorialDropItem = memo(function EditorialDropItem({
   allDrops = [],
   canMutate = false,
   reminderGlow = false,
+  onJoinCall,
+  members = [],
+  isReopenCallId,
+  hoverable = false,
 }: EditorialDropItemProps) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -304,6 +315,9 @@ export const EditorialDropItem = memo(function EditorialDropItem({
 
   const handleShare = async (e: React.MouseEvent) => {
     e.stopPropagation();
+    // A call drop has nothing to share (and never reaches the share button — it early-returns the
+    // LiveCallDropTile). Narrows drop.type to 'file'|'text' for createShare below.
+    if (drop.type === 'call') return;
     setIsSharing(true);
     try {
       const result = await createShare({
@@ -435,6 +449,23 @@ export const EditorialDropItem = memo(function EditorialDropItem({
   };
 
   const thumbnailSrc = getThumbnailSrc();
+
+  // A call drop renders ONLY the live-call tile — no normal row, no badges, no checkbox, no preview.
+  // This early return IS the type-discrimination (call → onJoinCall via the tile).
+  if (drop.type === 'call') {
+    return (
+      <LiveCallDropTile
+        drop={drop}
+        theme={theme}
+        variant="editorial"
+        hoverable={hoverable}
+        members={members}
+        isReopen={isReopenCallId === drop.id}
+        onJoin={() => onJoinCall?.(drop)}
+        onMobileTap={() => onJoinCall?.(drop)}
+      />
+    );
+  }
 
   return (
     <div
