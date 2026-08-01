@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { Timestamp, FieldValue } from 'firebase-admin/firestore';
-import { authUid, cascadeCallSubcollections } from '../_lib';
+import { authUid, cascadeCallSubcollections, getLiveKitRoomService } from '../_lib';
 
 // Mirror /api/transcribe: Node runtime, 30s headroom under Vercel's timeout, always dynamic. The
 // added Firestore transaction (one-call-per-workspace) needs the headroom.
@@ -62,6 +62,40 @@ export async function POST(request: NextRequest) {
     const callRef = db.collection('drops').doc(callDocId);
     const expiresAt = Timestamp.fromDate(new Date(Date.now() + 4 * 60 * 60 * 1000)); // STATIC 4h backstop — NEVER refreshed
 
+    // Avoid creating a second LiveKit room when this request is simply joining an already-live call.
+    // New calls explicitly create the room here so its server-issued SID can be bound to the call doc;
+    // the webhook uses that binding to reject delayed events from an older call in this reused slot.
+    const currentSnap = await callRef.get();
+    if (currentSnap.exists) {
+      const currentData = currentSnap.data() as {
+        callState?: string;
+        expiresAt?: { toMillis?: () => number } | null;
+      };
+      const currentExpired =
+        currentData.expiresAt != null &&
+        typeof currentData.expiresAt.toMillis === 'function' &&
+        currentData.expiresAt.toMillis() <= Date.now();
+      if (currentData.callState === 'live' && !currentExpired) {
+        return NextResponse.json({ callDropId: callDocId });
+      }
+    }
+
+    const roomService = getLiveKitRoomService();
+    if (!roomService) {
+      console.error('call/start: LiveKit room service is not configured');
+      return NextResponse.json({ error: 'LiveKit is not configured' }, { status: 500 });
+    }
+
+    let livekitRoomSid: string;
+    try {
+      const room = await roomService.createRoom({ name: callDocId });
+      if (!room.sid) throw new Error('LiveKit returned no room SID');
+      livekitRoomSid = room.sid;
+    } catch (err) {
+      console.error('call/start room creation failed:', err);
+      return NextResponse.json({ error: 'Failed to start call' }, { status: 500 });
+    }
+
     let joinedExisting = false;
     try {
       joinedExisting = await db.runTransaction(async (txn) => {
@@ -93,7 +127,8 @@ export async function POST(request: NextRequest) {
           createdAt: FieldValue.serverTimestamp(),
           expiresAt, // STATIC — heartbeats NEVER refresh this (§5)
           expirationOption: '4h', // not 'forever' → avoids isForeverWrite() → no trusted-tier gate
-        });
+          livekitRoomSid,
+          });
         return false;
       });
     } catch (err) {
