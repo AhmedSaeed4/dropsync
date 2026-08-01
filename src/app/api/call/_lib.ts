@@ -67,7 +67,7 @@ function livekitApiHost(): string | null {
 
 // Built per call (cheap — a stateless fetch-backed client) rather than module-cached, so a runtime
 // LIVEKIT_* rotation is picked up without a process restart.
-function getRoomService(): RoomServiceClient | null {
+export function getLiveKitRoomService(): RoomServiceClient | null {
   const host = livekitApiHost();
   const apiKey = process.env.LIVEKIT_API_KEY;
   const apiSecret = process.env.LIVEKIT_API_SECRET;
@@ -91,7 +91,7 @@ function getRoomService(): RoomServiceClient | null {
  * a NON-EMPTY set, which is that positive evidence.
  */
 export async function getLiveCallParticipantIds(roomName: string): Promise<Set<string> | null> {
-  const svc = getRoomService();
+  const svc = getLiveKitRoomService();
   if (!svc) return null;
   try {
     const participants = await svc.listParticipants(roomName);
