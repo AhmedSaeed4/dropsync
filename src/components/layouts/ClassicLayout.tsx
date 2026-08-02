@@ -125,6 +125,8 @@ interface ClassicLayoutProps {
   callMinimized: boolean;
   callState: CallMeshState;
   reopenCallDropId?: string;
+  callCanStart: boolean;
+  callAccessLoading: boolean;
   onStartCall: (callDropId: string, stream: MediaStream | null) => void;
   onJoinCall: (drop: Drop) => void;
   onMinimizeCall: () => void;
@@ -164,7 +166,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
     signIn, emailSignIn, signUp, resetPassword, resendVerification,
     signOutUser, updateDisplayName, reauthenticateUser,
     editDrop, setEditDrop, handleEditDrop, handleEditSubmit,
-    hoverable, activeCallDrop, callMinimized, callState, reopenCallDropId,
+    hoverable, activeCallDrop, callMinimized, callState, reopenCallDropId, callCanStart, callAccessLoading,
     onStartCall, onJoinCall, onMinimizeCall, onLeaveCall,
   } = props;
 
@@ -297,6 +299,8 @@ export function ClassicLayout(props: ClassicLayoutProps) {
                 editModalOpen={!!editDrop}
                 mentionableDrops={drops}
                 onStartCall={onStartCall}
+                callCanStart={callCanStart}
+                callAccessLoading={callAccessLoading}
               />
             </section>
             <section>
@@ -442,6 +446,8 @@ export function ClassicLayout(props: ClassicLayoutProps) {
           screenSharing={callState.screenSharing}
           members={resolvedWorkspaceMembers}
           currentUserId={user?.uid}
+          callLimitDeadlineAt={callState.callLimitDeadlineAt}
+          trustedParticipantCount={callState.trustedParticipantCount}
           onMinimize={onMinimizeCall}
           onLeave={onLeaveCall}
           onToggleMic={callState.toggleMic}

@@ -34,6 +34,8 @@ interface EditorialTextModalProps {
   // LIVE CALL mode (create only): fired with the preview stream (ownership handed off to the mesh)
   // when the host presses Start. DropZone.handleStartCall does the route call; this bubbles the stream.
   onStartCall?: (stream: MediaStream | null) => void;
+  callCanStart?: boolean;
+  callAccessLoading?: boolean;
   // Whether the create flow is for a shared workspace (the lock toggle is workspace-only).
   isWorkspace?: boolean;
   // Creator/workspace owner — may toggle the lock on an existing workspace drop in edit mode.
@@ -53,7 +55,7 @@ const BUILT_IN_CATEGORIES = [
   { value: 'link', label: 'Link' },
 ];
 
-export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customCategories = [], onCreateCategory, editDrop, onEdit, currentUserId, mentionableDrops = [], isWorkspace = false, canMutate = false, onStartCall }: EditorialTextModalProps) {
+export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customCategories = [], onCreateCategory, editDrop, onEdit, currentUserId, mentionableDrops = [], isWorkspace = false, canMutate = false, onStartCall, callCanStart = true, callAccessLoading = false }: EditorialTextModalProps) {
   useBodyScrollLock();
   useModalBackClose(true, onClose);
   const isEditMode = !!editDrop;
@@ -508,7 +510,14 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
                 <button type="button" onClick={() => handleModeSwitch('draw')} className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${tc.fontClass} ${tc.border} ${tc.text} hover:border-[#1a1a1a]`}>Draw</button>
                 <button type="button" disabled className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${tc.fontClass} ${tc.activePillBg} ${tc.activePillText} border-[#1a1a1a]`}>Call</button>
               </div>
-              <CallStartScreen theme={theme} variant="editorial" hoverable={hoverable} onStart={(s) => onStartCall?.(s)} />
+              <CallStartScreen
+                theme={theme}
+                variant="editorial"
+                hoverable={hoverable}
+                canStart={callCanStart}
+                accessLoading={callAccessLoading}
+                onStart={(s) => onStartCall?.(s)}
+              />
             </div>
           ) : (
           <div className="flex-1 overflow-y-auto p-5 space-y-4">

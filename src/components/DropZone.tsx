@@ -22,6 +22,8 @@ interface DropZoneProps {
   // LIVE CALL: page handler invoked after the start route creates the call drop. Receives the
   // callDropId + the preview stream (the mesh adopts the stream + joins).
   onStartCall?: (callDropId: string, stream: MediaStream | null) => void;
+  callCanStart?: boolean;
+  callAccessLoading?: boolean;
 }
 
 const EXPIRATION_OPTIONS: { value: ExpirationOption; label: string }[] = [
@@ -41,6 +43,8 @@ export function DropZone({
   editModalOpen = false,
   mentionableDrops = [],
   onStartCall,
+  callCanStart = true,
+  callAccessLoading = false,
 }: DropZoneProps) {
   const { user } = useAuth();
   const [isDragging, setIsDragging] = useState(false);
@@ -128,13 +132,17 @@ export function DropZone({
   // adopt the stream + join. The modal closes regardless (Start owns the submit, not the form).
   const handleStartCall = async (stream: MediaStream | null) => {
     retractFooterIfUp();
-    if (!workspaceId || !user) return;
+    if (!workspaceId || !user) {
+      stream?.getTracks().forEach((track) => track.stop());
+      return;
+    }
     try {
       const { callDropId } = await startCallRoute(workspaceId);
       onStartCall?.(callDropId, stream);
     } catch (err) {
+      stream?.getTracks().forEach((track) => track.stop());
       console.error('Failed to start call:', err);
-      setError('Failed to start the call. Please try again.');
+      setError(err instanceof Error ? err.message : 'Failed to start the call. Please try again.');
     } finally {
       setShowTextModal(false);
     }
@@ -402,6 +410,8 @@ export function DropZone({
           mentionableDrops={mentionableDrops}
           isWorkspace={!!workspaceId}
           onStartCall={handleStartCall}
+          callCanStart={callCanStart}
+          callAccessLoading={callAccessLoading}
         />
       )}
 

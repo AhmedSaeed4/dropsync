@@ -19,12 +19,22 @@ interface CallStartScreenProps {
   theme: CallTheme;
   variant: CallVariant;
   hoverable: boolean;
+  /** Server decision for whether this user may start a call today. */
+  canStart?: boolean;
+  accessLoading?: boolean;
   /** Fired with the preview stream (ownership handed off) when the host presses Start. */
   onStart: (stream: MediaStream | null) => void;
 }
 
-export function CallStartScreen({ theme, variant, hoverable, onStart }: CallStartScreenProps) {
-  const { stream, error, acquiring, handoffStream } = useCallPreview();
+export function CallStartScreen({
+  theme,
+  variant,
+  hoverable,
+  canStart = true,
+  accessLoading = false,
+  onStart,
+}: CallStartScreenProps) {
+  const { stream, error, acquiring, handoffStream } = useCallPreview(hoverable && canStart && !accessLoading);
   const videoRef = useRef<HTMLVideoElement>(null);
   const tc = getCallTheme(variant, theme);
   // Flips the button to "Connecting…" the instant the host presses Start, and holds until the call
@@ -81,24 +91,30 @@ export function CallStartScreen({ theme, variant, hoverable, onStart }: CallStar
       {/* ONE full-width primary Start button — NOT a form submit. Desktop-gated. */}
       <button
         type="button"
-        disabled={!hoverable || starting}
+        disabled={!hoverable || starting || accessLoading || !canStart}
         onClick={() => {
+          if (accessLoading || !canStart) return;
           setStarting(true);
           onStart(handoffStream());
         }}
         className={`w-full ${hoverable ? tc.activePillBg : tc.inactivePillBg} ${hoverable ? tc.activePillText : tc.muted} py-3 text-sm ${tc.rounded} ${tc.fontClass} transition-opacity flex items-center justify-center gap-2 enabled:hover:opacity-90 enabled:active:scale-[0.98] disabled:cursor-not-allowed`}
       >
-        {starting ? (
+        {starting || accessLoading ? (
           <span className="w-4 h-4 border border-current/30 border-t-current animate-spin rounded-full" />
         ) : (
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
             <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
           </svg>
         )}
-        {starting ? 'Connecting…' : 'Start call'}
+        {starting ? 'Connecting…' : accessLoading ? 'Checking access…' : canStart ? 'Start call' : 'Call limit reached'}
       </button>
       {!hoverable && (
         <p className={`${tc.fontClass} ${tc.muted} text-xs text-center`}>Calls are desktop-only.</p>
+      )}
+      {hoverable && !accessLoading && !canStart && (
+        <p className={`${tc.fontClass} ${tc.muted} text-xs text-center`}>
+          Your 30-minute call limit has been reached. You can still join a call with a trusted user.
+        </p>
       )}
     </div>
   );

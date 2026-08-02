@@ -125,6 +125,8 @@ interface EditorialLayoutProps {
   callMinimized: boolean;
   callState: CallMeshState;
   reopenCallDropId?: string;
+  callCanStart: boolean;
+  callAccessLoading: boolean;
   onStartCall: (callDropId: string, stream: MediaStream | null) => void;
   onJoinCall: (drop: Drop) => void;
   onMinimizeCall: () => void;
@@ -164,7 +166,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
     signIn, emailSignIn, signUp, resetPassword, resendVerification,
     signOutUser, updateDisplayName, reauthenticateUser,
     editDrop, setEditDrop, handleEditDrop, handleEditSubmit,
-    hoverable, activeCallDrop, callMinimized, callState, reopenCallDropId,
+    hoverable, activeCallDrop, callMinimized, callState, reopenCallDropId, callCanStart, callAccessLoading,
     onStartCall, onJoinCall, onMinimizeCall, onLeaveCall,
   } = props;
 
@@ -307,9 +309,11 @@ export function EditorialLayout(props: EditorialLayoutProps) {
               editModalOpen={!!editDrop}
               onToggleChat={onToggleChat}
               unreadCount={unreadCount}
-              mentionableDrops={drops}
-              onStartCall={onStartCall}
-            />
+               mentionableDrops={drops}
+               onStartCall={onStartCall}
+               callCanStart={callCanStart}
+               callAccessLoading={callAccessLoading}
+             />
 
             <EditorialStatusPanel
               dropsCount={drops.length}
@@ -421,6 +425,8 @@ export function EditorialLayout(props: EditorialLayoutProps) {
           screenSharing={callState.screenSharing}
           members={resolvedWorkspaceMembers}
           currentUserId={user?.uid}
+          callLimitDeadlineAt={callState.callLimitDeadlineAt}
+          trustedParticipantCount={callState.trustedParticipantCount}
           onMinimize={onMinimizeCall}
           onLeave={onLeaveCall}
           onToggleMic={callState.toggleMic}

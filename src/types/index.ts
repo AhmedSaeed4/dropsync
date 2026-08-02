@@ -77,6 +77,10 @@ export interface Drop {
   callStartedAt?: Date | null;
   callParticipantUids?: string[];
   callState?: string;
+  trustedParticipantCount?: number;
+  callLimitDeadlineAt?: Date | null;
+  callEndedAt?: Date | null;
+  callEndReason?: string;
 }
 
 export interface Category {

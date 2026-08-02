@@ -6,6 +6,9 @@
 
 import { auth } from './firebase';
 
+export const CALL_LIMIT_MESSAGE =
+  'Your 30-minute call limit has been reached. You can still join a call with a trusted user.';
+
 async function callRoute<T = unknown>(path: string, body: Record<string, unknown>): Promise<T> {
   const user = auth.currentUser;
   if (!user) throw new Error('Not signed in');
@@ -70,4 +73,18 @@ export async function getCallTokenRoute(
   callDropId: string,
 ): Promise<{ token: string; url: string; roomName: string }> {
   return callRoute<{ token: string; url: string; roomName: string }>('token', { callDropId });
+}
+
+/** Fetch the server decision for whether this user may START a call today. */
+export async function getCallAccessRoute(): Promise<{
+  canStart: boolean;
+  trusted: boolean;
+  resetAt: number | null;
+}> {
+  return callRoute<{ canStart: boolean; trusted: boolean; resetAt: number | null }>('access', {});
+}
+
+/** Refresh trusted presence and the no-trusted deadline for an active call. */
+export async function syncCallLimitRoute(callDropId: string): Promise<void> {
+  await callRoute('sync', { callDropId });
 }

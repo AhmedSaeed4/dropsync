@@ -26,6 +26,8 @@ interface EditorialDropZoneProps {
   // LIVE CALL: page handler invoked after the start route creates the call drop. Receives the
   // callDropId + the preview stream (the mesh adopts the stream + joins).
   onStartCall?: (callDropId: string, stream: MediaStream | null) => void;
+  callCanStart?: boolean;
+  callAccessLoading?: boolean;
 }
 
 // Richer upload state for the editorial dropzone: idle, a live-uploading view carrying real byte
@@ -57,6 +59,8 @@ export function EditorialDropZone({
   unreadCount = 0,
   mentionableDrops = [],
   onStartCall,
+  callCanStart = true,
+  callAccessLoading = false,
 }: EditorialDropZoneProps) {
   const { user } = useAuth();
   const [isDragging, setIsDragging] = useState(false);
@@ -237,13 +241,17 @@ export function EditorialDropZone({
   // callDropId + the preview stream up to the page so the mesh can adopt the stream + join.
   const handleStartCall = async (stream: MediaStream | null) => {
     retractFooterIfUp();
-    if (!workspaceId || !user) return;
+    if (!workspaceId || !user) {
+      stream?.getTracks().forEach((track) => track.stop());
+      return;
+    }
     try {
       const { callDropId } = await startCallRoute(workspaceId);
       onStartCall?.(callDropId, stream);
     } catch (err) {
+      stream?.getTracks().forEach((track) => track.stop());
       console.error('Failed to start call:', err);
-      setUploadState({ status: 'error', message: 'Failed to start the call. Please try again.' });
+      setUploadState({ status: 'error', message: err instanceof Error ? err.message : 'Failed to start the call. Please try again.' });
     } finally {
       setShowTextModal(false);
     }
@@ -570,6 +578,8 @@ export function EditorialDropZone({
           mentionableDrops={mentionableDrops}
           isWorkspace={!!workspaceId}
           onStartCall={handleStartCall}
+          callCanStart={callCanStart}
+          callAccessLoading={callAccessLoading}
         />
       )}
 
