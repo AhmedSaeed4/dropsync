@@ -299,17 +299,14 @@ service cloud.firestore {
         && !(resource.data.type == 'call');
 
       // Delete - creator/owner always; a member may delete an open drop OR an already-expired drop
-      // (so cleanup can remove dead locked drops when only members are online). Live locked + forever
-      // drops stay protected. A LIVE call drop is NEVER client-deletable — the leave route owns
-      // deletion (last-leave cascade). The ONE exception: an EXPIRED call (the 4h static backstop
-      // has passed) MAY be client-deleted so cleanupExpiredDrops can reap a total-zombie call where
-      // everyone crashed (§5). (Without this, the §4 client-delete block + §5's "no sweeper edit"
-      // would leave zombie calls undeletable forever.) Subcollection orphans from this rare path are
-      // Admin-only to cascade (noted in the report).
+      // (so cleanup can remove dead locked drops when only members are online). Live-call lifecycle
+      // is separate from generic drop expiry: call deletion is owned by the Admin routes/webhook/
+      // cron, so client cleanup cannot delete either new calls or legacy calls carrying the old
+      // four-hour expiry.
       allow delete: if request.auth != null && (
         canMutateDrop()
         || (isDropWorkspaceMember() && (!isLockedDrop() || isExpiredDrop()))
-      ) && (resource.data.type != 'call' || isExpiredDrop());
+      ) && resource.data.type != 'call';
 
       // ---- Live-call signaling (per peer pair) ---- SDP offer/answer + coalesced ICE candidates
       // for one pair in a call drop's full mesh. Both ends are authenticated members of the call's
@@ -323,6 +320,9 @@ service cloud.firestore {
           return request.auth != null
             && exists(/databases/$(database)/documents/drops/$(dropId))
             && get(/databases/$(database)/documents/drops/$(dropId)).data.type == 'call'
+            && get(/databases/$(database)/documents/drops/$(dropId)).data.workspaceId != null
+            && exists(/databases/$(database)/documents/workspaces/$(get(/databases/$(database)/documents/drops/$(dropId)).data.workspaceId))
+            && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(get(/databases/$(database)/documents/drops/$(dropId)).data.workspaceId)).data.members
             && request.auth.uid in get(/databases/$(database)/documents/drops/$(dropId)).data.callParticipantUids;
         }
         allow read, create: if isCallMember();
@@ -340,6 +340,9 @@ service cloud.firestore {
           return request.auth != null
             && exists(/databases/$(database)/documents/drops/$(dropId))
             && get(/databases/$(database)/documents/drops/$(dropId)).data.type == 'call'
+            && get(/databases/$(database)/documents/drops/$(dropId)).data.workspaceId != null
+            && exists(/databases/$(database)/documents/workspaces/$(get(/databases/$(database)/documents/drops/$(dropId)).data.workspaceId))
+            && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(get(/databases/$(database)/documents/drops/$(dropId)).data.workspaceId)).data.members
             && request.auth.uid in get(/databases/$(database)/documents/drops/$(dropId)).data.callParticipantUids;
         }
         allow read: if isCallPresenceMember();

@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { WebhookReceiver } from 'livekit-server-sdk';
 import { getAdminDb } from '@/lib/firebase-admin';
-import { cascadeCallSubcollections } from '../_lib';
+import {
+  cascadeCallSubcollections,
+  deriveCallLimitFields,
+  enforceExpiredCall,
+  getTrustedStatusMapInTransaction,
+} from '../_lib';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -16,6 +21,7 @@ type CleanupDecision = {
   handled: boolean;
   callEnded: boolean;
   cascade: boolean;
+  expired: boolean;
 };
 
 function isCallRoom(roomName: string): boolean {
@@ -35,17 +41,32 @@ async function removeParticipant(
   const db = getAdminDb();
   const callRef = db.collection('drops').doc(callDropId);
   const presenceRef = callRef.collection('callPresence').doc(uid);
+  const nowMs = Date.now();
 
-  const decision = await db.runTransaction(async (txn): Promise<CleanupDecision> => {
+  let decision: CleanupDecision = {
+    handled: false,
+    callEnded: false,
+    cascade: false,
+    expired: false,
+  };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    decision = await db.runTransaction(async (txn): Promise<CleanupDecision> => {
     const snap = await txn.get(callRef);
-    if (!snap.exists || snap.data()?.type !== 'call') {
+    if (!snap.exists || snap.data()?.type !== 'call' || snap.data()?.callState !== 'live') {
       // A previous delivery may have deleted the call before its subcollection cleanup completed.
       // Retrying the cascade is safe and makes cleanup resilient to that partial failure.
-      return { handled: false, callEnded: false, cascade: !snap.exists };
+      return { handled: false, callEnded: false, cascade: !snap.exists, expired: false };
     }
 
     if (snap.data()?.livekitRoomSid !== roomSid) {
-      return { handled: false, callEnded: false, cascade: false };
+      return { handled: false, callEnded: false, cascade: false, expired: false };
+    }
+
+    const rawDeadline = snap.data()?.callLimitDeadlineAt;
+    const currentDeadlineMs =
+      rawDeadline && typeof rawDeadline.toMillis === 'function' ? rawDeadline.toMillis() : null;
+    if (currentDeadlineMs != null && currentDeadlineMs <= nowMs) {
+      return { handled: true, callEnded: true, cascade: false, expired: true };
     }
 
     const rawUids = snap.data()?.callParticipantUids;
@@ -55,20 +76,38 @@ async function removeParticipant(
 
     if (!uids.includes(uid)) {
       // LiveKit retries events, so an already-removed participant is a successful no-op.
-      return { handled: true, callEnded: false, cascade: false };
+      return { handled: true, callEnded: false, cascade: false, expired: false };
     }
 
     const nextUids = uids.filter((value) => value !== uid);
-    txn.delete(presenceRef);
 
     if (nextUids.length === 0) {
+      txn.delete(presenceRef);
       txn.delete(callRef);
-      return { handled: true, callEnded: true, cascade: true };
+      return { handled: true, callEnded: true, cascade: true, expired: false };
     }
 
-    txn.update(callRef, { callParticipantUids: nextUids });
-    return { handled: true, callEnded: false, cascade: false };
-  });
+    const trustedByUid = await getTrustedStatusMapInTransaction(txn, db, nextUids);
+    const limitFields = deriveCallLimitFields(nextUids, trustedByUid, currentDeadlineMs, nowMs);
+    txn.delete(presenceRef);
+    txn.update(callRef, {
+      callParticipantUids: nextUids,
+      trustedParticipantCount: limitFields.trustedParticipantCount,
+      callLimitDeadlineAt: limitFields.callLimitDeadlineAt,
+    });
+    return { handled: true, callEnded: false, cascade: false, expired: false };
+    });
+
+    if (!decision.expired) break;
+    const enforcement = await enforceExpiredCall(db, callDropId, nowMs);
+    if (enforcement.ended) {
+      return { handled: true, callEnded: true, cascade: false, expired: true };
+    }
+  }
+
+  if (decision.expired) {
+    return { handled: true, callEnded: false, cascade: false, expired: false };
+  }
 
   if (decision.cascade) {
     await cascadeCallSubcollections(db, callDropId);
@@ -89,15 +128,15 @@ async function finishRoom(callDropId: string, roomSid: string): Promise<CleanupD
     if (!snap.exists || snap.data()?.type !== 'call') {
       // A previous delivery may have deleted the call before its subcollection cleanup completed.
       // Retrying the cascade is safe and makes cleanup resilient to that partial failure.
-      return { handled: false, callEnded: false, cascade: !snap.exists };
+      return { handled: false, callEnded: false, cascade: !snap.exists, expired: false };
     }
 
     if (snap.data()?.livekitRoomSid !== roomSid) {
-      return { handled: false, callEnded: false, cascade: false };
+      return { handled: false, callEnded: false, cascade: false, expired: false };
     }
 
     txn.delete(callRef);
-    return { handled: true, callEnded: true, cascade: true };
+    return { handled: true, callEnded: true, cascade: true, expired: false };
   });
 
   if (decision.cascade) {

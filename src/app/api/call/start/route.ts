@@ -1,7 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { Timestamp, FieldValue } from 'firebase-admin/firestore';
-import { authUid, cascadeCallSubcollections, getLiveKitRoomService } from '../_lib';
+import {
+  CALL_LIMIT_MESSAGE,
+  CALL_LIMIT_MS,
+  authUid,
+  cascadeCallSubcollections,
+  enforceExpiredCall,
+  getCallUsageState,
+  getLiveKitRoomService,
+  getTrustedStatusMapInTransaction,
+  isTrustedCallUser,
+  refreshCallLimitState,
+} from '../_lib';
 
 // Mirror /api/transcribe: Node runtime, 30s headroom under Vercel's timeout, always dynamic. The
 // added Firestore transaction (one-call-per-workspace) needs the headroom.
@@ -38,6 +49,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Not a member of this workspace' }, { status: 403 });
     }
 
+    const trusted = await isTrustedCallUser(db, uid);
+    if (!trusted) {
+      const usage = await getCallUsageState(db, uid);
+      if (usage.limited) {
+        return NextResponse.json(
+          { error: CALL_LIMIT_MESSAGE, resetAt: usage.resetAtMs },
+          { status: 429 },
+        );
+      }
+    }
+
     // Host display name (creatorName) — profiles/{uid}.displayName, else users/{uid}.email prefix.
     // Display-only: the drop card resolves the host name from workspaceMembers by callHostUid.
     let hostDisplayName = 'Host';
@@ -60,7 +82,7 @@ export async function POST(request: NextRequest) {
     // delete+set conflict); the subcollection leftovers from that stale call are cascaded after.
     const callDocId = `call-${workspaceId}`;
     const callRef = db.collection('drops').doc(callDocId);
-    const expiresAt = Timestamp.fromDate(new Date(Date.now() + 4 * 60 * 60 * 1000)); // STATIC 4h backstop — NEVER refreshed
+    const nowMs = Date.now();
 
     // Avoid creating a second LiveKit room when this request is simply joining an already-live call.
     // New calls explicitly create the room here so its server-issued SID can be bound to the call doc;
@@ -69,14 +91,29 @@ export async function POST(request: NextRequest) {
     if (currentSnap.exists) {
       const currentData = currentSnap.data() as {
         callState?: string;
-        expiresAt?: { toMillis?: () => number } | null;
       };
-      const currentExpired =
-        currentData.expiresAt != null &&
-        typeof currentData.expiresAt.toMillis === 'function' &&
-        currentData.expiresAt.toMillis() <= Date.now();
-      if (currentData.callState === 'live' && !currentExpired) {
-        return NextResponse.json({ callDropId: callDocId });
+      if (currentData.callState === 'live') {
+        const limitState = await refreshCallLimitState(db, callDocId, nowMs);
+        if (limitState.expired) {
+          const enforcement = await enforceExpiredCall(db, callDocId, nowMs);
+          if (!enforcement.ended) {
+            const currentAfterEnforcement = await callRef.get();
+            if (currentAfterEnforcement.data()?.callState === 'live') {
+              return NextResponse.json({ callDropId: callDocId });
+            }
+          }
+          if (!trusted) {
+            const usage = await getCallUsageState(db, uid, nowMs);
+            if (usage.limited) {
+              return NextResponse.json(
+                { error: CALL_LIMIT_MESSAGE, resetAt: usage.resetAtMs },
+                { status: 429 },
+              );
+            }
+          }
+        } else {
+          return NextResponse.json({ callDropId: callDocId });
+        }
       }
     }
 
@@ -103,31 +140,30 @@ export async function POST(request: NextRequest) {
         if (snap.exists) {
           const data = snap.data() as {
             callState?: string;
-            expiresAt?: { toMillis?: () => number } | null;
           };
-          const expired =
-            data.expiresAt != null &&
-            typeof data.expiresAt.toMillis === 'function' &&
-            data.expiresAt.toMillis() <= Date.now();
-          if (data.callState === 'live' && !expired) {
+          if (data.callState === 'live') {
             return true; // a live call already exists → starting another just joins it
           }
           // stale/dead call in the slot → fall through; set() below overwrites it wholesale
         }
+        const trustedByUid = await getTrustedStatusMapInTransaction(txn, db, [uid]);
+        const trustedForCall = trustedByUid.get(uid) === true;
         txn.set(callRef, {
           type: 'call',
           userId: uid,
-          name: 'Live call',
-          creatorName: hostDisplayName,
-          callHostUid: uid,
-          callParticipantUids: [uid],
-          workspaceId,
-          callState: 'live',
-          callStartedAt: FieldValue.serverTimestamp(),
-          createdAt: FieldValue.serverTimestamp(),
-          expiresAt, // STATIC — heartbeats NEVER refresh this (§5)
-          expirationOption: '4h', // not 'forever' → avoids isForeverWrite() → no trusted-tier gate
-          livekitRoomSid,
+           name: 'Live call',
+           creatorName: hostDisplayName,
+           callHostUid: uid,
+           callParticipantUids: [uid],
+           workspaceId,
+           callState: 'live',
+           callStartedAt: FieldValue.serverTimestamp(),
+           createdAt: FieldValue.serverTimestamp(),
+           expiresAt: null,
+            expirationOption: 'forever',
+            livekitRoomSid,
+            trustedParticipantCount: trustedForCall ? 1 : 0,
+            callLimitDeadlineAt: trustedForCall ? null : Timestamp.fromMillis(nowMs + CALL_LIMIT_MS),
           });
         return false;
       });

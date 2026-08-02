@@ -20,7 +20,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { AccessToken } from 'livekit-server-sdk';
-import { authUid } from '../_lib';
+import { CALL_LIMIT_MESSAGE, authUid, enforceExpiredCall, refreshCallLimitState } from '../_lib';
 import { getAdminDb } from '@/lib/firebase-admin';
 
 export const runtime = 'nodejs'; // livekit-server-sdk uses Node crypto (never edge)
@@ -49,6 +49,7 @@ export async function POST(request: NextRequest) {
     type?: string;
     callState?: string;
     callParticipantUids?: unknown;
+    workspaceId?: unknown;
   };
   if (drop.type !== 'call' || drop.callState !== 'live') {
     return NextResponse.json({ error: 'Call is not live' }, { status: 404 });
@@ -58,6 +59,20 @@ export async function POST(request: NextRequest) {
     !(drop.callParticipantUids as string[]).includes(uid)
   ) {
     return NextResponse.json({ error: 'Not a participant of this call' }, { status: 403 });
+  }
+  if (typeof drop.workspaceId !== 'string' || !drop.workspaceId) {
+    return NextResponse.json({ error: 'Call is not attached to a workspace' }, { status: 403 });
+  }
+  const workspaceSnap = await db.collection('workspaces').doc(drop.workspaceId).get();
+  const workspaceMembers = workspaceSnap.data()?.members;
+  if (!workspaceSnap.exists || !Array.isArray(workspaceMembers) || !workspaceMembers.includes(uid)) {
+    return NextResponse.json({ error: 'Not a member of this workspace' }, { status: 403 });
+  }
+
+  const limitState = await refreshCallLimitState(db, callDropId);
+  if (limitState.expired) {
+    await enforceExpiredCall(db, callDropId);
+    return NextResponse.json({ error: CALL_LIMIT_MESSAGE }, { status: 410 });
   }
 
   // 4. Server-only LiveKit config (all three must be set; the SECRET must NEVER be NEXT_PUBLIC_).

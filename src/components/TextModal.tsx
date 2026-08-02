@@ -34,6 +34,8 @@ interface TextModalProps {
   // when the host presses Start. The route call happens in DropZone.handleStartCall; this just
   // bubbles the stream up so the mesh can adopt it with no camera blink.
   onStartCall?: (stream: MediaStream | null) => void;
+  callCanStart?: boolean;
+  callAccessLoading?: boolean;
   // Whether the create flow is for a shared workspace (the lock toggle is workspace-only).
   isWorkspace?: boolean;
   // Creator/workspace owner — may toggle the lock on an existing workspace drop in edit mode.
@@ -53,7 +55,7 @@ const BUILT_IN_CATEGORIES = [
   { value: 'link', label: 'Link' },
 ];
 
-export function TextModal({ onSubmit, onClose, theme = 'light', customCategories = [], onCreateCategory, editDrop, onEdit, currentUserId, mentionableDrops = [], isWorkspace = false, canMutate = false, onStartCall }: TextModalProps) {
+export function TextModal({ onSubmit, onClose, theme = 'light', customCategories = [], onCreateCategory, editDrop, onEdit, currentUserId, mentionableDrops = [], isWorkspace = false, canMutate = false, onStartCall, callCanStart = true, callAccessLoading = false }: TextModalProps) {
   useBodyScrollLock();
   useModalBackClose(true, onClose);
   const isEditMode = !!editDrop;
@@ -561,7 +563,14 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
                   </button>
                 </div>
               </div>
-              <CallStartScreen theme={theme} variant="classic" hoverable={hoverable} onStart={(s) => onStartCall?.(s)} />
+              <CallStartScreen
+                theme={theme}
+                variant="classic"
+                hoverable={hoverable}
+                canStart={callCanStart}
+                accessLoading={callAccessLoading}
+                onStart={(s) => onStartCall?.(s)}
+              />
             </div>
           ) : (
           <div className="flex-1 overflow-y-auto p-6 space-y-4">

@@ -209,6 +209,10 @@ export function createDropListener(
       const data = document.data();
       const expiresAt = data.expiresAt?.toDate() || null;
 
+      // Terminal call documents stay briefly so participants can read the end reason before the
+      // scheduler removes them. They must never appear as joinable drops in the workspace list.
+      if (data.type === 'call' && data.callState !== 'live') return;
+
       // Include drop if it has no expiration (forever) or hasn't expired yet
       if (!expiresAt || expiresAt > now) {
         drops.push({
@@ -247,9 +251,13 @@ export function createDropListener(
           fileFormat: data.fileFormat,
           callHostUid: data.callHostUid || undefined,
           callStartedAt: data.callStartedAt?.toDate() || null,
-          callParticipantUids: data.callParticipantUids || undefined,
-          callState: data.callState || undefined,
-        });
+           callParticipantUids: data.callParticipantUids || undefined,
+           callState: data.callState || undefined,
+           trustedParticipantCount: typeof data.trustedParticipantCount === 'number' ? data.trustedParticipantCount : undefined,
+           callLimitDeadlineAt: data.callLimitDeadlineAt?.toDate() || null,
+           callEndedAt: data.callEndedAt?.toDate() || null,
+           callEndReason: data.callEndReason || undefined,
+         });
       }
     });
 
@@ -1054,9 +1062,12 @@ export async function cleanupExpiredDrops(
   const snapshot = await getDocs(q);
 
   // SACROSANCT GUARD: permanent ("forever") drops must NEVER be deleted.
+  // Call drops have their own LiveKit/webhook/cron lifecycle and must never be deleted by the
+  // generic drop cleanup, including legacy call docs that still carry the old four-hour expiry.
   // Also skip corrupt/legacy docs whose expiresAt isn't a real Firestore Timestamp.
   const expired = snapshot.docs.filter((document) => {
     const data = document.data();
+    if (data.type === 'call') return false;
     if (!data.expiresAt || !(data.expiresAt instanceof Timestamp)) return false;
     return data.expiresAt.toDate() <= now;
   });

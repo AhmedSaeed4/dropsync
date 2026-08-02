@@ -9,6 +9,7 @@ import { useWorkspaces } from '@/hooks/useWorkspaces';
 import { useCategories } from '@/hooks/useCategories';
 import { usePresence } from '@/hooks/usePresence';
 import { useLiveKitCall } from '@/hooks/useLiveKitCall';
+import { useCallAccess } from '@/hooks/useCallAccess';
 import { useIsHoverable } from '@/hooks/useIsHoverable';
 import { LiveCallMinimizedPill } from '@/components/call/LiveCallMinimizedPill';
 import { ClassicLayout } from '@/components/layouts/ClassicLayout';
@@ -40,6 +41,7 @@ import {
   ensureFcmToken,
 } from '@/lib/notifications';
 import { reauthenticateUser } from '@/lib/auth';
+import { CALL_LIMIT_MESSAGE } from '@/lib/callRoutes';
 import { db } from '@/lib/firebase';
 import { CURRENT_TERMS_VERSION } from '@/lib/termsVersion';
 import { TermsConsentGate } from '@/components/TermsConsentGate';
@@ -154,6 +156,7 @@ export default function Home() {
   // unmounting on minimize; useCallMesh (below) is keyed on callDropId so a call survives a
   // workspace switch. Declared here (above early returns) so the Rules of Hooks hold.
   const hoverable = useIsHoverable();
+  const callAccess = useCallAccess(user?.uid ?? null);
   const [activeCallDrop, setActiveCallDrop] = useState<Drop | null>(null);
   const [callMinimized, setCallMinimized] = useState(false);
   const [callNotice, setCallNotice] = useState<string | null>(null);
@@ -482,6 +485,20 @@ export default function Home() {
     isDesktop: hoverable,
   });
 
+  // A server-ended call reports its reason before the terminal call document is cleaned up. Leave the
+  // local LiveKit room and surface the same message to every non-trusted participant.
+  useEffect(() => {
+    if (callState.status !== 'ended') return;
+    if (callState.callEndReason === 'untrusted_time_limit') {
+      setCallNotice(CALL_LIMIT_MESSAGE);
+      void callAccess.refresh();
+    }
+    void callState.leaveCall().finally(() => {
+      setActiveCallDrop(null);
+      setCallMinimized(false);
+    });
+  }, [callState.status, callState.callEndReason, callState.leaveCall, callAccess.refresh]);
+
   // Host pressed Start in the create-modal's Call mode. Adopt the preview stream (no camera blink),
   // set the active call drop (the real doc hydrates via createDropListener within ~1s), and join.
   const handleStartCall = async (callDropId: string, stream: MediaStream | null) => {
@@ -501,8 +518,8 @@ export default function Home() {
       callState: 'live',
       createdAt: new Date(),
       callStartedAt: new Date(),
-      expiresAt: new Date(Date.now() + 4 * 60 * 60 * 1000),
-      expirationOption: '4h',
+       expiresAt: null,
+       expirationOption: 'forever',
     });
     setCallMinimized(false);
     try {
@@ -2002,6 +2019,8 @@ export default function Home() {
     presenceMap,
     hoverable,
     activeCallDrop, callMinimized, callState, reopenCallDropId,
+    callCanStart: callAccess.canStart,
+    callAccessLoading: callAccess.loading,
     onStartCall: handleStartCall,
     onJoinCall: handleJoinCall,
     onMinimizeCall: handleMinimizeCall,

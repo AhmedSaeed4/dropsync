@@ -352,3 +352,51 @@ export function subscribeToCallRoster(
     unsub();
   };
 }
+
+export interface CallLimitSnapshot {
+  exists: boolean;
+  callState: string | null;
+  trustedParticipantCount: number;
+  deadlineAtMs: number | null;
+  endReason: string | null;
+}
+
+/** Subscribe to the server-owned call limit state and terminal end reason. */
+export function subscribeToCallLimit(
+  callDropId: string,
+  cb: (state: CallLimitSnapshot) => void,
+): () => void {
+  let cancelled = false;
+  const unsub = onSnapshot(
+    doc(db, 'drops', callDropId),
+    (snap) => {
+      if (cancelled) return;
+      if (!snap.exists()) {
+        cb({ exists: false, callState: null, trustedParticipantCount: 0, deadlineAtMs: null, endReason: null });
+        return;
+      }
+      const data = snap.data() as {
+        callState?: unknown;
+        trustedParticipantCount?: unknown;
+        callLimitDeadlineAt?: { toMillis?: unknown } | null;
+        callEndReason?: unknown;
+      };
+      cb({
+        exists: true,
+        callState: typeof data.callState === 'string' ? data.callState : null,
+        trustedParticipantCount: typeof data.trustedParticipantCount === 'number' ? data.trustedParticipantCount : 0,
+        deadlineAtMs: typeof data.callLimitDeadlineAt?.toMillis === 'function'
+          ? data.callLimitDeadlineAt.toMillis()
+          : null,
+        endReason: typeof data.callEndReason === 'string' ? data.callEndReason : null,
+      });
+    },
+    () => {
+      // Swallow listener errors silently — the server routes remain authoritative.
+    },
+  );
+  return () => {
+    cancelled = true;
+    unsub();
+  };
+}

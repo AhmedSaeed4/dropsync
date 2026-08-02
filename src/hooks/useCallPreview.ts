@@ -9,13 +9,14 @@
 import { useEffect, useState } from 'react';
 import { useCallMedia } from './useCallMedia';
 
-export function useCallPreview() {
+export function useCallPreview(enabled = true) {
   const media = useCallMedia();
   const [acquiring, setAcquiring] = useState(false);
 
   // Acquire once on mount. The 3 guards (startingRef / unmount-cleanup / AbortController) live in
   // useCallMedia; here we just trigger + track the "acquiring" spinner state.
   useEffect(() => {
+    if (!enabled) return;
     let cancelled = false;
     setAcquiring(true);
     media
@@ -27,7 +28,7 @@ export function useCallPreview() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [enabled]);
 
   /**
    * Hand the preview stream to the mesh. Returns the stream object AND detaches ownership here so

@@ -24,6 +24,7 @@
 // invisible to the UI.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { doc, onSnapshot } from 'firebase/firestore';
 import {
   Room,
   RoomEvent,
@@ -35,8 +36,10 @@ import {
   type LocalTrackPublication,
 } from 'livekit-client';
 import { auth } from '@/lib/firebase';
+import { db } from '@/lib/firebase';
 import { useCallMedia } from './useCallMedia';
-import { joinCallRoute, leaveCallRoute, getCallTokenRoute } from '@/lib/callRoutes';
+import { joinCallRoute, leaveCallRoute, getCallTokenRoute, syncCallLimitRoute } from '@/lib/callRoutes';
+import { heartbeatCallPresence, subscribeToCallLimit } from '@/lib/liveCallSignaling';
 import type { MemberInfo } from '@/lib/workspaces';
 
 export type CallStatus = 'idle' | 'joining' | 'joined' | 'leaving' | 'ended';
@@ -62,6 +65,9 @@ export function useLiveKitCall({ userId, callDropId, workspaceMembers }: UseLive
   const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
   const [remoteScreenStreams, setRemoteScreenStreams] = useState<Record<string, MediaStream>>({});
   const [error, setError] = useState<string | null>(null);
+  const [trustedParticipantCount, setTrustedParticipantCount] = useState(0);
+  const [callLimitDeadlineAt, setCallLimitDeadlineAt] = useState<number | null>(null);
+  const [callEndReason, setCallEndReason] = useState<string | null>(null);
 
   // The LiveKit room lives in a ref (NOT state) so it persists across the modal's minimize/unmount
   // cycle — exactly how useCallMesh kept its peer connections alive above the modal.
@@ -176,6 +182,7 @@ export function useLiveKitCall({ userId, callDropId, workspaceMembers }: UseLive
           remoteTracksRef.current.clear();
           rebuildRemoteStreams();
           setParticipantUids([]);
+          if (!leftRef.current) setStatus('ended');
         });
     },
     [rebuildRemoteStreams, syncParticipantUids],
@@ -289,6 +296,9 @@ export function useLiveKitCall({ userId, callDropId, workspaceMembers }: UseLive
       }
       setStatus('joining');
       setError(null);
+      setCallEndReason(null);
+      setCallLimitDeadlineAt(null);
+      setTrustedParticipantCount(0);
       leftRef.current = false;
       activeCallDropIdRef.current = id;
       // No stale screen-share state leaks into the new call (no-op if none).
@@ -393,9 +403,53 @@ export function useLiveKitCall({ userId, callDropId, workspaceMembers }: UseLive
       await teardown(id);
       activeCallDropIdRef.current = null;
       setStatus('idle');
-    },
+  },
     [teardown],
   );
+
+  // The call document carries the server-owned timer and terminal reason. Keeping this separate from
+  // LiveKit's participant events lets the UI explain why a server-enforced call ended.
+  useEffect(() => {
+    if (!userId || !callDropId || status !== 'joined') return;
+    const unsub = subscribeToCallLimit(callDropId, (state) => {
+      setTrustedParticipantCount(state.trustedParticipantCount);
+      setCallLimitDeadlineAt(state.deadlineAtMs);
+      if (state.endReason) setCallEndReason(state.endReason);
+      if (state.callState === 'ended' && !leftRef.current) setStatus('ended');
+    });
+    return unsub;
+  }, [userId, callDropId, status]);
+
+  // Keep the server-side presence guard active for the LiveKit call path. The older useCallMesh hook
+  // owned this heartbeat before LiveKit replaced it, but the current hook must publish it itself.
+  useEffect(() => {
+    if (!userId || !callDropId || status !== 'joined') return;
+    void heartbeatCallPresence(callDropId, userId).catch(() => {});
+    const id = setInterval(
+      () => void heartbeatCallPresence(callDropId, userId).catch(() => {}),
+      30_000,
+    );
+    return () => clearInterval(id);
+  }, [userId, callDropId, status]);
+
+  // Re-read trust status periodically so owner tier changes affect an active call without requiring a
+  // leave/rejoin. The server remains authoritative and the client treats failures as best effort.
+  useEffect(() => {
+    if (!userId || !callDropId || status !== 'joined') return;
+    void syncCallLimitRoute(callDropId).catch(() => {});
+    const id = setInterval(() => void syncCallLimitRoute(callDropId).catch(() => {}), 30_000);
+    return () => clearInterval(id);
+  }, [userId, callDropId, status]);
+
+  // A tier change is reflected as soon as the participant's own user document changes. The periodic
+  // sync and the scheduled server check cover participants whose browser is not active.
+  useEffect(() => {
+    if (!userId || !callDropId || status !== 'joined') return;
+    const unsub = onSnapshot(doc(db, 'users', userId), () => {
+      void syncCallLimitRoute(callDropId).catch(() => {});
+    }, () => {});
+    return unsub;
+  }, [userId, callDropId, status]);
 
   // Mute is set BOTH ways: media.toggleMic flips the local track.enabled (your side goes silent +
   // the local button/tile update), AND setting the published LocalTrack's `muted` signals the SFU so
@@ -471,6 +525,9 @@ export function useLiveKitCall({ userId, callDropId, workspaceMembers }: UseLive
     cameraEnabled: media.cameraEnabled,
     cameraAvailable: media.cameraAvailable,
     screenSharing: media.screenSharing,
+    trustedParticipantCount,
+    callLimitDeadlineAt,
+    callEndReason,
     error: error || media.error,
     memberName,
     adoptPreviewStream,

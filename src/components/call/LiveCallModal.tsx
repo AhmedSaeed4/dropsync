@@ -16,6 +16,7 @@ import type { Drop } from '@/types';
 import type { MemberInfo } from '@/lib/workspaces';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useModalBackClose } from '@/hooks/useModalBackClose';
+import { useNow } from '@/hooks/useNow';
 import type { CallStatus } from '@/hooks/useLiveKitCall';
 import { getCallTheme, type CallTheme, type CallVariant } from './callTheme';
 
@@ -40,6 +41,8 @@ interface LiveCallModalProps {
   screenSharing: boolean;
   members: MemberInfo[];
   currentUserId?: string;
+  callLimitDeadlineAt?: number | null;
+  trustedParticipantCount?: number;
   onMinimize: () => void;
   onLeave: () => void;
   onToggleMic: () => void;
@@ -52,6 +55,7 @@ export function LiveCallModal(props: LiveCallModalProps) {
     drop, variant, theme, hoverable, status,
     participantUids, localStream, localScreenStream, remoteStreams, remoteScreenStreams,
     micEnabled, cameraEnabled, cameraAvailable, screenSharing, members, currentUserId,
+    callLimitDeadlineAt, trustedParticipantCount = 0,
     onMinimize, onLeave, onToggleMic, onToggleCamera, onToggleScreenShare,
   } = props;
 
@@ -86,9 +90,16 @@ export function LiveCallModal(props: LiveCallModalProps) {
 
   const [spotlightKey, setSpotlightKey] = useState<string | null>(null);
   const tc = getCallTheme(variant, theme);
+  const now = useNow(1000);
 
   const hostName = members.find((m) => m.uid === drop.callHostUid)?.displayName || drop.creatorName || 'Host';
   const inCall = participantUids.length + 1; // others + me
+  const remainingLimitSeconds = callLimitDeadlineAt == null || trustedParticipantCount > 0
+    ? null
+    : Math.max(0, Math.ceil((callLimitDeadlineAt - now.getTime()) / 1000));
+  const remainingLimitLabel = remainingLimitSeconds == null
+    ? null
+    : `${Math.floor(remainingLimitSeconds / 60)}:${String(remainingLimitSeconds % 60).padStart(2, '0')}`;
 
   // Build the tile list: local first ("You"), then remotes. Screen-share tiles render above the grid.
   const tiles: { key: string; stream: MediaStream | null; name: string; mirrored: boolean; muted: boolean; cameraOn: boolean; micOn: boolean }[] = [
@@ -154,6 +165,11 @@ export function LiveCallModal(props: LiveCallModalProps) {
             </span>
             <span className={`${tc.text} ${tc.fontClass} text-sm font-medium tracking-tight truncate`}>{hostName}</span>
             <span className={`${tc.muted} ${tc.fontClass} text-xs shrink-0`}>{inCall} in call</span>
+            {remainingLimitLabel && (
+              <span className={`${tc.muted} ${tc.fontClass} text-xs shrink-0`}>
+                {remainingLimitLabel} left
+              </span>
+            )}
             <svg className={`w-4 h-4 ${tc.muted} shrink-0`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
               <title>{E2EE_TITLE}</title>
               <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6a2.25 2.25 0 002.25 2.25z" />
