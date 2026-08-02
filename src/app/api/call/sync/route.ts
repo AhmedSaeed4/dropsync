@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminDb } from '@/lib/firebase-admin';
-import { authUid, refreshCallLimitState } from '../_lib';
+import { authUid, enforceExpiredCall, refreshCallLimitState } from '../_lib';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -31,11 +31,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Not an active call participant' }, { status: 403 });
     }
 
-    const state = await refreshCallLimitState(db, callDropId);
+    const nowMs = Date.now();
+    let state = await refreshCallLimitState(db, callDropId, nowMs);
+    let ended = false;
+    if (state.expired) {
+      const enforcement = await enforceExpiredCall(db, callDropId, nowMs);
+      ended = enforcement.ended;
+      if (!ended) {
+        // A trusted participant may have joined between the refresh and enforcement transactions.
+        // Re-read the authoritative state so the sync response matches the committed call document.
+        state = await refreshCallLimitState(db, callDropId, nowMs);
+      }
+    }
     return NextResponse.json({
       trustedParticipantCount: state.trustedParticipantCount,
       deadlineAt: state.deadlineMs,
       expired: state.expired,
+      ended,
     });
   } catch (error) {
     console.error('[call/sync] failed:', error);
