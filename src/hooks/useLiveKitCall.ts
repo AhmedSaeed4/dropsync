@@ -68,6 +68,10 @@ export function useLiveKitCall({ userId, callDropId, workspaceMembers }: UseLive
   const [trustedParticipantCount, setTrustedParticipantCount] = useState(0);
   const [callLimitDeadlineAt, setCallLimitDeadlineAt] = useState<number | null>(null);
   const [callEndReason, setCallEndReason] = useState<string | null>(null);
+  const [callJoinedAtMs, setCallJoinedAtMs] = useState<number | null>(null);
+  const [dailyMinutesUsed, setDailyMinutesUsed] = useState<number | null>(null);
+  const [callTotalMinutes, setCallTotalMinutes] = useState<number | null>(null);
+  const [dailyUsageTrusted, setDailyUsageTrusted] = useState(false);
 
   // The LiveKit room lives in a ref (NOT state) so it persists across the modal's minimize/unmount
   // cycle — exactly how useCallMesh kept its peer connections alive above the modal.
@@ -75,6 +79,7 @@ export function useLiveKitCall({ userId, callDropId, workspaceMembers }: UseLive
   const joiningRef = useRef(false);
   const leftRef = useRef(false); // guard against double-leave
   const activeCallDropIdRef = useRef<string | null>(null);
+  const localJoinStartedAtRef = useRef<number | null>(null);
   const adoptedPreviewRef = useRef<MediaStream | null>(null);
   // Live refs to the always-current media helpers, so stable callbacks (the [] teardown effect, the
   // pagehide handler) read the live methods instead of a stale closure.
@@ -236,6 +241,11 @@ export function useLiveKitCall({ userId, callDropId, workspaceMembers }: UseLive
     setRemoteStreams({});
     setRemoteScreenStreams({});
     setParticipantUids([]);
+    localJoinStartedAtRef.current = null;
+    setCallJoinedAtMs(null);
+    setDailyMinutesUsed(null);
+    setCallTotalMinutes(null);
+    setDailyUsageTrusted(false);
     // 3. POST /api/call/leave (transactional; deletes the doc if this was the last leaver)
     try {
       await leaveCallRoute(callId);
@@ -301,6 +311,11 @@ export function useLiveKitCall({ userId, callDropId, workspaceMembers }: UseLive
       setError(null);
       setCallEndReason(null);
       setCallLimitDeadlineAt(null);
+      setDailyMinutesUsed(null);
+      setCallTotalMinutes(null);
+      setDailyUsageTrusted(false);
+      localJoinStartedAtRef.current = Date.now();
+      setCallJoinedAtMs(localJoinStartedAtRef.current);
       setTrustedParticipantCount(0);
       leftRef.current = false;
       activeCallDropIdRef.current = id;
@@ -385,6 +400,11 @@ export function useLiveKitCall({ userId, callDropId, workspaceMembers }: UseLive
           }
         }
         activeCallDropIdRef.current = null;
+        localJoinStartedAtRef.current = null;
+        setCallJoinedAtMs(null);
+        setDailyMinutesUsed(null);
+        setCallTotalMinutes(null);
+        setDailyUsageTrusted(false);
         // release the media we just acquired/adopted (stop + clear ref so a retry acquires fresh)
         const abandonedPreview = adoptedPreviewRef.current;
         adoptedPreviewRef.current = null;
@@ -412,18 +432,34 @@ export function useLiveKitCall({ userId, callDropId, workspaceMembers }: UseLive
     [teardown],
   );
 
+  const syncCallLimit = useCallback(async (id: string) => {
+    const state = await syncCallLimitRoute(id);
+    setDailyMinutesUsed(state.minutesUsedToday);
+    setCallTotalMinutes(state.callTotalMinutes);
+    setDailyUsageTrusted(state.trusted);
+    return state;
+  }, []);
+
   // The call document carries the server-owned timer and terminal reason. Keeping this separate from
   // LiveKit's participant events lets the UI explain why a server-enforced call ended.
   useEffect(() => {
     if (!userId || !callDropId || status !== 'joined') return;
-    const unsub = subscribeToCallLimit(callDropId, (state) => {
+    const unsub = subscribeToCallLimit(callDropId, userId, (state) => {
       setTrustedParticipantCount(state.trustedParticipantCount);
       setCallLimitDeadlineAt(state.deadlineAtMs);
+      setCallJoinedAtMs(state.participantJoinedAtMs ?? localJoinStartedAtRef.current);
       if (state.endReason) setCallEndReason(state.endReason);
       if (state.callState === 'ended' && !leftRef.current) setStatus('ended');
     });
     return unsub;
   }, [userId, callDropId, status]);
+
+  // Refresh the usage baseline immediately when server accounting resets the local join timestamp,
+  // instead of waiting for the next 30-second poll.
+  useEffect(() => {
+    if (!userId || !callDropId || status !== 'joined' || callJoinedAtMs == null) return;
+    void syncCallLimit(callDropId).catch(() => {});
+  }, [userId, callDropId, status, callJoinedAtMs, syncCallLimit]);
 
   // Keep the server-side presence guard active for the LiveKit call path. The older useCallMesh hook
   // owned this heartbeat before LiveKit replaced it, but the current hook must publish it itself.
@@ -441,10 +477,10 @@ export function useLiveKitCall({ userId, callDropId, workspaceMembers }: UseLive
   // leave/rejoin. The server remains authoritative and the client treats failures as best effort.
   useEffect(() => {
     if (!userId || !callDropId || status !== 'joined') return;
-    void syncCallLimitRoute(callDropId).catch(() => {});
-    const id = setInterval(() => void syncCallLimitRoute(callDropId).catch(() => {}), 30_000);
+    void syncCallLimit(callDropId).catch(() => {});
+    const id = setInterval(() => void syncCallLimit(callDropId).catch(() => {}), 30_000);
     return () => clearInterval(id);
-  }, [userId, callDropId, status]);
+  }, [userId, callDropId, status, syncCallLimit]);
 
   // Ask the server to enforce immediately when the displayed deadline reaches zero. The server
   // remains authoritative; this timer only reduces the overrun when a foreground tab is active.
@@ -458,20 +494,20 @@ export function useLiveKitCall({ userId, callDropId, workspaceMembers }: UseLive
     ) return;
     const delayMs = Math.max(0, callLimitDeadlineAt - Date.now());
     const id = setTimeout(() => {
-      void syncCallLimitRoute(callDropId).catch(() => {});
+      void syncCallLimit(callDropId).catch(() => {});
     }, delayMs);
     return () => clearTimeout(id);
-  }, [userId, callDropId, status, callLimitDeadlineAt, trustedParticipantCount]);
+  }, [userId, callDropId, status, callLimitDeadlineAt, trustedParticipantCount, syncCallLimit]);
 
   // A tier change is reflected as soon as the participant's own user document changes. The periodic
   // sync and the scheduled server check cover participants whose browser is not active.
   useEffect(() => {
     if (!userId || !callDropId || status !== 'joined') return;
     const unsub = onSnapshot(doc(db, 'users', userId), () => {
-      void syncCallLimitRoute(callDropId).catch(() => {});
+      void syncCallLimit(callDropId).catch(() => {});
     }, () => {});
     return unsub;
-  }, [userId, callDropId, status]);
+  }, [userId, callDropId, status, syncCallLimit]);
 
   // Mute is set BOTH ways: media.toggleMic flips the local track.enabled (your side goes silent +
   // the local button/tile update), AND setting the published LocalTrack's `muted` signals the SFU so
@@ -550,6 +586,10 @@ export function useLiveKitCall({ userId, callDropId, workspaceMembers }: UseLive
     trustedParticipantCount,
     callLimitDeadlineAt,
     callEndReason,
+    dailyMinutesUsed,
+    callTotalMinutes,
+    dailyUsageTrusted,
+    callJoinedAtMs,
     error: error || media.error,
     memberName,
     adoptPreviewStream,

@@ -175,7 +175,7 @@ function roundMinutes(minutes: number): number {
   return Math.round(minutes * 1000) / 1000;
 }
 
-function normalizeCallUsage(
+export function normalizeCallUsage(
   data: DocumentData | undefined,
   nowMs: number,
 ): CallUsageTransactionState {
@@ -296,21 +296,100 @@ export function getCallParticipantJoinedAtMap(
   );
 }
 
+export function getCallParticipantJoinedAtRecord(
+  joinedAtByUid: Map<string, number>,
+  participantUids: string[],
+): Record<string, Timestamp> {
+  const joinedAt: Record<string, Timestamp> = {};
+  for (const uid of participantUids) {
+    const joinedAtMs = joinedAtByUid.get(uid);
+    if (joinedAtMs != null) joinedAt[uid] = Timestamp.fromMillis(joinedAtMs);
+  }
+  return joinedAt;
+}
+
+function getStoredCallTrustedReliefUids(data: DocumentData, participantUids: string[]): string[] {
+  return Array.isArray(data.callTrustedReliefUids)
+    ? data.callTrustedReliefUids.filter(
+        (uid): uid is string => typeof uid === 'string' && participantUids.includes(uid),
+      )
+    : [];
+}
+
 export function getCallTrustedReliefUids(
   data: DocumentData,
   participantUids: string[],
   trustedByUid: Map<string, boolean>,
 ): string[] {
-  const existing = Array.isArray(data.callTrustedReliefUids)
-    ? data.callTrustedReliefUids.filter(
-        (uid): uid is string => typeof uid === 'string' && participantUids.includes(uid),
-      )
-    : [];
   const trustedPresent = participantUids.some((uid) => trustedByUid.get(uid) === true);
-  const currentNonTrusted = trustedPresent
-    ? participantUids.filter((uid) => trustedByUid.get(uid) !== true)
-    : [];
+  if (!trustedPresent) return [];
+  const existing = getStoredCallTrustedReliefUids(data, participantUids);
+  const currentNonTrusted = participantUids.filter((uid) => trustedByUid.get(uid) !== true);
   return [...new Set([...existing, ...currentNonTrusted])];
+}
+
+/**
+ * Reconcile billing when trusted presence changes. Standard time before a trusted user arrives is
+ * settled immediately; time while trusted presence is active is free; and billing restarts from
+ * the instant the last trusted participant leaves. The usage map is mutated by settlement so the
+ * caller can safely reserve the post-transition balance in the same transaction.
+ */
+export async function reconcileTrustedCallTransitionInTransaction(
+  txn: Transaction,
+  db: Firestore,
+  callDropId: string,
+  data: DocumentData,
+  currentParticipantUids: string[],
+  nextParticipantUids: string[],
+  trustedByUid: Map<string, boolean>,
+  usageStates: Map<string, CallUsageTransactionState>,
+  joinedAtByUid: Map<string, number>,
+  nowMs = Date.now(),
+  previousTrustedPresent = currentParticipantUids.some((uid) => trustedByUid.get(uid) === true),
+): Promise<{ joinedAtByUid: Map<string, number>; trustedReliefUids: string[] }> {
+  const nextJoinedAtByUid = new Map(joinedAtByUid);
+  const nextTrustedPresent = nextParticipantUids.some((uid) => trustedByUid.get(uid) === true);
+  const storedReliefUids = getStoredCallTrustedReliefUids(data, currentParticipantUids);
+
+  if (!previousTrustedPresent && nextTrustedPresent) {
+    // A stale relief list can only describe a prior trusted overlap. Do not charge that period when
+    // repairing an old live call; all newly billable time starts at this transition.
+    const preTrustedJoinedAtByUid = new Map(joinedAtByUid);
+    for (const uid of storedReliefUids) preTrustedJoinedAtByUid.set(uid, nowMs);
+    await settleCallUsageInTransaction(
+      txn,
+      db,
+      currentParticipantUids,
+      trustedByUid,
+      callDropId,
+      preTrustedJoinedAtByUid,
+      new Set(),
+      nowMs,
+      usageStates,
+      false,
+    );
+    for (const uid of nextParticipantUids) {
+      if (trustedByUid.get(uid) !== true) nextJoinedAtByUid.set(uid, nowMs);
+    }
+  } else if (previousTrustedPresent && !nextTrustedPresent) {
+    // The trusted overlap has ended. Preserve the already-settled usage and start a new billable
+    // interval for every standard participant still in the room.
+    for (const uid of nextParticipantUids) {
+      if (trustedByUid.get(uid) !== true) nextJoinedAtByUid.set(uid, nowMs);
+    }
+  } else if (!previousTrustedPresent && !nextTrustedPresent && storedReliefUids.length > 0) {
+    // Repair calls written by the old implementation: relief must not survive without trusted
+    // presence. We can only bill reliably from this repair point because the old exit time was not
+    // stored.
+    for (const uid of storedReliefUids) nextJoinedAtByUid.set(uid, nowMs);
+  }
+
+  return {
+    joinedAtByUid: nextJoinedAtByUid,
+    trustedReliefUids: nextTrustedPresent
+      ? getCallTrustedReliefUids(data, nextParticipantUids, trustedByUid)
+      : [],
+  };
 }
 
 /** Charge each participant for their own joined interval and release their reservation. */
@@ -324,6 +403,7 @@ export async function settleCallUsageInTransaction(
   trustedReliefUids: Set<string>,
   nowMs = Date.now(),
   preloadedUsageStates?: Map<string, CallUsageTransactionState>,
+  releaseReservation = true,
 ): Promise<void> {
   const dayKey = utcDayKey(nowMs);
   const usageStates = preloadedUsageStates ?? await getCallUsageStatesInTransaction(txn, db, participantUids, nowMs);
@@ -337,28 +417,50 @@ export async function settleCallUsageInTransaction(
           { minutesReservedToday: 0, reservedCallId: null, reservedAt: null },
           { merge: true },
         );
+        if (preloadedUsageStates) {
+          preloadedUsageStates.set(uid, {
+            ...state,
+            limited: state.minutesRemaining <= 0,
+            reservedCallId: null,
+            minutesReservedToday: 0,
+          });
+        }
       }
       continue;
     }
     const joinedAtMs = joinedAtByUid.get(uid) ?? nowMs;
     const chargeMinutes = roundMinutes(Math.max(0, nowMs - joinedAtMs) / 60_000);
     const nextUsed = Math.min(CALL_TOTAL_MINUTES, roundMinutes(state.minutesUsedToday + chargeMinutes));
+    const nextRemaining = Math.max(0, CALL_TOTAL_MINUTES - nextUsed);
+    const hasCallReservation = state.reservedCallId === callDropId;
+    const keepCallReservation = hasCallReservation && !releaseReservation && nextRemaining > 0;
     const usage: Record<string, unknown> = {
       dayKey,
       minutesUsedToday: nextUsed,
       resetAt: Timestamp.fromMillis(nextUtcMidnightMs(nowMs)),
       limitedAt: nextUsed >= CALL_TOTAL_MINUTES ? Timestamp.fromMillis(nowMs) : null,
     };
-    if (state.reservedCallId === callDropId) {
-      usage.minutesReservedToday = 0;
-      usage.reservedCallId = null;
-      usage.reservedAt = null;
+    if (hasCallReservation) {
+      usage.minutesReservedToday = keepCallReservation ? nextRemaining : 0;
+      usage.reservedCallId = keepCallReservation ? callDropId : null;
+      if (!keepCallReservation) usage.reservedAt = null;
     }
     txn.set(
       db.collection('callUsage').doc(uid),
       usage,
       { merge: true },
     );
+    if (preloadedUsageStates) {
+      const released = hasCallReservation && !keepCallReservation;
+      preloadedUsageStates.set(uid, {
+        ...state,
+        limited: nextRemaining <= 0 || (keepCallReservation ? true : !released && state.reservedCallId !== null),
+        minutesUsedToday: nextUsed,
+        minutesRemaining: nextRemaining,
+        reservedCallId: keepCallReservation ? callDropId : released ? null : state.reservedCallId,
+        minutesReservedToday: keepCallReservation ? nextRemaining : released ? 0 : state.minutesReservedToday,
+      });
+    }
   }
 }
 
@@ -403,6 +505,21 @@ export async function refreshCallLimitState(
 
     const trustedByUid = await getTrustedStatusMapInTransaction(txn, db, participantUids);
     const usageStates = await getCallUsageStatesInTransaction(txn, db, participantUids, nowMs);
+    const joinedAtByUid = getCallParticipantJoinedAtMap(data, participantUids);
+    const previousTrustedPresent = Number(data.trustedParticipantCount) > 0;
+    const trustedTransition = await reconcileTrustedCallTransitionInTransaction(
+      txn,
+      db,
+      callDropId,
+      data,
+      participantUids,
+      participantUids,
+      trustedByUid,
+      usageStates,
+      joinedAtByUid,
+      nowMs,
+      previousTrustedPresent,
+    );
     const remainingMinutesByUid = new Map<string, number>();
     for (const uid of participantUids) {
       if (trustedByUid.get(uid) === true) continue;
@@ -426,7 +543,11 @@ export async function refreshCallLimitState(
     txn.update(callRef, {
       trustedParticipantCount: limitFields.trustedParticipantCount,
       callLimitDeadlineAt: limitFields.callLimitDeadlineAt,
-      callTrustedReliefUids: getCallTrustedReliefUids(data, participantUids, trustedByUid),
+      callParticipantJoinedAt: getCallParticipantJoinedAtRecord(
+        trustedTransition.joinedAtByUid,
+        participantUids,
+      ),
+      callTrustedReliefUids: trustedTransition.trustedReliefUids,
     });
 
     return {

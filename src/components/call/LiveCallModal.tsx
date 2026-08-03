@@ -43,6 +43,10 @@ interface LiveCallModalProps {
   currentUserId?: string;
   callLimitDeadlineAt?: number | null;
   trustedParticipantCount?: number;
+  dailyMinutesUsed?: number | null;
+  callTotalMinutes?: number | null;
+  dailyUsageTrusted?: boolean;
+  callJoinedAtMs?: number | null;
   onMinimize: () => void;
   onLeave: () => void;
   onToggleMic: () => void;
@@ -56,6 +60,7 @@ export function LiveCallModal(props: LiveCallModalProps) {
     participantUids, localStream, localScreenStream, remoteStreams, remoteScreenStreams,
     micEnabled, cameraEnabled, cameraAvailable, screenSharing, members, currentUserId,
     callLimitDeadlineAt, trustedParticipantCount = 0,
+    dailyMinutesUsed = null, callTotalMinutes = null, dailyUsageTrusted = false, callJoinedAtMs = null,
     onMinimize, onLeave, onToggleMic, onToggleCamera, onToggleScreenShare,
   } = props;
 
@@ -100,6 +105,21 @@ export function LiveCallModal(props: LiveCallModalProps) {
   const remainingLimitLabel = remainingLimitSeconds == null
     ? null
     : `${Math.floor(remainingLimitSeconds / 60)}:${String(remainingLimitSeconds % 60).padStart(2, '0')}`;
+  const dailyUsageUsed = dailyMinutesUsed == null || callTotalMinutes == null
+      ? null
+      : Math.min(
+        callTotalMinutes,
+        dailyMinutesUsed + (
+          trustedParticipantCount > 0 || callJoinedAtMs == null
+            ? 0
+            : Math.max(0, now.getTime() - callJoinedAtMs) / 60_000
+        ),
+      );
+  const dailyUsageLabel = dailyUsageTrusted
+    ? 'Unlimited daily allowance'
+    : dailyUsageUsed == null || callTotalMinutes == null
+      ? null
+      : `${Math.floor(dailyUsageUsed)} min used · ${Math.max(0, Math.ceil(callTotalMinutes - dailyUsageUsed))} min left today`;
 
   // Build the tile list: local first ("You"), then remotes. Screen-share tiles render above the grid.
   const tiles: { key: string; stream: MediaStream | null; name: string; mirrored: boolean; muted: boolean; cameraOn: boolean; micOn: boolean }[] = [
@@ -168,6 +188,11 @@ export function LiveCallModal(props: LiveCallModalProps) {
             {remainingLimitLabel && (
               <span className={`${tc.muted} ${tc.fontClass} text-xs shrink-0`}>
                 {remainingLimitLabel} left
+              </span>
+            )}
+            {dailyUsageLabel && (
+              <span className={`${tc.muted} ${tc.fontClass} text-xs shrink-0`}>
+                {dailyUsageLabel}
               </span>
             )}
             <svg className={`w-4 h-4 ${tc.muted} shrink-0`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">

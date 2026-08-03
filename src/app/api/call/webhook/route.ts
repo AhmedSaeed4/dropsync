@@ -6,9 +6,11 @@ import {
   deriveCallLimitFields,
   enforceExpiredCall,
   getCallParticipantJoinedAtMap,
+  getCallParticipantJoinedAtRecord,
   getCallTrustedReliefUids,
   getCallUsageStatesInTransaction,
   getTrustedStatusMapInTransaction,
+  reconcileTrustedCallTransitionInTransaction,
   reserveCallUsageInTransaction,
   settleCallUsageInTransaction,
 } from '../_lib';
@@ -109,13 +111,26 @@ async function removeParticipant(
       return { handled: true, callEnded: true, cascade: true, expired: false };
     }
 
+    const trustedTransition = await reconcileTrustedCallTransitionInTransaction(
+      txn,
+      db,
+      callDropId,
+      callData,
+      uids,
+      nextUids,
+      trustedByUid,
+      usageStates,
+      joinedAtByUid,
+      nowMs,
+    );
+
     await settleCallUsageInTransaction(
       txn,
       db,
       [uid],
       trustedByUid,
       callDropId,
-      joinedAtByUid,
+      trustedTransition.joinedAtByUid,
       new Set(trustedReliefUids),
       nowMs,
       usageStates,
@@ -133,16 +148,6 @@ async function removeParticipant(
         remainingMinutesByUid.set(nextUid, 0);
       }
     }
-    const nextTrustedReliefUids = trustedReliefUids.filter(
-      (reliefUid) => reliefUid !== uid && nextUids.includes(reliefUid),
-    );
-    const existingJoinedAt = callData.callParticipantJoinedAt && typeof callData.callParticipantJoinedAt === 'object'
-      ? callData.callParticipantJoinedAt as Record<string, unknown>
-      : {};
-    const nextJoinedAt: Record<string, unknown> = {};
-    for (const nextUid of nextUids) {
-      if (existingJoinedAt[nextUid] !== undefined) nextJoinedAt[nextUid] = existingJoinedAt[nextUid];
-    }
     const limitFields = deriveCallLimitFields(
       nextUids,
       trustedByUid,
@@ -153,8 +158,11 @@ async function removeParticipant(
     txn.delete(presenceRef);
     txn.update(callRef, {
       callParticipantUids: nextUids,
-      callParticipantJoinedAt: nextJoinedAt,
-      callTrustedReliefUids: nextTrustedReliefUids,
+      callParticipantJoinedAt: getCallParticipantJoinedAtRecord(
+        trustedTransition.joinedAtByUid,
+        nextUids,
+      ),
+      callTrustedReliefUids: trustedTransition.trustedReliefUids,
       trustedParticipantCount: limitFields.trustedParticipantCount,
       callLimitDeadlineAt: limitFields.callLimitDeadlineAt,
     });

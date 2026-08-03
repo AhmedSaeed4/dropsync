@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Timestamp } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
 import {
   CALL_LIMIT_MESSAGE,
@@ -7,9 +6,11 @@ import {
   deriveCallLimitFields,
   enforceExpiredCall,
   getLiveCallParticipantIds,
+  getCallParticipantJoinedAtMap,
+  getCallParticipantJoinedAtRecord,
   getCallUsageStatesInTransaction,
-  getCallTrustedReliefUids,
   getTrustedStatusMapInTransaction,
+  reconcileTrustedCallTransitionInTransaction,
   reserveCallUsageInTransaction,
   refreshCallLimitState,
 } from '../_lib';
@@ -108,8 +109,25 @@ export async function POST(request: NextRequest) {
           : [];
         const historyUids = [...new Set([...history, ...uids])];
         const updateRoster = async (nextUids: string[], requiredUid: string | null = null) => {
+          const callData = snap.data() || {};
           const trustedByUid = await getTrustedStatusMapInTransaction(txn, db, [...new Set([...historyUids, ...nextUids])]);
           const usageStates = await getCallUsageStatesInTransaction(txn, db, nextUids, nowMs);
+          const joinedAtByUid = getCallParticipantJoinedAtMap(callData, uids);
+          for (const nextUid of nextUids) {
+            if (!joinedAtByUid.has(nextUid)) joinedAtByUid.set(nextUid, nowMs);
+          }
+          const trustedTransition = await reconcileTrustedCallTransitionInTransaction(
+            txn,
+            db,
+            callDropId,
+            callData,
+            uids,
+            nextUids,
+            trustedByUid,
+            usageStates,
+            joinedAtByUid,
+            nowMs,
+          );
           const remainingMinutesByUid = new Map<string, number>();
           const reservations: { uid: string; state: CallUsageTransactionState }[] = [];
           for (const nextUid of nextUids) {
@@ -135,14 +153,6 @@ export async function POST(request: NextRequest) {
           for (const reservation of reservations) {
             reserveCallUsageInTransaction(txn, db, reservation.uid, callDropId, reservation.state, nowMs);
           }
-          const existingJoinedAt = data.callParticipantJoinedAt && typeof data.callParticipantJoinedAt === 'object'
-            ? data.callParticipantJoinedAt as Record<string, unknown>
-            : {};
-          const nextJoinedAt: Record<string, unknown> = {};
-          for (const nextUid of nextUids) {
-            if (existingJoinedAt[nextUid] !== undefined) nextJoinedAt[nextUid] = existingJoinedAt[nextUid];
-            else if (!uids.includes(nextUid)) nextJoinedAt[nextUid] = Timestamp.fromMillis(nowMs);
-          }
           const fields = deriveCallLimitFields(
             nextUids,
             trustedByUid,
@@ -153,8 +163,11 @@ export async function POST(request: NextRequest) {
           txn.update(callRef, {
             callParticipantUids: nextUids,
             callParticipantHistoryUids: [...new Set([...historyUids, ...nextUids])],
-            callParticipantJoinedAt: nextJoinedAt,
-            callTrustedReliefUids: getCallTrustedReliefUids(snap.data() || {}, nextUids, trustedByUid),
+            callParticipantJoinedAt: getCallParticipantJoinedAtRecord(
+              trustedTransition.joinedAtByUid,
+              nextUids,
+            ),
+            callTrustedReliefUids: trustedTransition.trustedReliefUids,
             trustedParticipantCount: fields.trustedParticipantCount,
             callLimitDeadlineAt: fields.callLimitDeadlineAt,
           });

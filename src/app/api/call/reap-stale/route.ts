@@ -7,9 +7,11 @@ import {
   deriveCallLimitFields,
   enforceExpiredCall,
   getCallParticipantJoinedAtMap,
+  getCallParticipantJoinedAtRecord,
   getCallTrustedReliefUids,
   getCallUsageStatesInTransaction,
   getTrustedStatusMapInTransaction,
+  reconcileTrustedCallTransitionInTransaction,
   reserveCallUsageInTransaction,
   settleCallUsageInTransaction,
 } from '../_lib';
@@ -97,13 +99,25 @@ export async function POST(request: NextRequest) {
           txn.delete(callRef);
           return { cascade: true, expired: false };
         }
+        const trustedTransition = await reconcileTrustedCallTransitionInTransaction(
+          txn,
+          db,
+          callDropId,
+          callData,
+          uids,
+          next,
+          trustedByUid,
+          usageStates,
+          joinedAtByUid,
+          nowMs,
+        );
         await settleCallUsageInTransaction(
           txn,
           db,
           [staleUid],
           trustedByUid,
           callDropId,
-          joinedAtByUid,
+          trustedTransition.joinedAtByUid,
           new Set(trustedReliefUids),
           nowMs,
           usageStates,
@@ -121,16 +135,6 @@ export async function POST(request: NextRequest) {
             remainingMinutesByUid.set(nextUid, 0);
           }
         }
-        const nextTrustedReliefUids = trustedReliefUids.filter(
-          (reliefUid) => reliefUid !== staleUid && next.includes(reliefUid),
-        );
-        const existingJoinedAt = data.callParticipantJoinedAt && typeof data.callParticipantJoinedAt === 'object'
-          ? data.callParticipantJoinedAt as Record<string, unknown>
-          : {};
-        const nextJoinedAt: Record<string, unknown> = {};
-        for (const nextUid of next) {
-          if (existingJoinedAt[nextUid] !== undefined) nextJoinedAt[nextUid] = existingJoinedAt[nextUid];
-        }
         const limitFields = deriveCallLimitFields(
           next,
           trustedByUid,
@@ -141,8 +145,11 @@ export async function POST(request: NextRequest) {
         txn.delete(presenceRef);
         txn.update(callRef, {
           callParticipantUids: next,
-          callParticipantJoinedAt: nextJoinedAt,
-          callTrustedReliefUids: nextTrustedReliefUids,
+          callParticipantJoinedAt: getCallParticipantJoinedAtRecord(
+            trustedTransition.joinedAtByUid,
+            next,
+          ),
+          callTrustedReliefUids: trustedTransition.trustedReliefUids,
           trustedParticipantCount: limitFields.trustedParticipantCount,
           callLimitDeadlineAt: limitFields.callLimitDeadlineAt,
         });

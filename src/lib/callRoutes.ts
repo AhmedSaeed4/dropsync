@@ -90,7 +90,15 @@ export async function getCallAccessRoute(): Promise<{
   return callRoute<{ canStart: boolean; trusted: boolean; resetAt: number | null }>('access', {});
 }
 
-/** Refresh trusted presence and the no-trusted deadline for an active call. */
-export async function syncCallLimitRoute(callDropId: string): Promise<void> {
-  await callRoute('sync', { callDropId });
+/** Refresh trusted presence, the no-trusted deadline, and daily usage for an active call. */
+export async function syncCallLimitRoute(callDropId: string): Promise<{
+  trustedParticipantCount: number;
+  deadlineAt: number | null;
+  expired: boolean;
+  ended: boolean;
+  minutesUsedToday: number;
+  callTotalMinutes: number;
+  trusted: boolean;
+}> {
+  return callRoute('sync', { callDropId });
 }

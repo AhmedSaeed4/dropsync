@@ -452,6 +452,10 @@ export function ClassicLayout(props: ClassicLayoutProps) {
           currentUserId={user?.uid}
           callLimitDeadlineAt={callState.callLimitDeadlineAt}
           trustedParticipantCount={callState.trustedParticipantCount}
+          dailyMinutesUsed={callState.dailyMinutesUsed}
+          callTotalMinutes={callState.callTotalMinutes}
+          dailyUsageTrusted={callState.dailyUsageTrusted}
+          callJoinedAtMs={callState.callJoinedAtMs}
           onMinimize={onMinimizeCall}
           onLeave={onLeaveCall}
           onToggleMic={callState.toggleMic}
