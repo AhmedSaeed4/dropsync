@@ -330,7 +330,9 @@ export async function setDropOrder(userId: string, spaceKey: string, order: stri
 export function getAuthProvider(): 'password' | 'google.com' | null {
   const user = auth.currentUser;
   if (!user) return null;
-  return user.providerData[0]?.providerId as 'password' | 'google.com' | null;
+  if (user.providerData.some((provider) => provider.providerId === 'password')) return 'password';
+  if (user.providerData.some((provider) => provider.providerId === 'google.com')) return 'google.com';
+  return null;
 }
 
 // Re-authenticate user (required for account deletion)
