@@ -19,6 +19,8 @@ import { useMentionEditor } from '@/hooks/useMentionEditor';
 import { useReminder, REMINDER_PRESETS } from '@/hooks/useReminder';
 import { useNow } from '@/hooks/useNow';
 import type { ReminderUnit } from '@/lib/drops';
+import type { AppState, BinaryFiles } from '@excalidraw/excalidraw/types';
+import type { ExcalidrawElement } from '@excalidraw/excalidraw/element/types';
 
 interface EditorialTextModalProps {
   onSubmit: (name: string, content: string, expiration: ExpirationOption, category?: string, imageFile?: File, categories?: string[], isDrawing?: boolean, locked?: boolean, reminderAt?: Date | null) => Promise<void>;
@@ -89,6 +91,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
   const [showCustomInput, setShowCustomInput] = useState(false);
   const [customCategoryName, setCustomCategoryName] = useState('');
   const [creatingCategory, setCreatingCategory] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   // Voice limit / transcription-failure message surfaced via <Toast> (the route's 429/413/500 error).
@@ -111,7 +114,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
   const [hasDrawn, setHasDrawn] = useState(false);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const [drawingFile, setDrawingFile] = useState<File | null>(null);
-  const [initialScene, setInitialScene] = useState<{ elements: any[]; appState: any; files?: any } | null>(null);
+  const [initialScene, setInitialScene] = useState<{ elements: ExcalidrawElement[]; appState: Omit<AppState, 'offsetTop' | 'offsetLeft' | 'width' | 'height'>; files?: BinaryFiles } | null>(null);
   const [extractingScene, setExtractingScene] = useState(isEditMode && !!editDrop?.isDrawing);
 
   // Load existing image for edit mode
@@ -149,7 +152,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
         const { loadFromBlob } = await import('@excalidraw/excalidraw');
         const scene = await loadFromBlob(blob, null, null);
         if (!cancelled) {
-          setInitialScene({ elements: scene.elements, appState: scene.appState, files: scene.files || undefined });
+           setInitialScene({ elements: [...scene.elements], appState: scene.appState, files: scene.files || undefined });
           if (scene.appState?.viewBackgroundColor) {
             setBgColor(scene.appState.viewBackgroundColor);
           }
@@ -463,6 +466,16 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
       setImageRemoved(false);
     }
   };
+
+  const fullscreenIcon = isFullscreen ? (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" />
+    </svg>
+  ) : (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m-4.5-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
+    </svg>
+  );
 
   return (
     <div
@@ -783,6 +796,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
                 <label className={`block text-xs ${tc.muted} ${tc.fontClass}`}>
                   Content
                 </label>
+                <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={toggleRecording}
@@ -814,45 +828,71 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
                     </>
                   )}
                 </button>
+                {!isFullscreen && (
+                  <button
+                    type="button"
+                    onClick={() => setIsFullscreen(!isFullscreen)}
+                    className={`flex items-center justify-center w-8 h-8 text-xs rounded-full border transition-colors ${tc.fontClass} ${tc.border} ${tc.text} ${tc.btnHoverBg} ${tc.btnHoverText}`}
+                    title="Fullscreen"
+                  >
+                    {fullscreenIcon}
+                  </button>
+                )}
+                </div>
               </div>
               {/* contentEditable mention editor: chips render live while typing, but the saved
                   value stays the plain #[Name](id) token string (see useMentionEditor). */}
-              <div className="relative">
-                {/* #-mention dropdown — floats just above the editor */}
-                {mention.showMention && mention.filteredMentionDrops.length > 0 && (
-                  <div
-                    ref={mention.dropdownRef}
-                    className={`absolute bottom-full left-0 right-0 z-50 mb-1 max-h-[240px] overflow-y-auto rounded-md border ${tc.border} ${tc.bg} shadow-lg`}
-                  >
-                    {mention.filteredMentionDrops.map((drop, idx) => (
-                      <EditorialDropPickerRow
-                        key={drop.id}
-                        drop={drop}
-                        selected={idx === mention.mentionIndex}
-                        attached={false}
-                        onSelect={mention.insertMention}
-                        theme={theme}
-                      />
-                    ))}
-                  </div>
-                )}
-                {content === '' && !mention.showMention && (
-                  <span className={`pointer-events-none absolute left-4 top-3 text-sm ${tc.fontClass} ${theme === 'dark' ? 'text-white/30' : 'text-[#1A1A1A]/30'}`}>
-                    Enter your text here...
-                  </span>
-                )}
-                <div
-                  ref={mention.editorRef}
-                  contentEditable
-                  suppressContentEditableWarning
-                  onInput={mention.handleInput}
-                  onKeyDown={mention.handleKeyDown}
-                  onBlur={mention.handleBlur}
-                  role="textbox"
-                  aria-multiline="true"
-                  className={`w-full border ${tc.border} ${tc.bg} ${tc.text} px-4 py-3 text-sm rounded-lg focus:outline-none focus:border-[#1a1a1a] transition-colors ${tc.fontClass} min-h-[140px] max-h-[300px] overflow-y-auto whitespace-pre-wrap break-words`}
-                />
-              </div>
+               <div
+                 className={isFullscreen ? 'fixed inset-0 z-[999] bg-black/40 flex items-center justify-center p-4' : 'relative'}
+                 onClick={(e) => isFullscreen && e.target === e.currentTarget && setIsFullscreen(false)}
+               >
+                 <div className={isFullscreen ? 'relative w-full h-[calc(100vh-32px)]' : 'relative'}>
+                   {/* #-mention dropdown — floats just above the editor */}
+                   {mention.showMention && mention.filteredMentionDrops.length > 0 && (
+                     <div
+                       ref={mention.dropdownRef}
+                       className={`absolute bottom-full left-0 right-0 z-50 mb-1 max-h-[240px] overflow-y-auto rounded-md border ${tc.border} ${tc.bg} shadow-lg`}
+                     >
+                       {mention.filteredMentionDrops.map((drop, idx) => (
+                         <EditorialDropPickerRow
+                           key={drop.id}
+                           drop={drop}
+                           selected={idx === mention.mentionIndex}
+                           attached={false}
+                           onSelect={mention.insertMention}
+                           theme={theme}
+                         />
+                       ))}
+                     </div>
+                   )}
+                   {content === '' && !mention.showMention && (
+                     <span className={`pointer-events-none absolute left-4 top-3 text-sm ${tc.fontClass} ${theme === 'dark' ? 'text-white/30' : 'text-[#1A1A1A]/30'}`}>
+                       Enter your text here...
+                     </span>
+                   )}
+                    {isFullscreen && (
+                      <button
+                        type="button"
+                        onClick={() => setIsFullscreen(!isFullscreen)}
+                        className={`absolute top-2 right-2 z-10 w-8 h-8 flex items-center justify-center ${tc.btnBg} ${tc.text} ${tc.btnHoverBg} ${tc.btnHoverText} ${tc.roundedClass} transition-colors`}
+                        title="Exit fullscreen"
+                      >
+                        {fullscreenIcon}
+                      </button>
+                    )}
+                   <div
+                     ref={mention.editorRef}
+                     contentEditable
+                     suppressContentEditableWarning
+                     onInput={mention.handleInput}
+                     onKeyDown={mention.handleKeyDown}
+                     onBlur={mention.handleBlur}
+                     role="textbox"
+                     aria-multiline="true"
+                     className={`w-full border ${tc.border} ${tc.bg} ${tc.text} px-4 py-3 text-sm rounded-lg focus:outline-none focus:border-[#1a1a1a] transition-colors ${tc.fontClass} ${isFullscreen ? 'h-full min-h-0' : 'min-h-[140px] max-h-[300px]'} overflow-y-auto whitespace-pre-wrap break-words`}
+                   />
+                 </div>
+               </div>
             </div>
           )}
 

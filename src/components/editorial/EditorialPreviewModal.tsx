@@ -45,6 +45,7 @@ export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoadin
   const [copied, setCopied] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const isImage = drop.mimeType?.startsWith('image/');
   const isVideo = drop.mimeType?.startsWith('video/');
   const isText = isTextFile(drop);
@@ -236,6 +237,16 @@ export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoadin
     }
   };
 
+  const fullscreenIcon = isFullscreen ? (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" />
+    </svg>
+  ) : (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m-4.5-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
+    </svg>
+  );
+
   return (
     <div
       className={`fixed inset-0 bg-[#1a1a1a]/60 flex items-center justify-center z-50 p-4 transition-colors duration-300 overscroll-contain`}
@@ -313,16 +324,29 @@ export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoadin
           {!isLoading && drop.type === 'text' && (drop.content || drop.imageData) && (
             <div className="p-5 space-y-4">
               {drop.content && (
-                <div className={`border ${tc.border} ${tc.bg} rounded-lg p-4`}>
-                  <pre className={`text-sm ${tc.fontClass} ${tc.text} whitespace-pre-wrap break-all`}>
-                    <DropMentionContent
-                      content={drop.content}
-                      allDrops={allDrops}
-                      onPreview={onPreview}
-                      foundClassName={`inline-flex items-center mx-0.5 px-1.5 py-0.5 align-middle rounded text-[13px] ${tc.fontClass} ${tc.activePillBg} ${tc.activePillText} hover:opacity-80`}
-                      deletedClassName={`inline-flex items-center mx-0.5 px-1.5 py-0.5 align-middle rounded text-[13px] ${tc.fontClass} ${tc.inactivePillBg} ${tc.muted} line-through cursor-not-allowed`}
-                    />
-                  </pre>
+                <div
+                  className={isFullscreen ? 'fixed inset-0 z-[999] bg-black/40 flex items-center justify-center p-4' : 'relative'}
+                  onClick={(e) => isFullscreen && e.target === e.currentTarget && setIsFullscreen(false)}
+                >
+                  <div className={`relative border ${tc.border} ${tc.bg} rounded-lg ${isFullscreen ? 'w-full h-[calc(100vh-32px)] overflow-hidden p-4' : 'p-4'}`}>
+                    <button
+                      type="button"
+                      onClick={() => setIsFullscreen(!isFullscreen)}
+                      className={`absolute top-2 right-2 z-10 w-8 h-8 flex items-center justify-center ${tc.btnBg} ${tc.text} ${tc.btnHoverBg} ${tc.btnHoverText} ${tc.roundedClass} transition-colors`}
+                      title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+                    >
+                      {fullscreenIcon}
+                    </button>
+                    <pre className={`text-sm ${tc.fontClass} ${tc.text} whitespace-pre-wrap break-all ${isFullscreen ? 'h-full overflow-y-auto' : ''}`}>
+                      <DropMentionContent
+                        content={drop.content}
+                        allDrops={allDrops}
+                        onPreview={onPreview}
+                        foundClassName={`inline-flex items-center mx-0.5 px-1.5 py-0.5 align-middle rounded text-[13px] ${tc.fontClass} ${tc.activePillBg} ${tc.activePillText} hover:opacity-80`}
+                        deletedClassName={`inline-flex items-center mx-0.5 px-1.5 py-0.5 align-middle rounded text-[13px] ${tc.fontClass} ${tc.inactivePillBg} ${tc.muted} line-through cursor-not-allowed`}
+                      />
+                    </pre>
+                  </div>
                 </div>
               )}
               {drop.imageData && (
