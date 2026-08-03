@@ -2,7 +2,6 @@
 
 import { useState, useEffect, createContext, useContext, ReactNode } from 'react';
 import { onAuthChange, signInWithGoogle, signOut, signUpWithEmail, signInWithEmail, sendPasswordReset, resendVerificationEmail, getAuthProvider, reauthenticateUser } from '@/lib/auth';
-import { auth } from '@/lib/firebase';
 import { User } from '@/types';
 
 interface AuthContextType {
@@ -29,7 +28,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const unsubscribe = onAuthChange((authUser) => {
       if (authUser) {
         // Add provider detection
-        const providerId = auth.currentUser?.providerData[0]?.providerId as 'password' | 'google.com' | undefined;
+        const providerId = getAuthProvider() ?? undefined;
         setUser({ ...authUser, providerId });
       } else {
         setUser(null);
@@ -43,7 +42,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const handleSignIn = async () => {
     const user = await signInWithGoogle();
     if (user) {
-      setUser(user);
+      setUser({ ...user, providerId: getAuthProvider() ?? undefined });
     }
   };
 
@@ -60,7 +59,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const handleSignInWithEmail = async (email: string, password: string) => {
     const result = await signInWithEmail(email, password);
     if (result.user) {
-      setUser(result.user);
+      setUser({ ...result.user, providerId: getAuthProvider() ?? undefined });
     }
     return { error: result.error, needsVerification: result.needsVerification };
   };
