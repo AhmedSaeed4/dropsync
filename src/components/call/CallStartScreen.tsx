@@ -108,7 +108,7 @@ export function CallStartScreen({
             setStarting(false);
           });
         }}
-        className={`w-full ${hoverable ? tc.activePillBg : tc.inactivePillBg} ${hoverable ? tc.activePillText : tc.muted} py-3 text-sm ${tc.rounded} ${tc.fontClass} transition-opacity flex items-center justify-center gap-2 enabled:hover:opacity-90 enabled:active:scale-[0.98] disabled:cursor-not-allowed`}
+         className={`w-full ${hoverable && (canStart || !!accessError) ? tc.activePillBg : tc.inactivePillBg} ${hoverable && (canStart || !!accessError) ? tc.activePillText : tc.muted} py-3 text-sm ${tc.rounded} ${tc.fontClass} transition-opacity flex items-center justify-center gap-2 enabled:hover:opacity-90 enabled:active:scale-[0.98] disabled:cursor-not-allowed`}
       >
         {starting || accessLoading ? (
           <span className="w-4 h-4 border border-current/30 border-t-current animate-spin rounded-full" />
@@ -124,7 +124,7 @@ export function CallStartScreen({
       )}
       {hoverable && !accessLoading && !canStart && (
         <p className={`${tc.fontClass} ${tc.muted} text-xs text-center`}>
-          {accessError || 'Your daily call allowance has been used. You can still join a call with a trusted user.'}
+           {accessError || 'Your daily call allowance has been used. You can still join a call with a trusted user. It resets at midnight UTC.'}
         </p>
       )}
     </div>

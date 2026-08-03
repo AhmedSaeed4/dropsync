@@ -359,11 +359,13 @@ export interface CallLimitSnapshot {
   trustedParticipantCount: number;
   deadlineAtMs: number | null;
   endReason: string | null;
+  participantJoinedAtMs: number | null;
 }
 
 /** Subscribe to the server-owned call limit state and terminal end reason. */
 export function subscribeToCallLimit(
   callDropId: string,
+  uid: string,
   cb: (state: CallLimitSnapshot) => void,
 ): () => void {
   let cancelled = false;
@@ -372,7 +374,7 @@ export function subscribeToCallLimit(
     (snap) => {
       if (cancelled) return;
       if (!snap.exists()) {
-        cb({ exists: false, callState: null, trustedParticipantCount: 0, deadlineAtMs: null, endReason: null });
+        cb({ exists: false, callState: null, trustedParticipantCount: 0, deadlineAtMs: null, endReason: null, participantJoinedAtMs: null });
         return;
       }
       const data = snap.data() as {
@@ -380,7 +382,9 @@ export function subscribeToCallLimit(
         trustedParticipantCount?: unknown;
         callLimitDeadlineAt?: { toMillis?: unknown } | null;
         callEndReason?: unknown;
+        callParticipantJoinedAt?: Record<string, { toMillis?: unknown }> | null;
       };
+      const joinedAt = data.callParticipantJoinedAt?.[uid];
       cb({
         exists: true,
         callState: typeof data.callState === 'string' ? data.callState : null,
@@ -389,6 +393,7 @@ export function subscribeToCallLimit(
           ? data.callLimitDeadlineAt.toMillis()
           : null,
         endReason: typeof data.callEndReason === 'string' ? data.callEndReason : null,
+        participantJoinedAtMs: typeof joinedAt?.toMillis === 'function' ? joinedAt.toMillis() : null,
       });
     },
     () => {

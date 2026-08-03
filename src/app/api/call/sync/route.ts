@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminDb } from '@/lib/firebase-admin';
-import { authUid, enforceExpiredCall, refreshCallLimitState } from '../_lib';
+import {
+  CALL_TOTAL_MINUTES,
+  authUid,
+  enforceExpiredCall,
+  isTrustedCallUser,
+  normalizeCallUsage,
+  refreshCallLimitState,
+} from '../_lib';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -43,11 +50,17 @@ export async function POST(request: NextRequest) {
         state = await refreshCallLimitState(db, callDropId, nowMs);
       }
     }
+    const usageSnap = await db.collection('callUsage').doc(uidOrErr).get();
+    const usage = normalizeCallUsage(usageSnap.data(), nowMs);
+    const trusted = await isTrustedCallUser(db, uidOrErr);
     return NextResponse.json({
       trustedParticipantCount: state.trustedParticipantCount,
       deadlineAt: state.deadlineMs,
       expired: state.expired,
       ended,
+      minutesUsedToday: usage.minutesUsedToday,
+      callTotalMinutes: CALL_TOTAL_MINUTES,
+      trusted,
     });
   } catch (error) {
     console.error('[call/sync] failed:', error);
