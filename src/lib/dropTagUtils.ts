@@ -98,5 +98,6 @@ export function detectMentionTrigger(textBeforeCursor: string): { query: string;
 export function contentToPlainText(content: string): string {
   return parseMessageContent(content)
     .map(p => (p.type === 'text' ? p.value : p.name) ?? '')
-    .join('');
+    .join('')
+    .replace(/\u00A0/g, ' ');
 }

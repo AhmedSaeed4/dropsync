@@ -31,7 +31,7 @@ function serializeNode(node: Node): string {
   node.childNodes.forEach((child) => {
     if (child.nodeType === Node.TEXT_NODE) {
       // Strip the zero-width spaces we insert after chips for caret placement.
-      out += (child.textContent || '').replace(/\u200B/g, '');
+      out += (child.textContent || '').replace(/\u200B/g, '').replace(/\u00A0/g, ' ');
     } else if (child.nodeType === Node.ELEMENT_NODE) {
       const el = child as HTMLElement;
       if (el.classList && el.classList.contains('mention-chip')) {
