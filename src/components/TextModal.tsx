@@ -18,6 +18,8 @@ import { useMentionEditor } from '@/hooks/useMentionEditor';
 import { useReminder, REMINDER_PRESETS } from '@/hooks/useReminder';
 import { useNow } from '@/hooks/useNow';
 import type { ReminderUnit } from '@/lib/drops';
+import type { AppState, BinaryFiles } from '@excalidraw/excalidraw/types';
+import type { ExcalidrawElement } from '@excalidraw/excalidraw/element/types';
 
 interface TextModalProps {
   onSubmit: (name: string, content: string, expiration: ExpirationOption, category?: string, imageFile?: File, categories?: string[], isDrawing?: boolean, locked?: boolean, reminderAt?: Date | null) => Promise<void>;
@@ -110,6 +112,7 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
   const [showCustomInput, setShowCustomInput] = useState(false);
   const [customCategoryName, setCustomCategoryName] = useState('');
   const [creatingCategory, setCreatingCategory] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   // Voice limit / transcription-failure message surfaced via <Toast> (the route's 429/413/500 error).
@@ -141,7 +144,7 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
   const [hasDrawn, setHasDrawn] = useState(false);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const [drawingFile, setDrawingFile] = useState<File | null>(null);
-  const [initialScene, setInitialScene] = useState<{ elements: any[]; appState: any; files?: any } | null>(null);
+  const [initialScene, setInitialScene] = useState<{ elements: ExcalidrawElement[]; appState: Omit<AppState, 'offsetTop' | 'offsetLeft' | 'width' | 'height'>; files?: BinaryFiles } | null>(null);
   const [extractingScene, setExtractingScene] = useState(isEditMode && !!editDrop?.isDrawing);
 
   // contentEditable mention editor — renders #[Name](id) tokens as inline chips while typing,
@@ -191,7 +194,7 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
         const { loadFromBlob } = await import('@excalidraw/excalidraw');
         const scene = await loadFromBlob(blob, null, null);
         if (!cancelled) {
-          setInitialScene({ elements: scene.elements, appState: scene.appState, files: scene.files || undefined });
+           setInitialScene({ elements: [...scene.elements], appState: scene.appState, files: scene.files || undefined });
           if (scene.appState?.viewBackgroundColor) {
             setBgColor(scene.appState.viewBackgroundColor);
           }
@@ -875,42 +878,63 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
             </div>
             {/* contentEditable mention editor: chips render live while typing, but the saved
                 value stays the plain #[Name](id) token string (see useMentionEditor). */}
-            <div className="relative">
-              {/* #-mention dropdown — floats just above the editor */}
-              {mention.showMention && mention.filteredMentionDrops.length > 0 && (
-                <div
-                  ref={mention.dropdownRef}
-                  className={`absolute bottom-full left-0 right-0 z-50 mb-1 max-h-[240px] overflow-y-auto border ${tc.borderColor} ${tc.bgColor} ${isMinimal ? 'rounded-lg' : ''} shadow-lg`}
-                >
-                  {mention.filteredMentionDrops.map((drop, idx) => (
-                    <DropPickerRow
-                      key={drop.id}
-                      drop={drop}
-                      selected={idx === mention.mentionIndex}
-                      attached={false}
-                      onSelect={mention.insertMention}
-                      theme={theme}
-                    />
-                  ))}
-                </div>
-              )}
-              {content === '' && !mention.showMention && (
-                <span className={`pointer-events-none absolute left-4 top-3 text-sm ${isMinimal ? 'font-sans' : 'font-mono'} ${tc.placeholderColor}`}>
-                  {isMinimal ? 'Enter your text here...' : 'ENTER_CONTENT_HERE...'}
-                </span>
-              )}
-              <div
-                ref={mention.editorRef}
-                contentEditable
-                suppressContentEditableWarning
-                onInput={mention.handleInput}
-                onKeyDown={mention.handleKeyDown}
-                onBlur={mention.handleBlur}
-                role="textbox"
-                aria-multiline="true"
-                className={`w-full border ${tc.borderColor} ${tc.inputBg} ${tc.textColor} px-4 py-3 text-sm ${isMinimal ? 'font-sans' : 'font-mono'} focus:outline-none focus:ring-2 focus:ring-[#1A1A1A] focus:border-transparent transition-colors duration-300 ${tc.roundedClass} min-h-[160px] max-h-[320px] overflow-y-auto whitespace-pre-wrap break-words`}
-              />
-            </div>
+             <div
+               className={isFullscreen ? 'fixed inset-0 z-[999] bg-black/40 flex items-center justify-center p-4' : 'relative'}
+               onClick={(e) => isFullscreen && e.target === e.currentTarget && setIsFullscreen(false)}
+             >
+               <div className={isFullscreen ? 'relative w-full h-[calc(100vh-32px)]' : 'relative'}>
+                 {/* #-mention dropdown — floats just above the editor */}
+                 {mention.showMention && mention.filteredMentionDrops.length > 0 && (
+                   <div
+                     ref={mention.dropdownRef}
+                     className={`absolute bottom-full left-0 right-0 z-50 mb-1 max-h-[240px] overflow-y-auto border ${tc.borderColor} ${tc.bgColor} ${isMinimal ? 'rounded-lg' : ''} shadow-lg`}
+                   >
+                     {mention.filteredMentionDrops.map((drop, idx) => (
+                       <DropPickerRow
+                         key={drop.id}
+                         drop={drop}
+                         selected={idx === mention.mentionIndex}
+                         attached={false}
+                         onSelect={mention.insertMention}
+                         theme={theme}
+                       />
+                     ))}
+                   </div>
+                 )}
+                 {content === '' && !mention.showMention && (
+                   <span className={`pointer-events-none absolute left-4 top-3 text-sm ${isMinimal ? 'font-sans' : 'font-mono'} ${tc.placeholderColor}`}>
+                     {isMinimal ? 'Enter your text here...' : 'ENTER_CONTENT_HERE...'}
+                   </span>
+                 )}
+                 <button
+                   type="button"
+                   onClick={() => setIsFullscreen(!isFullscreen)}
+                   className={`absolute top-2 right-2 z-10 w-8 h-8 flex items-center justify-center ${isMinimal ? 'bg-[#1A1A1A]/10 hover:bg-[#1A1A1A]/20' : isDark ? 'bg-white/10 hover:bg-white/20' : 'bg-[#1A1A1A]/10 hover:bg-[#1A1A1A]/20'} ${tc.textColor} ${isMinimal ? tc.roundedClass : ''} transition-colors`}
+                   title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+                 >
+                   {isFullscreen ? (
+                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                       <path strokeLinecap="round" strokeLinejoin="round" d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" />
+                     </svg>
+                   ) : (
+                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                       <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m-4.5-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
+                     </svg>
+                   )}
+                 </button>
+                 <div
+                   ref={mention.editorRef}
+                   contentEditable
+                   suppressContentEditableWarning
+                   onInput={mention.handleInput}
+                   onKeyDown={mention.handleKeyDown}
+                   onBlur={mention.handleBlur}
+                   role="textbox"
+                   aria-multiline="true"
+                   className={`w-full border ${tc.borderColor} ${tc.inputBg} ${tc.textColor} px-4 py-3 text-sm ${isMinimal ? 'font-sans' : 'font-mono'} focus:outline-none focus:ring-2 focus:ring-[#1A1A1A] focus:border-transparent transition-colors duration-300 ${tc.roundedClass} ${isFullscreen ? 'h-full min-h-0' : 'min-h-[160px] max-h-[320px]'} overflow-y-auto whitespace-pre-wrap break-words`}
+                 />
+               </div>
+             </div>
           </div>
           )}
 
