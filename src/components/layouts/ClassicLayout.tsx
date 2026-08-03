@@ -484,7 +484,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
           onClose={() => setEditDrop(null)}
           theme={theme}
           customCategories={categories.map(c => c.name)}
-          onCreateCategory={undefined}
+          onCreateCategory={handleCreateCategory}
           editDrop={editDrop}
           onEdit={handleEditSubmit}
           currentUserId={user?.uid}
