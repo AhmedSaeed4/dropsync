@@ -6,9 +6,14 @@ import {
   CALL_PRESENCE_STALE_MS,
   cascadeCallSubcollections,
   enforceExpiredCall,
+  getCallParticipantJoinedAtMap,
+  getCallTrustedReliefUids,
+  getCallUsageStatesInTransaction,
   getLiveKitRoomService,
   getLiveKitRoomParticipantCount,
+  getTrustedStatusMapInTransaction,
   refreshCallLimitState,
+  settleCallUsageInTransaction,
 } from '../_lib';
 
 export const runtime = 'nodejs';
@@ -73,6 +78,22 @@ async function endAbandonedCall(
     ) {
       return false;
     }
+    const participantUids = Array.isArray(current?.callParticipantUids)
+      ? current.callParticipantUids.filter((uid): uid is string => typeof uid === 'string')
+      : [];
+    const trustedByUid = await getTrustedStatusMapInTransaction(txn, db, participantUids);
+    const usageStates = await getCallUsageStatesInTransaction(txn, db, participantUids, nowMs);
+    await settleCallUsageInTransaction(
+      txn,
+      db,
+      participantUids,
+      trustedByUid,
+      callDoc.id,
+      getCallParticipantJoinedAtMap(current || {}, participantUids),
+      new Set(getCallTrustedReliefUids(current || {}, participantUids, trustedByUid)),
+      nowMs,
+      usageStates,
+    );
     txn.update(callDoc.ref, {
       callState: 'ended',
       callEndReason: 'room_abandoned',

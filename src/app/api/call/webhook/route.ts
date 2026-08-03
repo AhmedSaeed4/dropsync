@@ -5,7 +5,12 @@ import {
   cascadeCallSubcollections,
   deriveCallLimitFields,
   enforceExpiredCall,
+  getCallParticipantJoinedAtMap,
+  getCallTrustedReliefUids,
+  getCallUsageStatesInTransaction,
   getTrustedStatusMapInTransaction,
+  reserveCallUsageInTransaction,
+  settleCallUsageInTransaction,
 } from '../_lib';
 
 export const runtime = 'nodejs';
@@ -69,7 +74,8 @@ async function removeParticipant(
       return { handled: true, callEnded: true, cascade: false, expired: true };
     }
 
-    const rawUids = snap.data()?.callParticipantUids;
+    const callData = snap.data() || {};
+    const rawUids = callData.callParticipantUids;
     const uids = Array.isArray(rawUids)
       ? rawUids.filter((value): value is string => typeof value === 'string')
       : [];
@@ -79,19 +85,76 @@ async function removeParticipant(
       return { handled: true, callEnded: false, cascade: false, expired: false };
     }
 
+    const trustedByUid = await getTrustedStatusMapInTransaction(txn, db, uids);
+    const usageStates = await getCallUsageStatesInTransaction(txn, db, uids, nowMs);
+    const joinedAtByUid = getCallParticipantJoinedAtMap(callData, uids);
+    const trustedReliefUids = getCallTrustedReliefUids(callData, uids, trustedByUid);
+
     const nextUids = uids.filter((value) => value !== uid);
 
     if (nextUids.length === 0) {
+      await settleCallUsageInTransaction(
+        txn,
+        db,
+        uids,
+        trustedByUid,
+        callDropId,
+        joinedAtByUid,
+        new Set(trustedReliefUids),
+        nowMs,
+        usageStates,
+      );
       txn.delete(presenceRef);
       txn.delete(callRef);
       return { handled: true, callEnded: true, cascade: true, expired: false };
     }
 
-    const trustedByUid = await getTrustedStatusMapInTransaction(txn, db, nextUids);
-    const limitFields = deriveCallLimitFields(nextUids, trustedByUid, currentDeadlineMs, nowMs);
+    await settleCallUsageInTransaction(
+      txn,
+      db,
+      [uid],
+      trustedByUid,
+      callDropId,
+      joinedAtByUid,
+      new Set(trustedReliefUids),
+      nowMs,
+      usageStates,
+    );
+    const remainingMinutesByUid = new Map<string, number>();
+    for (const nextUid of nextUids) {
+      if (trustedByUid.get(nextUid) === true) continue;
+      const state = usageStates.get(nextUid);
+      const reservedMinutes = state
+        ? reserveCallUsageInTransaction(txn, db, nextUid, callDropId, state, nowMs)
+        : null;
+      if (reservedMinutes != null) {
+        remainingMinutesByUid.set(nextUid, reservedMinutes);
+      } else if (!state || state.reservedCallId === null) {
+        remainingMinutesByUid.set(nextUid, 0);
+      }
+    }
+    const nextTrustedReliefUids = trustedReliefUids.filter(
+      (reliefUid) => reliefUid !== uid && nextUids.includes(reliefUid),
+    );
+    const existingJoinedAt = callData.callParticipantJoinedAt && typeof callData.callParticipantJoinedAt === 'object'
+      ? callData.callParticipantJoinedAt as Record<string, unknown>
+      : {};
+    const nextJoinedAt: Record<string, unknown> = {};
+    for (const nextUid of nextUids) {
+      if (existingJoinedAt[nextUid] !== undefined) nextJoinedAt[nextUid] = existingJoinedAt[nextUid];
+    }
+    const limitFields = deriveCallLimitFields(
+      nextUids,
+      trustedByUid,
+      currentDeadlineMs,
+      nowMs,
+      remainingMinutesByUid,
+    );
     txn.delete(presenceRef);
     txn.update(callRef, {
       callParticipantUids: nextUids,
+      callParticipantJoinedAt: nextJoinedAt,
+      callTrustedReliefUids: nextTrustedReliefUids,
       trustedParticipantCount: limitFields.trustedParticipantCount,
       callLimitDeadlineAt: limitFields.callLimitDeadlineAt,
     });
@@ -122,6 +185,7 @@ async function removeParticipant(
 async function finishRoom(callDropId: string, roomSid: string): Promise<CleanupDecision> {
   const db = getAdminDb();
   const callRef = db.collection('drops').doc(callDropId);
+  const nowMs = Date.now();
 
   const decision = await db.runTransaction(async (txn): Promise<CleanupDecision> => {
     const snap = await txn.get(callRef);
@@ -134,6 +198,29 @@ async function finishRoom(callDropId: string, roomSid: string): Promise<CleanupD
     if (snap.data()?.livekitRoomSid !== roomSid) {
       return { handled: false, callEnded: false, cascade: false, expired: false };
     }
+
+    if (snap.data()?.callState !== 'live') {
+      // Expired calls keep their terminal reason briefly so clients can show why they ended.
+      return { handled: true, callEnded: false, cascade: false, expired: false };
+    }
+
+    const callData = snap.data() || {};
+    const participantUids = Array.isArray(callData.callParticipantUids)
+      ? callData.callParticipantUids.filter((uid): uid is string => typeof uid === 'string')
+      : [];
+    const trustedByUid = await getTrustedStatusMapInTransaction(txn, db, participantUids);
+    const usageStates = await getCallUsageStatesInTransaction(txn, db, participantUids, nowMs);
+    await settleCallUsageInTransaction(
+      txn,
+      db,
+      participantUids,
+      trustedByUid,
+      callDropId,
+      getCallParticipantJoinedAtMap(callData, participantUids),
+      new Set(getCallTrustedReliefUids(callData, participantUids, trustedByUid)),
+      nowMs,
+      usageStates,
+    );
 
     txn.delete(callRef);
     return { handled: true, callEnded: true, cascade: true, expired: false };

@@ -72,6 +72,7 @@ export function useLiveKitCall({ userId, callDropId, workspaceMembers }: UseLive
   // The LiveKit room lives in a ref (NOT state) so it persists across the modal's minimize/unmount
   // cycle — exactly how useCallMesh kept its peer connections alive above the modal.
   const roomRef = useRef<Room | null>(null);
+  const joiningRef = useRef(false);
   const leftRef = useRef(false); // guard against double-leave
   const activeCallDropIdRef = useRef<string | null>(null);
   const adoptedPreviewRef = useRef<MediaStream | null>(null);
@@ -290,10 +291,12 @@ export function useLiveKitCall({ userId, callDropId, workspaceMembers }: UseLive
 
   const joinCall = useCallback(
     async (id: string) => {
+      if (joiningRef.current || roomRef.current || status === 'joining' || status === 'joined') return;
       if (!userId) {
         setError('Sign in to join the call.');
         throw new Error('Sign in to join the call.');
       }
+      joiningRef.current = true;
       setStatus('joining');
       setError(null);
       setCallEndReason(null);
@@ -303,25 +306,22 @@ export function useLiveKitCall({ userId, callDropId, workspaceMembers }: UseLive
       activeCallDropIdRef.current = id;
       // No stale screen-share state leaks into the new call (no-op if none).
       mediaRef.current.stopScreenShare();
-      // Local media: the adopted preview stream if the host just handed one off (no re-acquire, no
-      // camera blink), else acquire fresh (a joiner has no preview).
-      if (adoptedPreviewRef.current) {
-        media.adoptStream(adoptedPreviewRef.current);
-        adoptedPreviewRef.current = null;
-      } else {
-        const s = await media.acquire();
-        if (!s) {
-          setStatus('idle'); // error already surfaced by useCallMedia
-          activeCallDropIdRef.current = null;
-          return;
-        }
-      }
       let rosterJoined = false;
       let createdRoom: Room | null = null;
       try {
-        // Roster seat first (throws 409 with the exact capacity message), then mint a LiveKit token.
+        // Reserve the server-side seat before asking for camera/microphone permission. A full or
+        // expired call must never trigger a browser permission prompt.
         await joinCallRoute(id);
         rosterJoined = true;
+        // Local media: the adopted preview stream if the host just handed one off (no re-acquire, no
+        // camera blink), else acquire fresh (a joiner has no preview).
+        if (adoptedPreviewRef.current) {
+          media.adoptStream(adoptedPreviewRef.current);
+          adoptedPreviewRef.current = null;
+        } else {
+          const s = await media.acquire();
+          if (!s) throw new Error(media.error || 'Could not access camera or microphone.');
+        }
         const { token, url } = await getCallTokenRoute(id);
         const room = new Room({
           // adaptiveStream OFF. With it ON, LiveKit shrinks the RECEIVED stream to match the tile's
@@ -386,11 +386,16 @@ export function useLiveKitCall({ userId, callDropId, workspaceMembers }: UseLive
         }
         activeCallDropIdRef.current = null;
         // release the media we just acquired/adopted (stop + clear ref so a retry acquires fresh)
+        const abandonedPreview = adoptedPreviewRef.current;
+        adoptedPreviewRef.current = null;
+        abandonedPreview?.getTracks().forEach((track) => track.stop());
         mediaRef.current.releaseStream();
         throw e;
+      } finally {
+        joiningRef.current = false;
       }
     },
-    [userId, media, wireRoom, publishLocalCameraMic, rebuildRemoteStreams, syncParticipantUids],
+    [userId, status, media, wireRoom, publishLocalCameraMic, rebuildRemoteStreams, syncParticipantUids],
   );
 
   const leaveCall = useCallback(
@@ -440,6 +445,23 @@ export function useLiveKitCall({ userId, callDropId, workspaceMembers }: UseLive
     const id = setInterval(() => void syncCallLimitRoute(callDropId).catch(() => {}), 30_000);
     return () => clearInterval(id);
   }, [userId, callDropId, status]);
+
+  // Ask the server to enforce immediately when the displayed deadline reaches zero. The server
+  // remains authoritative; this timer only reduces the overrun when a foreground tab is active.
+  useEffect(() => {
+    if (
+      !userId ||
+      !callDropId ||
+      status !== 'joined' ||
+      callLimitDeadlineAt == null ||
+      trustedParticipantCount > 0
+    ) return;
+    const delayMs = Math.max(0, callLimitDeadlineAt - Date.now());
+    const id = setTimeout(() => {
+      void syncCallLimitRoute(callDropId).catch(() => {});
+    }, delayMs);
+    return () => clearTimeout(id);
+  }, [userId, callDropId, status, callLimitDeadlineAt, trustedParticipantCount]);
 
   // A tier change is reflected as soon as the participant's own user document changes. The periodic
   // sync and the scheduled server check cover participants whose browser is not active.

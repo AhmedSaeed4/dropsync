@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { Timestamp } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
 import {
   CALL_LIMIT_MESSAGE,
@@ -6,9 +7,13 @@ import {
   deriveCallLimitFields,
   enforceExpiredCall,
   getLiveCallParticipantIds,
+  getCallUsageStatesInTransaction,
+  getCallTrustedReliefUids,
   getTrustedStatusMapInTransaction,
+  reserveCallUsageInTransaction,
   refreshCallLimitState,
 } from '../_lib';
+import type { CallUsageTransactionState } from '../_lib';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -70,6 +75,7 @@ export async function POST(request: NextRequest) {
       | { kind: 'notfound' }
       | { kind: 'notmember' }
       | { kind: 'expired' }
+      | { kind: 'limited'; resetAtMs: number }
       | { kind: 'already' }
       | { kind: 'full' }
       | { kind: 'joined' };
@@ -92,32 +98,67 @@ export async function POST(request: NextRequest) {
         if (currentDeadlineMs != null && currentDeadlineMs <= nowMs) {
           return { kind: 'expired' as const };
         }
-        const data = snap.data() as { callState?: string; callParticipantUids?: unknown };
+        const data = snap.data() as { callState?: string; callParticipantUids?: unknown; callParticipantJoinedAt?: unknown };
         if (data.callState !== 'live') return { kind: 'notfound' as const };
         const uids = Array.isArray(data.callParticipantUids)
           ? (data.callParticipantUids as unknown[]).filter((u): u is string => typeof u === 'string')
           : [];
-        const updateRoster = async (nextUids: string[]) => {
-          const trustedByUid = await getTrustedStatusMapInTransaction(txn, db, nextUids);
+        const history = Array.isArray(snap.data()?.callParticipantHistoryUids)
+          ? (snap.data()?.callParticipantHistoryUids as unknown[]).filter((u): u is string => typeof u === 'string')
+          : [];
+        const historyUids = [...new Set([...history, ...uids])];
+        const updateRoster = async (nextUids: string[], requiredUid: string | null = null) => {
+          const trustedByUid = await getTrustedStatusMapInTransaction(txn, db, [...new Set([...historyUids, ...nextUids])]);
+          const usageStates = await getCallUsageStatesInTransaction(txn, db, nextUids, nowMs);
+          const remainingMinutesByUid = new Map<string, number>();
+          const reservations: { uid: string; state: CallUsageTransactionState }[] = [];
+          for (const nextUid of nextUids) {
+            if (trustedByUid.get(nextUid) === true) continue;
+            const state = usageStates.get(nextUid);
+            const reservedMinutes = state
+              ? state.reservedCallId === callDropId && state.minutesReservedToday > 0
+                ? state.minutesReservedToday
+                : state.reservedCallId === null
+                  ? state.minutesRemaining
+                  : null
+              : null;
+            if (reservedMinutes == null) {
+              if (nextUid === requiredUid) return { limited: true, resetAtMs: state?.resetAtMs ?? nowMs };
+              if (state && state.reservedCallId === null && state.minutesRemaining <= 0) {
+                remainingMinutesByUid.set(nextUid, 0);
+              }
+              continue;
+            }
+            remainingMinutesByUid.set(nextUid, reservedMinutes);
+            if (state) reservations.push({ uid: nextUid, state });
+          }
+          for (const reservation of reservations) {
+            reserveCallUsageInTransaction(txn, db, reservation.uid, callDropId, reservation.state, nowMs);
+          }
+          const existingJoinedAt = data.callParticipantJoinedAt && typeof data.callParticipantJoinedAt === 'object'
+            ? data.callParticipantJoinedAt as Record<string, unknown>
+            : {};
+          const nextJoinedAt: Record<string, unknown> = {};
+          for (const nextUid of nextUids) {
+            if (existingJoinedAt[nextUid] !== undefined) nextJoinedAt[nextUid] = existingJoinedAt[nextUid];
+            else if (!uids.includes(nextUid)) nextJoinedAt[nextUid] = Timestamp.fromMillis(nowMs);
+          }
           const fields = deriveCallLimitFields(
             nextUids,
             trustedByUid,
             currentDeadlineMs,
             nowMs,
+            remainingMinutesByUid,
           );
           txn.update(callRef, {
             callParticipantUids: nextUids,
+            callParticipantHistoryUids: [...new Set([...historyUids, ...nextUids])],
+            callParticipantJoinedAt: nextJoinedAt,
+            callTrustedReliefUids: getCallTrustedReliefUids(snap.data() || {}, nextUids, trustedByUid),
             trustedParticipantCount: fields.trustedParticipantCount,
             callLimitDeadlineAt: fields.callLimitDeadlineAt,
           });
-        };
-        const updateLimitFields = async (nextUids: string[]) => {
-          const trustedByUid = await getTrustedStatusMapInTransaction(txn, db, nextUids);
-          const fields = deriveCallLimitFields(nextUids, trustedByUid, currentDeadlineMs, nowMs);
-          return {
-            trustedParticipantCount: fields.trustedParticipantCount,
-            callLimitDeadlineAt: fields.callLimitDeadlineAt,
-          };
+          return { limited: false, resetAtMs: nowMs };
         };
         // RECONCILE (ghost prune). liveIds non-null means (per getLiveCallParticipantIds) LiveKit is
         // reachable AND ≥1 participant IS connected → the room is genuinely live, so a roster uid that
@@ -134,25 +175,30 @@ export async function POST(request: NextRequest) {
           const cleaned = uids.filter((u) => liveIds.has(u));
           if (cleaned.length !== uids.length) {
             if (cleaned.includes(uid)) {
-              await updateRoster(cleaned);
+              const update = await updateRoster(cleaned);
+              if (update.limited) return { kind: 'limited' as const, resetAtMs: update.resetAtMs };
               return { kind: 'already' as const };
             }
             if (cleaned.length >= CALL_MAX_PARTICIPANTS) {
-              await updateRoster(cleaned);
+              const update = await updateRoster(cleaned);
+              if (update.limited) return { kind: 'limited' as const, resetAtMs: update.resetAtMs };
               return { kind: 'full' as const };
             }
             const next = [...cleaned, uid];
-            await updateRoster(next);
+            const update = await updateRoster(next, uid);
+            if (update.limited) return { kind: 'limited' as const, resetAtMs: update.resetAtMs };
             return { kind: 'joined' as const };
           }
         }
         if (uids.includes(uid)) {
-          txn.update(callRef, await updateLimitFields(uids));
+          const update = await updateRoster(uids);
+          if (update.limited) return { kind: 'limited' as const, resetAtMs: update.resetAtMs };
           return { kind: 'already' as const };
         }
         if (uids.length >= CALL_MAX_PARTICIPANTS) return { kind: 'full' as const };
         const next = [...uids, uid];
-        await updateRoster(next);
+        const update = await updateRoster(next, uid);
+        if (update.limited) return { kind: 'limited' as const, resetAtMs: update.resetAtMs };
         return { kind: 'joined' as const };
       });
     } catch (err) {
@@ -169,6 +215,12 @@ export async function POST(request: NextRequest) {
     if (result.kind === 'expired') {
       await enforceExpiredCall(db, callDropId, nowMs);
       return NextResponse.json({ error: CALL_LIMIT_MESSAGE }, { status: 410 });
+    }
+    if (result.kind === 'limited') {
+      return NextResponse.json(
+        { error: CALL_LIMIT_MESSAGE, resetAt: result.resetAtMs },
+        { status: 429 },
+      );
     }
     if (result.kind === 'full') {
       return NextResponse.json({ error: CALL_FULL_MESSAGE }, { status: 409 });

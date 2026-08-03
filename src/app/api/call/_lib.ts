@@ -3,15 +3,22 @@
 // 4 route files.
 
 import { NextRequest, NextResponse } from 'next/server';
-import { FieldValue, Timestamp, type Firestore, type Transaction } from 'firebase-admin/firestore';
+import {
+  FieldValue,
+  Timestamp,
+  type DocumentData,
+  type Firestore,
+  type Transaction,
+} from 'firebase-admin/firestore';
 import { RoomServiceClient } from 'livekit-server-sdk';
 import { getAdminAuth } from '@/lib/firebase-admin';
 
 export const CALL_LIMIT_MS = 30 * 60 * 1000;
+export const CALL_TOTAL_MINUTES = CALL_LIMIT_MS / 60_000;
 export const CALL_PRESENCE_STALE_MS = 60_000;
 export const ABANDONED_CALL_GRACE_MS = 10 * 60 * 1000;
 export const CALL_LIMIT_MESSAGE =
-  'Your 30-minute call limit has been reached. You can still join a call with a trusted user.';
+  'Your 30-minute daily call allowance has been used. You can still join a call with a trusted user.';
 
 export type CallLimitState = {
   exists: boolean;
@@ -74,6 +81,19 @@ export type CallLimitFields = {
   callLimitDeadlineAt: Timestamp | null;
 };
 
+export type CallUsageState = {
+  limited: boolean;
+  resetAtMs: number;
+  minutesUsedToday: number;
+  minutesRemaining: number;
+  reservedCallId: string | null;
+  minutesReservedToday: number;
+};
+
+export type CallUsageTransactionState = CallUsageState & {
+  minutesReservedToday: number;
+};
+
 /**
  * Read trusted status from the same transaction snapshot as the call roster. Every read happens
  * before callers issue writes, so a tier or owner change conflicts with the transaction instead of
@@ -114,16 +134,25 @@ export function deriveCallLimitFields(
   trustedByUid: Map<string, boolean>,
   existingDeadlineMs: number | null,
   nowMs = Date.now(),
+  remainingMinutesByUid?: Map<string, number>,
 ): CallLimitFields {
   const trustedParticipantCount = participantUids.filter(
     (uid) => trustedByUid.get(uid) === true,
   ).length;
+  const participantDeadlines = participantUids
+    .filter((uid) => trustedByUid.get(uid) !== true)
+    .map((uid) => {
+      const remainingMinutes = remainingMinutesByUid?.get(uid);
+      return nowMs + (remainingMinutes == null ? CALL_LIMIT_MS : Math.max(0, remainingMinutes * 60_000));
+    });
+  const deadlineCandidates = [
+    ...(existingDeadlineMs == null ? [] : [existingDeadlineMs]),
+    ...participantDeadlines,
+  ];
   const deadlineMs =
     trustedParticipantCount > 0
       ? null
-      : existingDeadlineMs == null
-        ? nowMs + CALL_LIMIT_MS
-        : existingDeadlineMs;
+      : Math.min(...(deadlineCandidates.length > 0 ? deadlineCandidates : [nowMs + CALL_LIMIT_MS]));
 
   return {
     trustedParticipantCount,
@@ -142,32 +171,192 @@ export function nextUtcMidnightMs(nowMs = Date.now()): number {
   return next.getTime();
 }
 
-/** Read the current user's server-only daily call lock. */
+function roundMinutes(minutes: number): number {
+  return Math.round(minutes * 1000) / 1000;
+}
+
+function normalizeCallUsage(
+  data: DocumentData | undefined,
+  nowMs: number,
+): CallUsageTransactionState {
+  const dayKey = utcDayKey(nowMs);
+  const isToday = data?.dayKey === dayKey;
+  // A legacy dayKey without minutesUsedToday represented a fully consumed day.
+  const legacyLocked = isToday && typeof data?.minutesUsedToday !== 'number';
+  const minutesUsedToday = isToday
+    ? Math.min(CALL_TOTAL_MINUTES, Math.max(0, legacyLocked ? CALL_TOTAL_MINUTES : Number(data?.minutesUsedToday) || 0))
+    : 0;
+  // Keep an active reservation across midnight. Clearing it here would let a participant start a
+  // second call while the first call is still active, effectively granting a second allowance.
+  const minutesReservedToday = typeof data?.reservedCallId === 'string'
+    ? Math.max(0, Number(data?.minutesReservedToday) || 0)
+    : 0;
+  const reservedCallId = typeof data?.reservedCallId === 'string' ? data.reservedCallId : null;
+  const minutesRemaining = Math.max(0, CALL_TOTAL_MINUTES - minutesUsedToday);
+
+  return {
+    limited: minutesRemaining <= 0 || reservedCallId !== null,
+    resetAtMs: nextUtcMidnightMs(nowMs),
+    minutesUsedToday,
+    minutesRemaining,
+    reservedCallId,
+    minutesReservedToday,
+  };
+}
+
+/** Read the current user's server-only daily call usage and active reservation. */
 export async function getCallUsageState(
   db: Firestore,
   uid: string,
   nowMs = Date.now(),
-): Promise<{ limited: boolean; resetAtMs: number }> {
+): Promise<CallUsageState> {
   const snap = await db.collection('callUsage').doc(uid).get();
-  const limited = snap.exists && snap.data()?.dayKey === utcDayKey(nowMs);
-  return { limited, resetAtMs: nextUtcMidnightMs(nowMs) };
+  const state = normalizeCallUsage(snap.data(), nowMs);
+  if (!state.reservedCallId) return state;
+  const reservationCall = await db.collection('drops').doc(state.reservedCallId).get();
+  if (reservationCall.exists && reservationCall.data()?.callState === 'live') return state;
+  return {
+    ...state,
+    limited: state.minutesRemaining <= 0,
+    minutesReservedToday: 0,
+    reservedCallId: null,
+  };
 }
 
-/** Add today's usage locks to the same transaction that ends the call. */
-export function markCallUsageLimitedInTransaction(
+/** Read usage documents before any transaction writes are issued. */
+export async function getCallUsageStatesInTransaction(
+  txn: Transaction,
+  db: Firestore,
+  uids: string[],
+  nowMs = Date.now(),
+): Promise<Map<string, CallUsageTransactionState>> {
+  const states = new Map<string, CallUsageTransactionState>();
+  for (const uid of [...new Set(uids)]) {
+    const snap = await txn.get(db.collection('callUsage').doc(uid));
+    const state = normalizeCallUsage(snap.data(), nowMs);
+    if (state.reservedCallId) {
+      const reservationCall = await txn.get(db.collection('drops').doc(state.reservedCallId));
+      if (!reservationCall.exists || reservationCall.data()?.callState !== 'live') {
+        states.set(uid, {
+          ...state,
+          limited: state.minutesRemaining <= 0,
+          minutesReservedToday: 0,
+          reservedCallId: null,
+        });
+        continue;
+      }
+    }
+    states.set(uid, state);
+  }
+  return states;
+}
+
+/** Reserve the user's remaining daily allowance for one active call atomically. */
+export function reserveCallUsageInTransaction(
+  txn: Transaction,
+  db: Firestore,
+  uid: string,
+  callDropId: string,
+  state: CallUsageTransactionState,
+  nowMs = Date.now(),
+): number | null {
+  if (state.reservedCallId !== null && state.reservedCallId !== callDropId) return null;
+  const remainingMinutes = state.reservedCallId === callDropId && state.minutesReservedToday > 0
+    ? state.minutesReservedToday
+    : state.minutesRemaining;
+  if (remainingMinutes <= 0) return null;
+
+  if (state.reservedCallId !== callDropId) {
+    txn.set(
+      db.collection('callUsage').doc(uid),
+      {
+        dayKey: utcDayKey(nowMs),
+        minutesUsedToday: state.minutesUsedToday,
+        minutesReservedToday: remainingMinutes,
+        reservedCallId: callDropId,
+        reservedAt: Timestamp.fromMillis(nowMs),
+        resetAt: Timestamp.fromMillis(nextUtcMidnightMs(nowMs)),
+      },
+      { merge: true },
+    );
+  }
+  return remainingMinutes;
+}
+
+export function getCallParticipantJoinedAtMap(
+  data: DocumentData,
+  participantUids: string[],
+): Map<string, number> {
+  const joinedAt = data.callParticipantJoinedAt && typeof data.callParticipantJoinedAt === 'object'
+    ? data.callParticipantJoinedAt as Record<string, unknown>
+    : {};
+  const fallback = timestampMs(data.callStartedAt) ?? timestampMs(data.createdAt) ?? Date.now();
+  return new Map(
+    participantUids.map((uid) => [uid, timestampMs(joinedAt[uid]) ?? fallback]),
+  );
+}
+
+export function getCallTrustedReliefUids(
+  data: DocumentData,
+  participantUids: string[],
+  trustedByUid: Map<string, boolean>,
+): string[] {
+  const existing = Array.isArray(data.callTrustedReliefUids)
+    ? data.callTrustedReliefUids.filter(
+        (uid): uid is string => typeof uid === 'string' && participantUids.includes(uid),
+      )
+    : [];
+  const trustedPresent = participantUids.some((uid) => trustedByUid.get(uid) === true);
+  const currentNonTrusted = trustedPresent
+    ? participantUids.filter((uid) => trustedByUid.get(uid) !== true)
+    : [];
+  return [...new Set([...existing, ...currentNonTrusted])];
+}
+
+/** Charge each participant for their own joined interval and release their reservation. */
+export async function settleCallUsageInTransaction(
   txn: Transaction,
   db: Firestore,
   participantUids: string[],
   trustedByUid: Map<string, boolean>,
+  callDropId: string,
+  joinedAtByUid: Map<string, number>,
+  trustedReliefUids: Set<string>,
   nowMs = Date.now(),
-): void {
+  preloadedUsageStates?: Map<string, CallUsageTransactionState>,
+): Promise<void> {
   const dayKey = utcDayKey(nowMs);
-  const resetAt = Timestamp.fromMillis(nextUtcMidnightMs(nowMs));
-  for (const uid of participantUids) {
-    if (trustedByUid.get(uid) === true) continue;
+  const usageStates = preloadedUsageStates ?? await getCallUsageStatesInTransaction(txn, db, participantUids, nowMs);
+  for (const uid of [...new Set(participantUids)]) {
+    const state = usageStates.get(uid);
+    if (!state) continue;
+    if (trustedByUid.get(uid) === true || trustedReliefUids.has(uid)) {
+      if (state.reservedCallId === callDropId) {
+        txn.set(
+          db.collection('callUsage').doc(uid),
+          { minutesReservedToday: 0, reservedCallId: null, reservedAt: null },
+          { merge: true },
+        );
+      }
+      continue;
+    }
+    const joinedAtMs = joinedAtByUid.get(uid) ?? nowMs;
+    const chargeMinutes = roundMinutes(Math.max(0, nowMs - joinedAtMs) / 60_000);
+    const nextUsed = Math.min(CALL_TOTAL_MINUTES, roundMinutes(state.minutesUsedToday + chargeMinutes));
+    const usage: Record<string, unknown> = {
+      dayKey,
+      minutesUsedToday: nextUsed,
+      resetAt: Timestamp.fromMillis(nextUtcMidnightMs(nowMs)),
+      limitedAt: nextUsed >= CALL_TOTAL_MINUTES ? Timestamp.fromMillis(nowMs) : null,
+    };
+    if (state.reservedCallId === callDropId) {
+      usage.minutesReservedToday = 0;
+      usage.reservedCallId = null;
+      usage.reservedAt = null;
+    }
     txn.set(
       db.collection('callUsage').doc(uid),
-      { dayKey, limitedAt: Timestamp.fromMillis(nowMs), resetAt },
+      usage,
       { merge: true },
     );
   }
@@ -213,15 +402,31 @@ export async function refreshCallLimitState(
     }
 
     const trustedByUid = await getTrustedStatusMapInTransaction(txn, db, participantUids);
+    const usageStates = await getCallUsageStatesInTransaction(txn, db, participantUids, nowMs);
+    const remainingMinutesByUid = new Map<string, number>();
+    for (const uid of participantUids) {
+      if (trustedByUid.get(uid) === true) continue;
+      const state = usageStates.get(uid);
+      const reservedMinutes = state
+        ? reserveCallUsageInTransaction(txn, db, uid, callDropId, state, nowMs)
+        : null;
+      if (reservedMinutes != null) {
+        remainingMinutesByUid.set(uid, reservedMinutes);
+      } else if (!state || state.reservedCallId === null) {
+        remainingMinutesByUid.set(uid, 0);
+      }
+    }
     const limitFields = deriveCallLimitFields(
       participantUids,
       trustedByUid,
       timestampMs(data.callLimitDeadlineAt),
       nowMs,
+      remainingMinutesByUid,
     );
     txn.update(callRef, {
       trustedParticipantCount: limitFields.trustedParticipantCount,
       callLimitDeadlineAt: limitFields.callLimitDeadlineAt,
+      callTrustedReliefUids: getCallTrustedReliefUids(data, participantUids, trustedByUid),
     });
 
     return {
@@ -255,22 +460,36 @@ export async function enforceExpiredCall(
     const participantUids = Array.isArray(rawUids)
       ? rawUids.filter((uid): uid is string => typeof uid === 'string')
       : [];
+    const callData = snap.data() || {};
     const trustedByUid = await getTrustedStatusMapInTransaction(txn, db, participantUids);
-    const limitFields = deriveCallLimitFields(participantUids, trustedByUid, deadlineMs, nowMs);
+    const limitTrustedByUid = new Map(
+      participantUids.map((uid) => [uid, trustedByUid.get(uid) === true]),
+    );
+    const limitFields = deriveCallLimitFields(participantUids, limitTrustedByUid, deadlineMs, nowMs);
     if (limitFields.deadlineMs == null || limitFields.deadlineMs > nowMs) {
       txn.update(callRef, {
         trustedParticipantCount: limitFields.trustedParticipantCount,
         callLimitDeadlineAt: limitFields.callLimitDeadlineAt,
+        callTrustedReliefUids: getCallTrustedReliefUids(callData, participantUids, trustedByUid),
       });
       return { ended: false, participantUids: [] };
     }
+    await settleCallUsageInTransaction(
+      txn,
+      db,
+      participantUids,
+      trustedByUid,
+      callDropId,
+      getCallParticipantJoinedAtMap(callData, participantUids),
+      new Set(getCallTrustedReliefUids(callData, participantUids, trustedByUid)),
+      nowMs,
+    );
     txn.update(callRef, {
       callState: 'ended',
       callEndReason: 'untrusted_time_limit',
       callEndedAt: Timestamp.fromMillis(nowMs),
       updatedAt: FieldValue.serverTimestamp(),
     });
-    markCallUsageLimitedInTransaction(txn, db, participantUids, trustedByUid, nowMs);
     return { ended: true, participantUids };
   });
 
