@@ -19,11 +19,13 @@ interface CallStartScreenProps {
   theme: CallTheme;
   variant: CallVariant;
   hoverable: boolean;
-  /** Server decision for whether this user may start a call today. */
+  /** Server decision for whether this user may use more call time today. */
   canStart?: boolean;
   accessLoading?: boolean;
+  accessError?: string | null;
+  onRefreshAccess?: () => Promise<void>;
   /** Fired with the preview stream (ownership handed off) when the host presses Start. */
-  onStart: (stream: MediaStream | null) => void;
+  onStart: (stream: MediaStream | null) => void | Promise<void>;
 }
 
 export function CallStartScreen({
@@ -32,6 +34,8 @@ export function CallStartScreen({
   hoverable,
   canStart = true,
   accessLoading = false,
+  accessError = null,
+  onRefreshAccess,
   onStart,
 }: CallStartScreenProps) {
   const { stream, error, acquiring, handoffStream } = useCallPreview(hoverable && canStart && !accessLoading);
@@ -91,11 +95,18 @@ export function CallStartScreen({
       {/* ONE full-width primary Start button — NOT a form submit. Desktop-gated. */}
       <button
         type="button"
-        disabled={!hoverable || starting || accessLoading || !canStart}
+        disabled={!hoverable || starting || accessLoading || (!canStart && !accessError)}
         onClick={() => {
-          if (accessLoading || !canStart) return;
+          if (accessLoading) return;
+          if (accessError) {
+            void onRefreshAccess?.();
+            return;
+          }
+          if (!canStart) return;
           setStarting(true);
-          onStart(handoffStream());
+          void Promise.resolve(onStart(handoffStream())).catch(() => {
+            setStarting(false);
+          });
         }}
         className={`w-full ${hoverable ? tc.activePillBg : tc.inactivePillBg} ${hoverable ? tc.activePillText : tc.muted} py-3 text-sm ${tc.rounded} ${tc.fontClass} transition-opacity flex items-center justify-center gap-2 enabled:hover:opacity-90 enabled:active:scale-[0.98] disabled:cursor-not-allowed`}
       >
@@ -106,14 +117,14 @@ export function CallStartScreen({
             <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
           </svg>
         )}
-        {starting ? 'Connecting…' : accessLoading ? 'Checking access…' : canStart ? 'Start call' : 'Call limit reached'}
+        {starting ? 'Connecting…' : accessLoading ? 'Checking access…' : accessError ? 'Try again' : canStart ? 'Start call' : 'Daily allowance used'}
       </button>
       {!hoverable && (
         <p className={`${tc.fontClass} ${tc.muted} text-xs text-center`}>Calls are desktop-only.</p>
       )}
       {hoverable && !accessLoading && !canStart && (
         <p className={`${tc.fontClass} ${tc.muted} text-xs text-center`}>
-          Your 30-minute call limit has been reached. You can still join a call with a trusted user.
+          {accessError || 'Your daily call allowance has been used. You can still join a call with a trusted user.'}
         </p>
       )}
     </div>

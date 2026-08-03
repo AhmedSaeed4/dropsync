@@ -7,7 +7,7 @@
 import { auth } from './firebase';
 
 export const CALL_LIMIT_MESSAGE =
-  'Your 30-minute call limit has been reached. You can still join a call with a trusted user.';
+  'Your 30-minute daily call allowance has been used. You can still join a call with a trusted user.';
 
 async function callRoute<T = unknown>(path: string, body: Record<string, unknown>): Promise<T> {
   const user = auth.currentUser;
@@ -36,8 +36,14 @@ async function callRoute<T = unknown>(path: string, body: Record<string, unknown
  * deterministic doc id `drops/call-{workspaceId}` — if a live call already exists it returns that
  * id (intent: starting another just joins the existing one). Returns the call drop id to join.
  */
-export async function startCallRoute(workspaceId: string): Promise<{ callDropId: string }> {
-  return callRoute<{ callDropId: string }>('start', { workspaceId });
+export async function startCallRoute(workspaceId: string): Promise<{
+  callDropId: string;
+  created?: boolean;
+  callHostUid?: string;
+  creatorName?: string;
+  callParticipantUids?: string[];
+}> {
+  return callRoute('start', { workspaceId });
 }
 
 /** Join a call. Throws (status 409) with the exact capacity message when the call is full. */
@@ -75,7 +81,7 @@ export async function getCallTokenRoute(
   return callRoute<{ token: string; url: string; roomName: string }>('token', { callDropId });
 }
 
-/** Fetch the server decision for whether this user may START a call today. */
+/** Fetch the server decision for whether this user may use more call time today. */
 export async function getCallAccessRoute(): Promise<{
   canStart: boolean;
   trusted: boolean;

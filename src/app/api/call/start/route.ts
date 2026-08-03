@@ -3,14 +3,14 @@ import { getAdminDb } from '@/lib/firebase-admin';
 import { Timestamp, FieldValue } from 'firebase-admin/firestore';
 import {
   CALL_LIMIT_MESSAGE,
-  CALL_LIMIT_MS,
+  CALL_TOTAL_MINUTES,
   authUid,
   cascadeCallSubcollections,
   enforceExpiredCall,
-  getCallUsageState,
+  getCallUsageStatesInTransaction,
   getLiveKitRoomService,
   getTrustedStatusMapInTransaction,
-  isTrustedCallUser,
+  reserveCallUsageInTransaction,
   refreshCallLimitState,
 } from '../_lib';
 
@@ -47,17 +47,6 @@ export async function POST(request: NextRequest) {
     const members: unknown = wsSnap.data()?.members;
     if (!Array.isArray(members) || !members.includes(uid)) {
       return NextResponse.json({ error: 'Not a member of this workspace' }, { status: 403 });
-    }
-
-    const trusted = await isTrustedCallUser(db, uid);
-    if (!trusted) {
-      const usage = await getCallUsageState(db, uid);
-      if (usage.limited) {
-        return NextResponse.json(
-          { error: CALL_LIMIT_MESSAGE, resetAt: usage.resetAtMs },
-          { status: 429 },
-        );
-      }
     }
 
     // Host display name (creatorName) — profiles/{uid}.displayName, else users/{uid}.email prefix.
@@ -102,15 +91,6 @@ export async function POST(request: NextRequest) {
               return NextResponse.json({ callDropId: callDocId });
             }
           }
-          if (!trusted) {
-            const usage = await getCallUsageState(db, uid, nowMs);
-            if (usage.limited) {
-              return NextResponse.json(
-                { error: CALL_LIMIT_MESSAGE, resetAt: usage.resetAtMs },
-                { status: 429 },
-              );
-            }
-          }
         } else {
           return NextResponse.json({ callDropId: callDocId });
         }
@@ -130,32 +110,61 @@ export async function POST(request: NextRequest) {
       livekitRoomSid = room.sid;
     } catch (err) {
       console.error('call/start room creation failed:', err);
+      try {
+        const current = await callRef.get();
+        if (current.data()?.callState !== 'live') await roomService.deleteRoom(callDocId);
+      } catch (cleanupError) {
+        console.warn('call/start room-creation cleanup failed:', cleanupError);
+      }
       return NextResponse.json({ error: 'Failed to start call' }, { status: 500 });
     }
 
-    let joinedExisting = false;
+    const cleanupCreatedRoom = async () => {
+      const current = await callRef.get();
+      const currentData = current.data();
+      if (currentData?.callState === 'live') return;
+      await roomService.deleteRoom(callDocId);
+    };
+
+    let decision:
+      | { kind: 'created' }
+      | { kind: 'existing' }
+      | { kind: 'limited'; resetAtMs: number };
     try {
-      joinedExisting = await db.runTransaction(async (txn) => {
+      decision = await db.runTransaction(async (txn) => {
         const snap = await txn.get(callRef);
         if (snap.exists) {
           const data = snap.data() as {
             callState?: string;
           };
           if (data.callState === 'live') {
-            return true; // a live call already exists → starting another just joins it
+            return { kind: 'existing' as const }; // a live call already exists → join it
           }
           // stale/dead call in the slot → fall through; set() below overwrites it wholesale
         }
         const trustedByUid = await getTrustedStatusMapInTransaction(txn, db, [uid]);
         const trustedForCall = trustedByUid.get(uid) === true;
+        const usageStates = await getCallUsageStatesInTransaction(txn, db, [uid], nowMs);
+        const usage = usageStates.get(uid);
+        const remainingMinutes = trustedForCall
+          ? CALL_TOTAL_MINUTES
+          : usage
+            ? reserveCallUsageInTransaction(txn, db, uid, callDocId, usage, nowMs)
+            : null;
+        if (!trustedForCall && remainingMinutes == null) {
+          return { kind: 'limited' as const, resetAtMs: usage?.resetAtMs ?? nowMs };
+        }
         txn.set(callRef, {
           type: 'call',
           userId: uid,
            name: 'Live call',
            creatorName: hostDisplayName,
-           callHostUid: uid,
-           callParticipantUids: [uid],
-           workspaceId,
+            callHostUid: uid,
+            callParticipantUids: [uid],
+            callParticipantHistoryUids: [uid],
+            callParticipantJoinedAt: { [uid]: Timestamp.fromMillis(nowMs) },
+            callTrustedReliefUids: [],
+            workspaceId,
            callState: 'live',
            callStartedAt: FieldValue.serverTimestamp(),
            createdAt: FieldValue.serverTimestamp(),
@@ -163,22 +172,59 @@ export async function POST(request: NextRequest) {
             expirationOption: 'forever',
             livekitRoomSid,
             trustedParticipantCount: trustedForCall ? 1 : 0,
-            callLimitDeadlineAt: trustedForCall ? null : Timestamp.fromMillis(nowMs + CALL_LIMIT_MS),
+            callLimitDeadlineAt: trustedForCall
+              ? null
+              : Timestamp.fromMillis(nowMs + (remainingMinutes as number) * 60_000),
           });
-        return false;
+        return { kind: 'created' as const };
       });
     } catch (err) {
       console.error('call/start transaction failed:', err);
+      try {
+        await cleanupCreatedRoom();
+      } catch (cleanupError) {
+        console.warn('call/start failed-room cleanup failed:', cleanupError);
+      }
       return NextResponse.json({ error: 'Failed to start call' }, { status: 500 });
     }
 
-    if (!joinedExisting) {
+    if (decision.kind === 'limited') {
+      try {
+        await cleanupCreatedRoom();
+      } catch (cleanupError) {
+        console.warn('call/start limited-room cleanup failed:', cleanupError);
+      }
+      return NextResponse.json(
+        { error: CALL_LIMIT_MESSAGE, resetAt: decision.resetAtMs },
+        { status: 429 },
+      );
+    }
+
+    if (decision.kind === 'existing') {
+      // The deterministic LiveKit room is already owned by the existing call. The safety check in
+      // cleanupCreatedRoom avoids deleting that room if LiveKit returned it for the duplicate start.
+      await cleanupCreatedRoom().catch((cleanupError) => {
+        console.warn('call/start existing-room cleanup skipped:', cleanupError);
+      });
+    }
+
+    if (decision.kind === 'created') {
       // We (re)created the call. Cascade clears any subcollection leftovers from a replaced stale
       // call (the new call has none yet, so this is a no-op for a clean create). Best-effort.
       cascadeCallSubcollections(db, callDocId).catch(() => {});
     }
 
-    return NextResponse.json({ callDropId: callDocId });
+    const currentCall = await callRef.get();
+    const currentData = currentCall.data();
+    return NextResponse.json({
+      callDropId: callDocId,
+      created: decision.kind === 'created',
+      callHostUid: typeof currentData?.callHostUid === 'string' ? currentData.callHostUid : uid,
+      creatorName: typeof currentData?.creatorName === 'string' ? currentData.creatorName : hostDisplayName,
+      callParticipantUids: Array.isArray(currentData?.callParticipantUids)
+        ? currentData.callParticipantUids.filter((value): value is string => typeof value === 'string')
+        : [uid],
+    });
   } catch (error) {
     console.error('call/start error:', error);
     return NextResponse.json({ error: 'Failed to start call' }, { status: 500 });

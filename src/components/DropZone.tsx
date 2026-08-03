@@ -21,9 +21,11 @@ interface DropZoneProps {
   mentionableDrops?: Drop[];
   // LIVE CALL: page handler invoked after the start route creates the call drop. Receives the
   // callDropId + the preview stream (the mesh adopts the stream + joins).
-  onStartCall?: (callDropId: string, stream: MediaStream | null) => void;
+  onStartCall?: (callDropId: string, stream: MediaStream | null, callInfo?: { created?: boolean; callHostUid?: string; creatorName?: string; callParticipantUids?: string[] }) => void | Promise<void>;
   callCanStart?: boolean;
   callAccessLoading?: boolean;
+  callAccessError?: string | null;
+  onRefreshCallAccess?: () => Promise<void>;
 }
 
 const EXPIRATION_OPTIONS: { value: ExpirationOption; label: string }[] = [
@@ -45,6 +47,8 @@ export function DropZone({
   onStartCall,
   callCanStart = true,
   callAccessLoading = false,
+  callAccessError = null,
+  onRefreshCallAccess,
 }: DropZoneProps) {
   const { user } = useAuth();
   const [isDragging, setIsDragging] = useState(false);
@@ -137,8 +141,8 @@ export function DropZone({
       return;
     }
     try {
-      const { callDropId } = await startCallRoute(workspaceId);
-      onStartCall?.(callDropId, stream);
+       const result = await startCallRoute(workspaceId);
+       await onStartCall?.(result.callDropId, stream, result);
     } catch (err) {
       stream?.getTracks().forEach((track) => track.stop());
       console.error('Failed to start call:', err);
@@ -412,6 +416,8 @@ export function DropZone({
           onStartCall={handleStartCall}
           callCanStart={callCanStart}
           callAccessLoading={callAccessLoading}
+          callAccessError={callAccessError}
+          onRefreshCallAccess={onRefreshCallAccess}
         />
       )}
 

@@ -501,31 +501,44 @@ export default function Home() {
 
   // Host pressed Start in the create-modal's Call mode. Adopt the preview stream (no camera blink),
   // set the active call drop (the real doc hydrates via createDropListener within ~1s), and join.
-  const handleStartCall = async (callDropId: string, stream: MediaStream | null) => {
+  const handleStartCall = async (
+    callDropId: string,
+    stream: MediaStream | null,
+    callInfo?: { created?: boolean; callHostUid?: string; creatorName?: string; callParticipantUids?: string[] },
+  ) => {
     if (!user) return;
     retractFooterIfUp();
     callState.adoptPreviewStream(stream);
     const hostName = user.displayName || user.email?.split('@')[0] || 'Host';
-    setActiveCallDrop({
-      id: callDropId,
-      userId: user.uid,
-      type: 'call',
-      name: 'Live call',
-      creatorName: hostName,
-      callHostUid: user.uid,
-      callParticipantUids: [user.uid],
-      workspaceId: currentWorkspaceId,
-      callState: 'live',
-      createdAt: new Date(),
-      callStartedAt: new Date(),
-       expiresAt: null,
-       expirationOption: 'forever',
-    });
+    const existingCall = drops.find((drop) => drop.id === callDropId && drop.type === 'call');
+    setActiveCallDrop(existingCall
+      ? {
+          ...existingCall,
+          creatorName: callInfo?.creatorName || existingCall.creatorName,
+          callHostUid: callInfo?.callHostUid || existingCall.callHostUid,
+          callParticipantUids: callInfo?.callParticipantUids || existingCall.callParticipantUids,
+        }
+      : {
+          id: callDropId,
+          userId: callInfo?.callHostUid || user.uid,
+          type: 'call',
+          name: 'Live call',
+          creatorName: callInfo?.creatorName || hostName,
+          callHostUid: callInfo?.callHostUid || user.uid,
+          callParticipantUids: callInfo?.callParticipantUids || [user.uid],
+          workspaceId: currentWorkspaceId,
+          callState: 'live',
+          createdAt: new Date(),
+          callStartedAt: new Date(),
+          expiresAt: null,
+          expirationOption: 'forever',
+        });
     setCallMinimized(false);
     try {
       await callState.joinCall(callDropId);
-    } catch {
+    } catch (error) {
       setActiveCallDrop(null);
+      throw error instanceof Error ? error : new Error('Failed to join the call.');
     }
   };
 
@@ -2021,6 +2034,8 @@ export default function Home() {
     activeCallDrop, callMinimized, callState, reopenCallDropId,
     callCanStart: callAccess.canStart,
     callAccessLoading: callAccess.loading,
+    callAccessError: callAccess.error,
+    onRefreshCallAccess: callAccess.refresh,
     onStartCall: handleStartCall,
     onJoinCall: handleJoinCall,
     onMinimizeCall: handleMinimizeCall,

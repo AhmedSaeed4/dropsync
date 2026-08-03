@@ -127,7 +127,9 @@ interface ClassicLayoutProps {
   reopenCallDropId?: string;
   callCanStart: boolean;
   callAccessLoading: boolean;
-  onStartCall: (callDropId: string, stream: MediaStream | null) => void;
+  callAccessError: string | null;
+  onRefreshCallAccess: () => Promise<void>;
+  onStartCall: (callDropId: string, stream: MediaStream | null, callInfo?: { created?: boolean; callHostUid?: string; creatorName?: string; callParticipantUids?: string[] }) => void | Promise<void>;
   onJoinCall: (drop: Drop) => void;
   onMinimizeCall: () => void;
   onLeaveCall: () => void;
@@ -166,7 +168,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
     signIn, emailSignIn, signUp, resetPassword, resendVerification,
     signOutUser, updateDisplayName, reauthenticateUser,
     editDrop, setEditDrop, handleEditDrop, handleEditSubmit,
-    hoverable, activeCallDrop, callMinimized, callState, reopenCallDropId, callCanStart, callAccessLoading,
+    hoverable, activeCallDrop, callMinimized, callState, reopenCallDropId, callCanStart, callAccessLoading, callAccessError, onRefreshCallAccess,
     onStartCall, onJoinCall, onMinimizeCall, onLeaveCall,
   } = props;
 
@@ -301,6 +303,8 @@ export function ClassicLayout(props: ClassicLayoutProps) {
                 onStartCall={onStartCall}
                 callCanStart={callCanStart}
                 callAccessLoading={callAccessLoading}
+                callAccessError={callAccessError}
+                onRefreshCallAccess={onRefreshCallAccess}
               />
             </section>
             <section>

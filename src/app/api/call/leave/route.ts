@@ -5,7 +5,12 @@ import {
   cascadeCallSubcollections,
   deriveCallLimitFields,
   enforceExpiredCall,
+  getCallParticipantJoinedAtMap,
+  getCallTrustedReliefUids,
+  getCallUsageStatesInTransaction,
   getTrustedStatusMapInTransaction,
+  reserveCallUsageInTransaction,
+  settleCallUsageInTransaction,
 } from '../_lib';
 
 export const runtime = 'nodejs';
@@ -50,23 +55,80 @@ export async function POST(request: NextRequest) {
         if (currentDeadlineMs != null && currentDeadlineMs <= nowMs) {
           return { callEnded: true, cascade: false, expired: true, noOp: false };
         }
-        const data = snap.data() as { callParticipantUids?: unknown };
+        const data = snap.data() as { callParticipantUids?: unknown; callParticipantJoinedAt?: unknown };
         const uids = Array.isArray(data.callParticipantUids)
           ? (data.callParticipantUids as unknown[]).filter((u): u is string => typeof u === 'string')
           : [];
         if (!uids.includes(uid)) {
           return { callEnded: false, cascade: false, expired: false, noOp: true };
         }
+        const callData = snap.data() || {};
+        const trustedByUid = await getTrustedStatusMapInTransaction(txn, db, uids);
+        const usageStates = await getCallUsageStatesInTransaction(txn, db, uids, nowMs);
+        const joinedAtByUid = getCallParticipantJoinedAtMap(callData, uids);
+        const trustedReliefUids = getCallTrustedReliefUids(callData, uids, trustedByUid);
         const next = uids.filter((u) => u !== uid);
         if (next.length === 0) {
           // last leaver — the call ends. Delete the doc; subcollections cascade after the txn.
+          await settleCallUsageInTransaction(
+            txn,
+            db,
+            uids,
+            trustedByUid,
+            callDropId,
+            joinedAtByUid,
+            new Set(trustedReliefUids),
+            nowMs,
+            usageStates,
+          );
           txn.delete(callRef);
           return { callEnded: true, cascade: true, expired: false, noOp: false };
         }
-        const trustedByUid = await getTrustedStatusMapInTransaction(txn, db, next);
-        const limitFields = deriveCallLimitFields(next, trustedByUid, currentDeadlineMs, nowMs);
+        await settleCallUsageInTransaction(
+          txn,
+          db,
+          [uid],
+          trustedByUid,
+          callDropId,
+          joinedAtByUid,
+          new Set(trustedReliefUids),
+          nowMs,
+          usageStates,
+        );
+        const nextTrustedReliefUids = trustedReliefUids.filter(
+          (reliefUid) => reliefUid !== uid && next.includes(reliefUid),
+        );
+        const remainingMinutesByUid = new Map<string, number>();
+        for (const nextUid of next) {
+          if (trustedByUid.get(nextUid) === true) continue;
+          const state = usageStates.get(nextUid);
+          const reservedMinutes = state
+            ? reserveCallUsageInTransaction(txn, db, nextUid, callDropId, state, nowMs)
+            : null;
+          if (reservedMinutes != null) {
+            remainingMinutesByUid.set(nextUid, reservedMinutes);
+          } else if (!state || state.reservedCallId === null) {
+            remainingMinutesByUid.set(nextUid, 0);
+          }
+        }
+        const existingJoinedAt = data.callParticipantJoinedAt && typeof data.callParticipantJoinedAt === 'object'
+          ? data.callParticipantJoinedAt as Record<string, unknown>
+          : {};
+        const nextJoinedAt: Record<string, unknown> = {};
+        for (const nextUid of next) {
+          if (existingJoinedAt[nextUid] !== undefined) nextJoinedAt[nextUid] = existingJoinedAt[nextUid];
+        }
+        const limitFields = deriveCallLimitFields(
+          next,
+          trustedByUid,
+          currentDeadlineMs,
+          nowMs,
+          remainingMinutesByUid,
+        );
         txn.update(callRef, {
           callParticipantUids: next,
+          callParticipantJoinedAt: nextJoinedAt,
+          callTrustedReliefUids: nextTrustedReliefUids,
           trustedParticipantCount: limitFields.trustedParticipantCount,
           callLimitDeadlineAt: limitFields.callLimitDeadlineAt,
         });

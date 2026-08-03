@@ -8,22 +8,26 @@ export function useCallAccess(userId: string | null): {
   trusted: boolean;
   loading: boolean;
   resetAt: number | null;
+  error: string | null;
   refresh: () => Promise<void>;
 } {
   const [canStart, setCanStart] = useState(false);
   const [trusted, setTrusted] = useState(false);
   const [loading, setLoading] = useState(true);
   const [resetAt, setResetAt] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!userId) {
       setCanStart(false);
       setTrusted(false);
       setResetAt(null);
+      setError(null);
       setLoading(false);
       return;
     }
     setLoading(true);
+    setError(null);
     try {
       const result = await getCallAccessRoute();
       setCanStart(result.canStart);
@@ -34,6 +38,7 @@ export function useCallAccess(userId: string | null): {
       setCanStart(false);
       setTrusted(false);
       setResetAt(null);
+      setError("Couldn't check call access. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -43,5 +48,5 @@ export function useCallAccess(userId: string | null): {
     void refresh();
   }, [refresh]);
 
-  return { canStart, trusted, loading, resetAt, refresh };
+  return { canStart, trusted, loading, resetAt, error, refresh };
 }
