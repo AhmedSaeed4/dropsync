@@ -328,7 +328,7 @@ export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoadin
                   className={isFullscreen ? 'fixed inset-0 z-[999] bg-black/40 flex items-center justify-center p-4' : 'relative'}
                   onClick={(e) => isFullscreen && e.target === e.currentTarget && setIsFullscreen(false)}
                 >
-                  <div className={`relative border ${tc.border} ${tc.bg} rounded-lg ${isFullscreen ? 'w-full h-[calc(100vh-32px)] overflow-hidden p-4' : 'p-4'}`}>
+                  <div className={`relative border ${tc.border} ${tc.bg} rounded-lg ${isFullscreen ? 'w-full h-[calc(100dvh-32px)] overflow-hidden p-4' : 'p-4'}`}>
                     <button
                       type="button"
                       onClick={() => setIsFullscreen(!isFullscreen)}

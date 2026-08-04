@@ -882,7 +882,7 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
                className={isFullscreen ? 'fixed inset-0 z-[999] bg-black/40 flex items-center justify-center p-4' : 'relative'}
                onClick={(e) => isFullscreen && e.target === e.currentTarget && setIsFullscreen(false)}
              >
-               <div className={isFullscreen ? 'relative w-full h-[calc(100vh-32px)]' : 'relative'}>
+               <div className={isFullscreen ? 'relative w-full h-[calc(100dvh-32px)]' : 'relative'}>
                  {/* #-mention dropdown — floats just above the editor */}
                  {mention.showMention && mention.filteredMentionDrops.length > 0 && (
                    <div

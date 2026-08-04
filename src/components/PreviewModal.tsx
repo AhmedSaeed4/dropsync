@@ -350,7 +350,7 @@ export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false
                   className={isFullscreen ? 'fixed inset-0 z-[999] bg-black/40 flex items-center justify-center p-4' : 'relative'}
                   onClick={(e) => isFullscreen && e.target === e.currentTarget && setIsFullscreen(false)}
                 >
-                  <div className={`relative border ${tc.borderColor} ${tc.bgColor} ${tc.roundedClass} ${isFullscreen ? 'w-full h-[calc(100vh-32px)] overflow-hidden p-4' : 'p-4'}`}>
+                  <div className={`relative border ${tc.borderColor} ${tc.bgColor} ${tc.roundedClass} ${isFullscreen ? 'w-full h-[calc(100dvh-32px)] overflow-hidden p-4' : 'p-4'}`}>
                     <button
                       type="button"
                       onClick={() => setIsFullscreen(!isFullscreen)}
