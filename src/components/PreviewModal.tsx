@@ -18,6 +18,8 @@ interface PreviewModalProps {
   theme?: 'light' | 'dark' | 'minimal';
   isLoading?: boolean;
   onEdit?: (drop: Drop) => void;
+  // True while the edit modal is being prepared — the Edit button shows a spinner and is disabled.
+  editPreparing?: boolean;
   onMove?: (drop: Drop) => void;
   // Current space's drops — resolve #[Name](id) chips inline; clicking swaps the preview.
   allDrops?: Drop[];
@@ -36,7 +38,7 @@ function isTextFile(drop: Drop): boolean {
          textExtensions.some(ext => drop.name.toLowerCase().endsWith(ext));
 }
 
-export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false, onEdit, onMove, allDrops = [], onPreview, canMutate = false, currentUserId }: PreviewModalProps) {
+export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false, onEdit, editPreparing = false, onMove, allDrops = [], onPreview, canMutate = false, currentUserId }: PreviewModalProps) {
   useBodyScrollLock();
   useModalBackClose(true, onClose);
   const [copied, setCopied] = useState(false);
@@ -599,11 +601,16 @@ export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false
             ) : (
               <button
                 onClick={() => onEdit(drop)}
-                className={`border ${tc.borderColor} ${tc.textColor} px-3 py-1.5 sm:px-5 sm:py-2 text-xs tracking-wider hover:bg-[#1A1A1A] hover:text-white transition-colors flex items-center gap-2 ${isMinimal ? 'rounded-full' : ''}`}
+                disabled={editPreparing}
+                className={`border ${tc.borderColor} ${tc.textColor} px-3 py-1.5 sm:px-5 sm:py-2 text-xs tracking-wider hover:bg-[#1A1A1A] hover:text-white transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed ${isMinimal ? 'rounded-full' : ''}`}
               >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
-                </svg>
+                {editPreparing ? (
+                  <span className="w-4 h-4 border border-current/30 border-t-current animate-spin rounded-full" />
+                ) : (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+                  </svg>
+                )}
                 {drop.isDrawing
                   ? (isMinimal ? 'Edit drawing' : 'EDIT_DRAWING')
                   : (isMinimal ? 'Edit' : 'EDIT')

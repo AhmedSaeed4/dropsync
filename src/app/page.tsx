@@ -28,7 +28,7 @@ import { useIsWide } from '@/hooks/useIsWide';
 import { Drop, Workspace, ExpirationOption } from '@/types';
 import { initializeUserKeys, hasUserKeys, getUserKeys, ensurePublicKeyPublished } from '@/lib/keys';
 import { ensureProfilePublished } from '@/lib/profiles';
-import { decryptDrop, updateTextDrop, updateDropMetadata, moveDrop } from '@/lib/drops';
+import { decryptDrop, updateTextDrop, updateDropMetadata, moveDrop, getExpirationDate } from '@/lib/drops';
 import { getWorkspaceMembers, MemberInfo } from '@/lib/workspaces';
 import { getLastRead, initReadState, markWorkspaceChatRead, clearWorkspaceMentions } from '@/lib/groupChat';
 import {
@@ -98,6 +98,11 @@ export default function Home() {
   const { user, loading: authLoading, signIn, signUp, signInWithEmail: emailSignIn, resetPassword, resendVerification, signOutUser, updateDisplayName } = useAuth();
   const [previewDrop, setPreviewDrop] = useState<Drop | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  // Monotonic generation counter for preview decryption. Bumped whenever the preview's context is
+  // invalidated (an edit session starts). An in-flight decryptDrop from handlePreview only commits
+  // if the epoch is unchanged — so a decrypt that finishes during/after an edit session can never
+  // resurrect the preview behind the edit modal nor clobber the post-save merged drop.
+  const previewEpochRef = useRef(0);
   const [theme, setTheme] = useState<Theme>('light');
   const [themeLoaded, setThemeLoaded] = useState(false);
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('editorial');
@@ -165,6 +170,10 @@ export default function Home() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showJoinModal, setShowJoinModal] = useState(false);
   const [editDrop, setEditDrop] = useState<Drop | null>(null);
+  // True while the edit modal is being prepared (metadata refresh + decrypt) — drives a loading
+  // state on the preview's Edit button so the wait never looks like the app froze.
+  const [editPreparing, setEditPreparing] = useState(false);
+  const editPreparationEpochRef = useRef(0);
   const [createdWorkspace, setCreatedWorkspace] = useState<{ name: string; inviteCode: string } | null>(null);
   const [workspaceToDelete, setWorkspaceToDelete] = useState<Workspace | null>(null);
   const [workspaceToLeave, setWorkspaceToLeave] = useState<Workspace | null>(null);
@@ -452,8 +461,12 @@ export default function Home() {
     // Retract the footer if it's partway up (mid-dissolve) BEFORE opening the drop, so the modal
     // isn't trapped behind the risen footer (#app-shell z-[1] < footer z-[2]). No-op at scrollY 0.
     retractFooterIfUp();
+    editPreparationEpochRef.current += 1;
+    setEditPreparing(false);
+    const epoch = ++previewEpochRef.current;
     if (!user) {
       setPreviewDrop(drop);
+      setPreviewLoading(false);
       return;
     }
 
@@ -463,13 +476,84 @@ export default function Home() {
       setPreviewLoading(true); // Show skeleton
       try {
         const decryptedDrop = await decryptDrop(drop, user.uid);
-        setPreviewDrop(decryptedDrop); // Update with decrypted content
+        // Only commit if no edit session invalidated this preview in the meantime (the edit modal
+        // is open or a save already replaced this drop) — a late decrypt must never resurrect the
+        // preview behind the edit modal nor clobber the post-save merged drop.
+        if (previewEpochRef.current === epoch) {
+          setPreviewDrop(decryptedDrop); // Update with decrypted content
+        }
       } finally {
-        setPreviewLoading(false); // Hide skeleton
+        if (previewEpochRef.current === epoch) {
+          setPreviewLoading(false); // Hide skeleton
+        }
       }
     } else {
       setPreviewDrop(drop);
+      setPreviewLoading(false);
     }
+  };
+
+  // Read the latest persisted fields when a runtime-decrypted preview is reused. The preview keeps
+  // plaintext content/imageData for instant rendering, while this refresh supplies the current
+  // ciphertext/image keys so a second edit or Move/Copy cannot use deleted R2 metadata.
+  const loadLatestDrop = async (drop: Drop, preserveRuntimePayload = false): Promise<Drop> => {
+    try {
+      const snapshot = await getDoc(doc(db, 'drops', drop.id));
+      if (!snapshot.exists()) return drop;
+      const data = snapshot.data();
+      return {
+        ...drop,
+        userId: data.userId ?? drop.userId,
+        type: data.type ?? drop.type,
+        name: data.name ?? drop.name,
+        content: preserveRuntimePayload ? drop.content : data.content,
+        fileData: preserveRuntimePayload ? drop.fileData : data.fileData,
+        fileUrl: data.fileUrl ?? undefined,
+        r2Key: data.r2Key ?? undefined,
+        fileSize: data.fileSize ?? drop.fileSize,
+        mimeType: data.mimeType ?? drop.mimeType,
+        createdAt: data.createdAt?.toDate?.() ?? drop.createdAt,
+        expiresAt: data.expiresAt?.toDate?.() ?? null,
+        expirationOption: data.expirationOption,
+        workspaceId: data.workspaceId ?? null,
+        // Text content/imageData are already plaintext in the runtime preview. Keep that payload,
+        // but replace the crypto fields below with the latest Firestore values.
+        encrypted: preserveRuntimePayload && drop.type === 'text' ? false : data.encrypted,
+        iv: data.iv,
+        encryptedDEK: data.encryptedDEK,
+        encryptedDEKs: data.encryptedDEKs,
+        imageUrl: data.imageUrl || undefined,
+        imageR2Key: data.imageR2Key || undefined,
+        imageSize: data.imageSize || undefined,
+        imageMimeType: data.imageMimeType || undefined,
+        imageIv: data.imageIv || undefined,
+        imageData: preserveRuntimePayload && data.imageUrl ? drop.imageData : undefined,
+        category: data.category || undefined,
+        categories: data.categories || (data.category ? [data.category] : []),
+        creatorName: data.creatorName || undefined,
+        pinned: data.pinned || false,
+        isDrawing: data.isDrawing || false,
+        locked: data.locked || false,
+        reminderAt: data.reminderAt?.toDate?.() ?? null,
+        reminderSetByUid: data.reminderSetByUid || null,
+        reminderDismissedBy: data.reminderDismissedBy || null,
+        fileFormat: data.fileFormat ?? drop.fileFormat,
+      };
+    } catch (error) {
+      console.warn('Could not refresh drop metadata:', error);
+      return drop;
+    }
+  };
+
+  // Return to the preview through the normal decrypt path when the edit session still holds a raw
+  // encrypted record (possible if Edit was clicked while a file preview was still loading).
+  const reopenPreview = (drop: Drop) => {
+    if (drop.encrypted) {
+      void handlePreview(drop);
+      return;
+    }
+    setPreviewDrop(drop);
+    setPreviewLoading(false);
   };
 
   // Get workspace members for encryption
@@ -1038,29 +1122,139 @@ export default function Home() {
   // Handle edit drop — decrypt text drops, file drops just need metadata
   const handleEditDrop = async (drop: Drop) => {
     retractFooterIfUp(); // retract the footer before the edit overlay mounts (no-op at scrollY 0)
-    setPreviewDrop(null); // close preview if open
-    if (drop.type === 'file') {
-      setEditDrop(drop);
-    } else if (drop.encrypted && user) {
+    previewEpochRef.current += 1; // any in-flight preview decrypt is now stale — must not resurrect
+    const preparationEpoch = ++editPreparationEpochRef.current;
+    setEditPreparing(true);
+    const isCurrentPreparation = () => editPreparationEpochRef.current === preparationEpoch;
+    // A runtime-decrypted text preview may still carry the previous version's crypto metadata.
+    // Refresh the raw text record before editing so updateTextDrop always has current image keys.
+    const editSource = drop.type === 'text' && !drop.encrypted
+      ? await loadLatestDrop(drop)
+      : drop;
+    if (!isCurrentPreparation()) return;
+    const openEditModal = (source: Drop) => {
+      if (!isCurrentPreparation()) return;
+      // Keep the preview visible during the metadata/decryption wait, then replace it in the same
+      // state turn that mounts the edit modal so there is no blank interval between overlays.
+      setPreviewDrop(null);
+      setPreviewLoading(false);
+      setEditPreparing(false);
+      setEditDrop(source);
+    };
+    if (editSource.type === 'file') {
+      openEditModal(editSource);
+    } else if (editSource.encrypted && user) {
       try {
-        const decrypted = await decryptDrop(drop, user.uid);
-        setEditDrop(decrypted);
+        const decrypted = await decryptDrop(editSource, user.uid);
+        openEditModal(decrypted);
       } catch {
-        setEditDrop({ ...drop, content: '' });
+        openEditModal({ ...editSource, content: '' });
       }
     } else {
-      setEditDrop(drop);
+      openEditModal(editSource);
     }
   };
 
+  // Re-open the preview with the drop being edited after the edit modal closes without a save
+  // (X/backdrop/cancel with or without the discard confirm). editDrop is still the pre-edit
+  // (already decrypted) drop here, so the preview renders instantly — no skeleton, no re-decrypt.
+  const handleEditClose = () => {
+    const edited = editDrop;
+    setEditDrop(null);
+    if (edited) {
+      reopenPreview(edited);
+    }
+  };
+
+  // Invalidate any in-flight preview decrypt. Called when the preview's context is superseded by
+  // another overlay the layouts open from the preview (the move modal) — a late decrypt must never
+  // resurrect the preview behind that overlay nor clobber what the layouts show after it closes.
+  const handlePreviewInvalidate = () => {
+    previewEpochRef.current += 1;
+    editPreparationEpochRef.current += 1;
+    setEditPreparing(false);
+  };
+
+  // Build the preview drop from the edit session's knowledge. The DB stores content/images
+  // encrypted, and updateTextDrop/updateDropMetadata only return booleans — so the preview's
+  // post-save state must be merged here: new plaintext content, name, categories, expiration,
+  // lock, image (or its removal), and reminder state on top of the untouched original fields.
+  const mergeEditedDrop = (original: Drop, updates: {
+    name?: string; content?: string; categories?: string[]; expirationOption?: ExpirationOption;
+    locked?: boolean; imagePreviewData?: string; imageRemoved?: boolean;
+    reminderAt?: Date | null; reminderSetByUid?: string | null; reminderDismissedBy?: string | null;
+  }): Drop => {
+    const merged: Drop = { ...original };
+    if (updates.name !== undefined) merged.name = updates.name;
+    if (updates.content !== undefined) merged.content = updates.content;
+    if (updates.categories !== undefined) {
+      merged.categories = updates.categories;
+      merged.category = undefined;
+    }
+    if (updates.expirationOption !== undefined) {
+      merged.expirationOption = updates.expirationOption;
+      merged.expiresAt = getExpirationDate(updates.expirationOption);
+    }
+    if (updates.locked !== undefined) merged.locked = updates.locked;
+    // The preview renders text-drop images from imageData (decrypted at runtime). A new/changed
+    // image arrives as a client-side data URL; clear persisted fields until loadLatestDrop reconciles
+    // the runtime preview with the keys written by updateTextDrop.
+    if (updates.imagePreviewData) {
+      merged.imageData = updates.imagePreviewData;
+      merged.imageUrl = undefined;
+      merged.imageR2Key = undefined;
+      merged.imageSize = undefined;
+      merged.imageMimeType = undefined;
+      merged.imageIv = undefined;
+    } else if (updates.imageRemoved) {
+      merged.imageData = undefined;
+      merged.imageUrl = undefined;
+      merged.imageR2Key = undefined;
+      merged.imageSize = undefined;
+      merged.imageMimeType = undefined;
+      merged.imageIv = undefined;
+    }
+    if (updates.reminderAt !== undefined) {
+      merged.reminderAt = updates.reminderAt;
+      merged.reminderSetByUid = updates.reminderSetByUid ?? null;
+      merged.reminderDismissedBy = updates.reminderDismissedBy ?? null;
+    }
+    return merged;
+  };
+
   // Handle edit submit
-  const handleEditSubmit = async (drop: Drop, updates: { name?: string; content?: string; category?: string | null; categories?: string[]; expirationOption?: ExpirationOption; imageFile?: File | null; imageRemoved?: boolean; locked?: boolean }): Promise<boolean> => {
+  const handleEditSubmit = async (drop: Drop, updates: { name?: string; content?: string; category?: string | null; categories?: string[]; expirationOption?: ExpirationOption; imageFile?: File | null; imageRemoved?: boolean; locked?: boolean; imagePreviewData?: string; reminderAt?: Date | null; reminderSetByUid?: string | null; reminderDismissedBy?: string | null }): Promise<boolean> => {
     if (!user) return false;
     const success = drop.type === 'file'
       ? await updateDropMetadata(drop.id, updates)
       : await updateTextDrop(drop, updates, user.uid);
     if (success) {
+      let reminderSaved = true;
+      // Text content uses the encrypted update path, so persist reminder metadata separately before
+      // reopening the preview. The preview must not claim a reminder was saved when this write fails.
+      if (drop.type === 'text' && updates.reminderAt !== undefined) {
+        reminderSaved = await updateDropMetadata(drop.id, {
+          reminderAt: updates.reminderAt,
+          reminderSetByUid: updates.reminderSetByUid,
+          reminderDismissedBy: updates.reminderDismissedBy,
+        });
+        if (!reminderSaved) {
+          console.error('Reminder save failed; reopening with the persisted reminder state');
+        }
+      }
+
+      const merged = mergeEditedDrop(
+        drop,
+        reminderSaved
+          ? updates
+          : { ...updates, reminderAt: undefined, reminderSetByUid: undefined, reminderDismissedBy: undefined }
+      );
+      // Reconcile the runtime plaintext preview with the freshly written crypto/image metadata.
+      const savedPreview = drop.type === 'text'
+        ? await loadLatestDrop(merged, true)
+        : merged;
       setEditDrop(null);
+      reopenPreview(savedPreview);
     }
     return success;
   };
@@ -2028,7 +2222,8 @@ export default function Home() {
     handlePreview, handleShowVerifyModal, handleCheckVerification,
     signIn, emailSignIn, signUp, resetPassword, resendVerification,
     signOutUser, updateDisplayName, reauthenticateUser,
-    editDrop, setEditDrop, handleEditDrop, handleEditSubmit,
+    editDrop, setEditDrop, handleEditDrop, handleEditSubmit, onEditClose: handleEditClose,
+    handlePreviewInvalidate, editPreparing,
     presenceMap,
     hoverable,
     activeCallDrop, callMinimized, callState, reopenCallDropId,
