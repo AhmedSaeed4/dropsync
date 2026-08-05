@@ -21,9 +21,11 @@ function pushDummy() {
 
 function onPopState() {
   if (stack.length === 0) return;              // no modal open -> normal back nav, do nothing
-  const top = stack.pop()!;                     // back closes the TOP modal only
+  const top = stack[stack.length - 1];          // back targets the TOP modal only
   try { top.close(); } catch (e) { console.error('modal back-close error', e); }
-  if (stack.length > 0) pushDummy();            // another modal still open -> re-arm for it
+  // Keep the ticket when the callback vetoes closing (for example, while Move/Copy is busy).
+  // Normal close callbacks unmount their modal and unregister this entry during the update.
+  if (stack.length > 0) pushDummy();
 }
 
 function ensureListener() {

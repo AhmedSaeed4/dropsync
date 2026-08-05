@@ -239,6 +239,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (loading) return;
     if (!isFileDrop && !content.trim() && !drawingFile) return;
     // The submit button is disabled while the reminder is invalid; guard anyway so a keyboard
     // submit can't slip a bad reminder through (both modes — the edit Save folds the reminder in).
@@ -260,28 +261,31 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
     if (imageToUpload) {
       imagePreviewData = imagePreview ?? await fileToDataUrl(imageToUpload);
     }
-    if (isEditMode && editDrop && onEdit) {
-      await onEdit(editDrop, {
-        name: name.trim() || editDrop.name,
-        ...(!isFileDrop && content !== editDrop.content ? { content } : {}),
-        categories: selectedCategories,
-        expirationOption: expiration,
-        ...(!isFileDrop ? { imageFile: imageToUpload, imageRemoved } : {}),
-        // Only creator/owner may send locked — a non-creator edit must omit it or the rules'
-        // field-guard rejects the save.
-        ...(canMutate ? { locked } : {}),
-        ...(imagePreviewData ? { imagePreviewData } : {}),
-        // Final reminder state, so the parent can persist it before reopening the preview.
-        ...(reminderDirty && !reminderInvalidValue && currentUserId
-          ? reminderEnabled
-            ? { reminderAt: reminderAtValue, reminderSetByUid: currentUserId, reminderDismissedBy: null }
-            : { reminderAt: null, reminderSetByUid: null, reminderDismissedBy: null }
-          : {}),
-      });
-    } else {
-      await onSubmit(name.trim() || 'Text snippet', content, expiration, selectedCategories[0] || undefined, imageToUpload, selectedCategories, !!drawingFile, locked, reminderEnabled && !reminderInvalidValue ? reminderAtValue : null);
+    try {
+      if (isEditMode && editDrop && onEdit) {
+        await onEdit(editDrop, {
+          name: name.trim() || editDrop.name,
+          ...(!isFileDrop && content !== editDrop.content ? { content } : {}),
+          categories: selectedCategories,
+          expirationOption: expiration,
+          ...(!isFileDrop ? { imageFile: imageToUpload, imageRemoved } : {}),
+          // Only creator/owner may send locked — a non-creator edit must omit it or the rules'
+          // field-guard rejects the save.
+          ...(canMutate ? { locked } : {}),
+          ...(imagePreviewData ? { imagePreviewData } : {}),
+          // Final reminder state, so the parent can persist it before reopening the preview.
+          ...(reminderDirty && !reminderInvalidValue && currentUserId
+            ? reminderEnabled
+              ? { reminderAt: reminderAtValue, reminderSetByUid: currentUserId, reminderDismissedBy: null }
+              : { reminderAt: null, reminderSetByUid: null, reminderDismissedBy: null }
+            : {}),
+        });
+      } else {
+        await onSubmit(name.trim() || 'Text snippet', content, expiration, selectedCategories[0] || undefined, imageToUpload, selectedCategories, !!drawingFile, locked, reminderEnabled && !reminderInvalidValue ? reminderAtValue : null);
+      }
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const removeExistingImage = () => {
@@ -332,6 +336,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
   // path in edit mode). With unsaved edits, confirm with the theme-consistent discard dialog;
   // without changes, close straight back (the parent re-opens the preview either way).
   const handleClose = () => {
+    if (loading) return;
     if (isEditMode && hasChanges) {
       setShowCloseDiscardConfirm(true);
       return;
@@ -531,7 +536,8 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
           </h2>
           <button
             onClick={handleClose}
-            className={`${tc.muted} hover:${tc.text} transition-colors p-1`}
+            disabled={loading}
+            className={`${tc.muted} hover:${tc.text} transition-colors p-1 disabled:opacity-40 disabled:cursor-not-allowed`}
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -1148,7 +1154,8 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
               <button
                 type="button"
                 onClick={handleClose}
-                className={`flex-1 border ${tc.border} ${tc.text} py-2.5 text-sm rounded-lg hover:border-[#1a1a1a] transition-colors ${tc.fontClass}`}
+                disabled={loading}
+                className={`flex-1 border ${tc.border} ${tc.text} py-2.5 text-sm rounded-lg hover:border-[#1a1a1a] transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${tc.fontClass}`}
               >
                 Cancel
               </button>
@@ -1181,7 +1188,11 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
             <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() => { setShowCloseDiscardConfirm(false); onClose(); }}
+                onClick={() => {
+                  if (loading) return;
+                  setShowCloseDiscardConfirm(false);
+                  onClose();
+                }}
                 className={`flex-1 px-4 py-2 ${tc.activePillBg} ${tc.activePillText} text-sm rounded-lg hover:opacity-90 transition-opacity ${tc.fontClass}`}
               >
                 Discard
