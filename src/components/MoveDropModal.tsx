@@ -111,7 +111,7 @@ export function MoveDropModal({ drops: dropsProp, workspaces, currentWorkspaceId
   return (
     <div
       className={`fixed inset-0 ${tc.overlayBg} flex items-center justify-center z-50 p-4 transition-colors duration-300 overscroll-contain`}
-      onClick={(e) => e.target === e.currentTarget && onClose()}
+      onClick={(e) => e.target === e.currentTarget && !loading && onClose()}
     >
       <div className={`${tc.bgColor} border ${tc.borderColor} ${tc.roundedClass} w-full max-w-md max-h-[90vh] flex flex-col overflow-hidden transition-colors duration-300`}>
         {/* Header */}
@@ -131,7 +131,8 @@ export function MoveDropModal({ drops: dropsProp, workspaces, currentWorkspaceId
             )}
           </div>
           <button
-            onClick={onClose}
+            onClick={() => !loading && onClose()}
+            disabled={loading}
             className="text-white/70 hover:text-white transition-colors"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -6,7 +6,7 @@ import { Drop, ExpirationOption } from '@/types';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useModalBackClose } from '@/hooks/useModalBackClose';
 import { useUserTier } from '@/hooks/useUserTier';
-import { decryptDrop, updateDropMetadata, getExpirationDate, formatReminderFire } from '@/lib/drops';
+import { decryptDrop, getExpirationDate, formatReminderFire } from '@/lib/drops';
 import { dedupeCategoryNames } from '@/lib/categories';
 import { ForeverLockedModal } from './ForeverLockedModal';
 import { Toast } from './Toast';
@@ -28,7 +28,7 @@ interface TextModalProps {
   customCategories?: string[];
   onCreateCategory?: (name: string) => Promise<string | null>;
   editDrop?: Drop | null;
-  onEdit?: (drop: Drop, updates: { name?: string; content?: string; category?: string | null; categories?: string[]; expirationOption?: ExpirationOption; imageFile?: File | null; imageRemoved?: boolean; locked?: boolean }) => Promise<boolean>;
+  onEdit?: (drop: Drop, updates: { name?: string; content?: string; category?: string | null; categories?: string[]; expirationOption?: ExpirationOption; imageFile?: File | null; imageRemoved?: boolean; locked?: boolean; imagePreviewData?: string; reminderAt?: Date | null; reminderSetByUid?: string | null; reminderDismissedBy?: string | null }) => Promise<boolean>;
   currentUserId?: string;
   // Drops in the current space, used for the #-mention autocomplete in the content field.
   mentionableDrops?: Drop[];
@@ -61,7 +61,6 @@ const BUILT_IN_CATEGORIES = [
 
 export function TextModal({ onSubmit, onClose, theme = 'light', customCategories = [], onCreateCategory, editDrop, onEdit, currentUserId, mentionableDrops = [], isWorkspace = false, canMutate = false, onStartCall, callCanStart = true, callAccessLoading = false, callAccessError = null, onRefreshCallAccess }: TextModalProps) {
   useBodyScrollLock();
-  useModalBackClose(true, onClose);
   const isEditMode = !!editDrop;
   const [name, setName] = useState(editDrop?.name || '');
   const [content, setContent] = useState(editDrop?.content || '');
@@ -79,8 +78,8 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
   }, [isEditMode, editDrop]);
   const { tier, loading: tierLoading } = useUserTier();
   // In-app reminder. CREATE mode threads reminderAt through onSubmit (createTextDrop). EDIT mode
-  // (UI below) writes it via updateDropMetadata as a SEPARATE light-path call (never updateTextDrop,
-  // which re-encrypts). In EDIT mode the cap is the drop's CONCRETE expiry (a drop already partly
+  // (the page save handler) writes it via updateDropMetadata as a SEPARATE light-path call (never
+  // updateTextDrop, which re-encrypts). In EDIT mode the cap is the drop's CONCRETE expiry (a drop already partly
   // elapsed has less remaining lifetime than now+option, so getExpirationDate(option) would
   // overestimate it and let a reminder fire after the drop is gone); if the user just changed the
   // expiry option it's a fresh window. Create mode passes undefined (hook derives from the option).
@@ -143,6 +142,9 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
   const [bgColor, setBgColor] = useState('#ffffff');
   const [hasDrawn, setHasDrawn] = useState(false);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+  // Unsaved-changes close guard: X/backdrop/Cancel/hardware-back route through handleClose, which
+  // confirms ("Discard changes?") before actually closing when anything changed in edit mode.
+  const [showCloseDiscardConfirm, setShowCloseDiscardConfirm] = useState(false);
   const [drawingFile, setDrawingFile] = useState<File | null>(null);
   const [initialScene, setInitialScene] = useState<{ elements: ExcalidrawElement[]; appState: Omit<AppState, 'offsetTop' | 'offsetLeft' | 'width' | 'height'>; files?: BinaryFiles } | null>(null);
   const [extractingScene, setExtractingScene] = useState(isEditMode && !!editDrop?.isDrawing);
@@ -217,6 +219,16 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
     });
   };
 
+  // Reads a File into a data URL — lets the page re-open the preview with the newly attached
+  // image/drawing without re-decrypting (the DB stores images encrypted; only the modal knows
+  // the plaintext bytes at save time).
+  const fileToDataUrl = (file: File) => new Promise<string | undefined>((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => resolve(undefined);
+    reader.readAsDataURL(file);
+  });
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isFileDrop && !content.trim() && !drawingFile) return;
@@ -234,6 +246,12 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
 
     setLoading(true);
     const imageToUpload = drawingFile || attachedImage || undefined;
+    // Client-side data URL of the newly attached image/drawing, for the preview's instant re-open
+    // (never written to Firestore — the parent's updateTextDrop/updateDropMetadata ignore it).
+    let imagePreviewData: string | undefined;
+    if (imageToUpload) {
+      imagePreviewData = imagePreview ?? await fileToDataUrl(imageToUpload);
+    }
     if (isEditMode && editDrop && onEdit) {
       await onEdit(editDrop, {
         name: name.trim() || editDrop.name,
@@ -245,25 +263,14 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
         // Only creator/owner may send locked — a non-creator edit must omit it or the rules'
         // field-guard rejects the save.
         ...(canMutate ? { locked } : {}),
+        ...(imagePreviewData ? { imagePreviewData } : {}),
+        // Final reminder state, so the parent can persist it before reopening the preview.
+        ...(reminderDirty && !reminderInvalidValue && currentUserId
+          ? reminderEnabled
+            ? { reminderAt: reminderAtValue, reminderSetByUid: currentUserId, reminderDismissedBy: null }
+            : { reminderAt: null, reminderSetByUid: null, reminderDismissedBy: null }
+          : {}),
       });
-      // Reminder — folded into the MAIN Save (no separate button). LIGHT path via updateDropMetadata,
-      // a SEPARATE call from the content updateTextDrop onEdit fired above (never route through it).
-      // Written ONLY when the reminder actually changed and the new state is valid. Toggle OFF clears.
-      if (!isFileDrop && currentUserId && reminderDirty && !reminderInvalidValue) {
-        // Isolated so a thrown reminder write (defensive — updateDropMetadata already catches
-        // internally) can never skip setLoading(false) below and leave a stuck spinner. Content
-        // (onEdit → updateTextDrop) already ran above; a failed reminder write is non-fatal.
-        try {
-          await updateDropMetadata(
-            editDrop.id,
-            reminderEnabled
-              ? { reminderAt: reminderAtValue, reminderSetByUid: currentUserId, reminderDismissedBy: null }
-              : { reminderAt: null, reminderSetByUid: null, reminderDismissedBy: null }
-          );
-        } catch (err) {
-          console.error('Reminder save failed:', err);
-        }
-      }
     } else {
       await onSubmit(name.trim() || (isMinimal ? 'Text snippet' : 'TEXT_SNIPPET'), content, expiration, selectedCategories[0] || undefined, imageToUpload, selectedCategories, !!drawingFile, locked, reminderEnabled && !reminderInvalidValue ? reminderAtValue : null);
     }
@@ -427,6 +434,21 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
     reminderDirty
   ) : true;
 
+  // Single close entry point for X / backdrop / Cancel / hardware-back (and the drawing-cancel
+  // path in edit mode). With unsaved edits, confirm with the theme-consistent discard dialog;
+  // without changes, close straight back (the parent re-opens the preview either way).
+  const handleClose = () => {
+    if (isEditMode && hasChanges) {
+      setShowCloseDiscardConfirm(true);
+      return;
+    }
+    onClose();
+  };
+  // Keep the edit guard disabled while the nested discard dialog owns the back button. Toggling the
+  // primary hook's open flag makes it re-register after a popstate already removed its entry.
+  useModalBackClose(!showCloseDiscardConfirm, handleClose);
+  useModalBackClose(showCloseDiscardConfirm, () => setShowCloseDiscardConfirm(false));
+
   const handleModeSwitch = (newMode: 'text' | 'draw') => {
     if (newMode === mode) return;
     if (mode === 'draw' && hasDrawn) {
@@ -453,7 +475,7 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
 
   const handleDrawingCancel = () => {
     if (isEditMode && editDrop?.isDrawing) {
-      onClose();
+      handleClose();
       return;
     }
     setMode('text');
@@ -495,7 +517,7 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
   return (
     <div
       className={`fixed inset-0 ${tc.overlayBg} flex items-center justify-center z-50 p-4 transition-colors duration-300 overscroll-contain overflow-y-auto`}
-      onClick={(e) => e.target === e.currentTarget && onClose()}
+      onClick={(e) => e.target === e.currentTarget && handleClose()}
       onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
       onDrop={(e) => {
         e.preventDefault();
@@ -530,7 +552,7 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
             }
           </h2>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="text-white/70 hover:text-white transition-colors"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1171,7 +1193,7 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
           <div className="flex gap-3 pt-2">
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleClose}
               className={`flex-1 border ${tc.borderColor} ${tc.textColor} py-3 text-xs tracking-wider hover:bg-[#1A1A1A] hover:text-white transition-colors ${isMinimal ? 'rounded-full' : ''}`}
             >
               {isMinimal ? 'Cancel' : 'CANCEL'}
@@ -1197,6 +1219,34 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
           )}
         </form>
       </div>
+      {showCloseDiscardConfirm && (
+        <div
+          className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center p-4"
+          onClick={(e) => e.target === e.currentTarget && setShowCloseDiscardConfirm(false)}
+        >
+          <div className={`${tc.bgColor} border ${tc.borderColor} ${tc.roundedClass} w-80 max-w-full p-5 shadow-xl`}>
+            <p className={`text-sm ${tc.textColor} mb-4 ${isMinimal ? 'font-sans' : 'font-mono'}`}>
+              {isMinimal ? 'Discard changes?' : 'DISCARD_CHANGES?'}
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => { setShowCloseDiscardConfirm(false); onClose(); }}
+                className={`flex-1 px-4 py-2 bg-[#1A1A1A] text-white text-xs hover:bg-[#2A2A2A] transition-colors ${isMinimal ? 'rounded-full' : ''}`}
+              >
+                {isMinimal ? 'Discard' : 'DISCARD'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowCloseDiscardConfirm(false)}
+                className={`flex-1 px-4 py-2 border ${tc.borderColor} ${tc.textColor} text-xs hover:bg-[#1A1A1A]/10 transition-colors ${isMinimal ? 'rounded-full' : ''}`}
+              >
+                {isMinimal ? 'Keep editing' : 'KEEP_EDITING'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {showForeverLocked && (
         <ForeverLockedModal context={foreverContext} variant="classic" theme={theme} onClose={() => setShowForeverLocked(false)} />
       )}

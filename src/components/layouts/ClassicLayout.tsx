@@ -118,7 +118,14 @@ interface ClassicLayoutProps {
   editDrop: Drop | null;
   setEditDrop: (d: Drop | null) => void;
   handleEditDrop: (drop: Drop) => void;
-  handleEditSubmit: (drop: Drop, updates: { name?: string; content?: string; category?: string | null; expirationOption?: ExpirationOption; imageFile?: File | null; imageRemoved?: boolean; locked?: boolean }) => Promise<boolean>;
+  handleEditSubmit: (drop: Drop, updates: { name?: string; content?: string; category?: string | null; categories?: string[]; expirationOption?: ExpirationOption; imageFile?: File | null; imageRemoved?: boolean; locked?: boolean; imagePreviewData?: string; reminderAt?: Date | null; reminderSetByUid?: string | null; reminderDismissedBy?: string | null }) => Promise<boolean>;
+  // Closes the edit modal and re-opens the preview with the pre-edit drop (X/backdrop/cancel paths).
+  onEditClose: () => void;
+  // Invalidates any in-flight preview decrypt (page-level epoch) — called when an overlay the
+  // layout opens from the preview (the move modal) supersedes it.
+  handlePreviewInvalidate: () => void;
+  // True while the edit modal is being prepared — the preview's Edit button shows a spinner.
+  editPreparing: boolean;
   // LIVE CALL
   hoverable: boolean;
   activeCallDrop: Drop | null;
@@ -167,7 +174,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
     handlePreview, handleShowVerifyModal, handleCheckVerification,
     signIn, emailSignIn, signUp, resetPassword, resendVerification,
     signOutUser, updateDisplayName, reauthenticateUser,
-    editDrop, setEditDrop, handleEditDrop, handleEditSubmit,
+    editDrop, handleEditDrop, handleEditSubmit, onEditClose, handlePreviewInvalidate, editPreparing,
     hoverable, activeCallDrop, callMinimized, callState, reopenCallDropId, callCanStart, callAccessLoading, callAccessError, onRefreshCallAccess,
     onStartCall, onJoinCall, onMinimizeCall, onLeaveCall,
   } = props;
@@ -179,11 +186,40 @@ export function ClassicLayout(props: ClassicLayoutProps) {
   // Move drop state
   const [moveDrops, setMoveDrops] = useState<Drop[] | null>(null);
   const [moveLoading, setMoveLoading] = useState(false);
+  // Preview-return memory: the drop the preview was showing when the move modal opened from the
+  // preview. Re-opens the preview when the modal closes without a successful MOVE (or after a
+  // successful COPY). Null for the bulk flow (DropList owns that modal) and cleared on a MOVE —
+  // the drop has left this workspace, so there is nothing to return to.
+  const [moveReturnDrop, setMoveReturnDrop] = useState<Drop | null>(null);
   // Browser/mobile back closes the inline member Leave modal (the other modals self-register).
   useModalBackClose(!!workspaceToLeave, () => setWorkspaceToLeave(null));
   // On mobile the chat is a stacked card (not a docked column) — back closes it. Desktop untouched.
   const isMobile = useIsMobile();
   useModalBackClose(!!showChat, () => setShowChat(false), isMobile);
+
+  // Re-open the preview with the drop the user was viewing before Move. An already-decrypted drop
+  // renders instantly (no skeleton, no re-decrypt); a drop that was still decrypting when Move was
+  // clicked runs the normal open flow (skeleton → decrypt → content).
+  const returnToPreview = (returnDrop: Drop) => {
+    if (previewDrop) return; // defensive: already back (e.g. an in-flight decrypt completed)
+    if (returnDrop.encrypted) {
+      handlePreview(returnDrop);
+    } else {
+      setPreviewDrop(returnDrop);
+      setPreviewLoading(false);
+    }
+  };
+
+  // Close the move modal (X / backdrop / Cancel / hardware-back — the modal's onClose contract is
+  // unchanged; the parent decides what closing means). Preview-originated: re-open the preview.
+  // Bulk (list) flow: no return memory → back to the list, exactly as before.
+  const handleCloseMoveModal = () => {
+    if (moveLoading) return;
+    const returnDrop = moveReturnDrop;
+    setMoveDrops(null);
+    setMoveReturnDrop(null);
+    if (returnDrop) returnToPreview(returnDrop);
+  };
 
   const handleMoveDrop = async (drops: Drop[], targetWorkspaceId: string | null) => {
     if (!user || !drops.length) return;
@@ -206,7 +242,13 @@ export function ClassicLayout(props: ClassicLayoutProps) {
     setMoveLoading(false);
     const failures = results.filter(r => !r.success);
     if (failures.length === 0) {
+      const previewOriginated = !!moveReturnDrop;
       setMoveDrops(null);
+      setMoveReturnDrop(null); // the drop left this workspace — no preview return
+      if (previewOriginated) {
+        setPreviewDrop(null);
+        setPreviewLoading(false);
+      }
       refreshDrops();
     } else {
       alert(`${failures.length}/${drops.length} drops failed to move: ${failures[0].error}`);
@@ -234,7 +276,11 @@ export function ClassicLayout(props: ClassicLayoutProps) {
     setMoveLoading(false);
     const failures = results.filter(r => !r.success);
     if (failures.length === 0) {
+      const returnDrop = moveReturnDrop;
       setMoveDrops(null);
+      setMoveReturnDrop(null);
+      // The original still exists in this workspace — return to its preview (the copy is not shown).
+      if (returnDrop) returnToPreview(returnDrop);
       refreshDrops();
     } else {
       alert(`${failures.length}/${drops.length} drops failed to copy: ${failures[0].error}`);
@@ -414,16 +460,38 @@ export function ClassicLayout(props: ClassicLayoutProps) {
           drop={previewDrop}
           canMutate={!!user && (user.uid === previewDrop.userId || (!!currentWorkspace && user.uid === currentWorkspace.ownerId))}
           onClose={() => {
+            handlePreviewInvalidate();
             setPreviewDrop(null);
             setPreviewLoading(false);
           }}
           theme={theme}
           isLoading={previewLoading}
           onEdit={handleEditDrop}
+          editPreparing={editPreparing}
           onMove={(drop) => {
             setPreviewDrop(null);
-            const originalDrop = drops.find(d => d.id === drop.id) || drop;
-            setMoveDrops([originalDrop]);
+            setPreviewLoading(false);
+            handlePreviewInvalidate(); // a late preview decrypt must not resurrect behind the modal
+            setMoveReturnDrop(drop); // use the freshest version the user was viewing
+            // Decrypted file previews intentionally have encrypted=false at runtime. Keep the raw
+            // file record for Move/Copy's encryption decision, while taking fresh editable metadata
+            // from the preview; text previews stay fully runtime-decrypted for the saved content.
+            const persistedFile = drop.type === 'file' ? drops.find(d => d.id === drop.id) : null;
+            const operationDrop = persistedFile
+              ? {
+                  ...persistedFile,
+                  name: drop.name,
+                  expiresAt: drop.expiresAt,
+                  expirationOption: drop.expirationOption,
+                  category: drop.category,
+                  categories: drop.categories,
+                  locked: drop.locked,
+                  reminderAt: drop.reminderAt,
+                  reminderSetByUid: drop.reminderSetByUid,
+                  reminderDismissedBy: drop.reminderDismissedBy,
+                }
+              : drop;
+            setMoveDrops([operationDrop]);
           }}
           allDrops={drops}
           onPreview={handlePreview}
@@ -472,7 +540,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
           currentWorkspaceId={currentWorkspaceId}
           onMove={handleMoveDrop}
           onCopy={handleCopyDrop}
-          onClose={() => setMoveDrops(null)}
+          onClose={handleCloseMoveModal}
           theme={theme}
         />
       )}
@@ -481,7 +549,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
       {editDrop && (
         <TextModal
           onSubmit={async () => {}}
-          onClose={() => setEditDrop(null)}
+          onClose={onEditClose}
           theme={theme}
           customCategories={categories.map(c => c.name)}
           onCreateCategory={handleCreateCategory}
