@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { createFileDrop, createTextDrop } from '@/lib/drops';
-import { startCallRoute } from '@/lib/callRoutes';
+import { leaveCallRoute, startCallRoute } from '@/lib/callRoutes';
 import { useAuth } from '@/hooks/useAuth';
 import { useUserTier } from '@/hooks/useUserTier';
 import { TextModal } from './TextModal';
@@ -57,12 +57,26 @@ export function DropZone({
   const [showTextModal, setShowTextModal] = useState(false);
   const [expiration, setExpiration] = useState<ExpirationOption>('2h');
   const [showForeverLocked, setShowForeverLocked] = useState(false);
+  // The start route can finish after the create modal has been closed. Its epoch is invalidated by
+  // every explicit call cancellation so a late route result cannot open the call.
+  const callStartEpochRef = useRef(0);
+  const callStartStreamRef = useRef<MediaStream | null>(null);
   // Open/Locked toggle for shared-workspace drops. Defaults Open; hidden for personal drops (Phase 3).
   const [locked, setLocked] = useState(false);
   const { tier, loading: tierLoading } = useUserTier();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isDark = theme === 'dark';
   const isMinimal = theme === 'minimal';
+
+  const cancelCallStart = useCallback(() => {
+    callStartEpochRef.current += 1;
+    callStartStreamRef.current?.getTracks().forEach((track) => track.stop());
+    callStartStreamRef.current = null;
+  }, []);
+
+  // Also cancel if the whole drop zone disappears (for example, during a layout transition) while
+  // the route is still pending.
+  useEffect(() => cancelCallStart, [cancelCallStart]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -140,16 +154,34 @@ export function DropZone({
       stream?.getTracks().forEach((track) => track.stop());
       return;
     }
+    const startEpoch = ++callStartEpochRef.current;
+    callStartStreamRef.current = stream;
     try {
        const result = await startCallRoute(workspaceId);
+       if (callStartEpochRef.current !== startEpoch) {
+         stream?.getTracks().forEach((track) => track.stop());
+         if (callStartStreamRef.current === stream) callStartStreamRef.current = null;
+         // startCallRoute creates the caller as the first participant. Reuse the normal leave route
+         // so the last-leaver transaction deletes that just-created call and its roster entry.
+         if (result.created) {
+           await leaveCallRoute(result.callDropId).catch((cleanupError) => {
+             console.warn('Failed to clean up cancelled call start:', cleanupError);
+           });
+         }
+         return;
+       }
        await onStartCall?.(result.callDropId, stream, result);
-    } catch (err) {
-      stream?.getTracks().forEach((track) => track.stop());
-      console.error('Failed to start call:', err);
-      setError(err instanceof Error ? err.message : 'Failed to start the call. Please try again.');
-    } finally {
-      setShowTextModal(false);
-    }
+     } catch (err) {
+       if (callStartEpochRef.current !== startEpoch) return;
+       stream?.getTracks().forEach((track) => track.stop());
+       console.error('Failed to start call:', err);
+       setError(err instanceof Error ? err.message : 'Failed to start the call. Please try again.');
+     } finally {
+       if (callStartEpochRef.current === startEpoch) {
+         if (callStartStreamRef.current === stream) callStartStreamRef.current = null;
+         setShowTextModal(false);
+       }
+     }
   };
 
   // Handle clipboard paste (Ctrl+V) for images
@@ -407,12 +439,16 @@ export function DropZone({
       {showTextModal && (
         <TextModal
           onSubmit={handleTextSubmit}
-          onClose={() => setShowTextModal(false)}
+          onClose={() => {
+            cancelCallStart();
+            setShowTextModal(false);
+          }}
           theme={theme}
           customCategories={customCategories}
           onCreateCategory={onCreateCategory}
           mentionableDrops={mentionableDrops}
           isWorkspace={!!workspaceId}
+          onCancelCallStart={cancelCallStart}
           onStartCall={handleStartCall}
           callCanStart={callCanStart}
           callAccessLoading={callAccessLoading}

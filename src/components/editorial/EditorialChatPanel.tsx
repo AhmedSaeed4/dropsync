@@ -139,10 +139,17 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   const scrollRef = useRef<HTMLDivElement>(null);
   const aiTextareaRef = useRef<HTMLTextAreaElement>(null);
   const unsubRef = useRef<(() => void) | null>(null);
+  const aiReplyEpochRef = useRef(0);
   // Scroll-to-message + flash-highlight for quote-reply jumps (shared with ChatPanel).
   const { setMessageRef, jumpToMessage, flashId } = useMessageScroll(scrollRef);
   const isOwner = !!userId && ownerId === userId;
   const activeConv = conversations.find(c => c.id === activeConvId) || null;
+
+  // Invalidate AI preview side effects before the panel closes, including any close animation or
+  // parent update that happens before React unmounts this component.
+  useEffect(() => () => {
+    aiReplyEpochRef.current += 1;
+  }, []);
 
   // Delayed animations for staggered entrance
   const [showHeader, setShowHeader] = useState(false);
@@ -388,6 +395,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   }, [editingMsgId]);
 
   const handleNewChat = () => {
+    aiReplyEpochRef.current += 1;
     setActiveConvId(null);
     setMessages([]);
     setShowSidebar(false);
@@ -399,6 +407,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
       setShowSidebar(false);
       return;
     }
+    aiReplyEpochRef.current += 1;
     setSwitchingConv(convId);
     setMessages([]);
     setMessagesLoading(true);
@@ -431,6 +440,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
     const text = input.trim();
     if (!text || loading || !userId) return;
 
+    const requestEpoch = ++aiReplyEpochRef.current;
     setInput('');
     setLoading(true);
 
@@ -484,7 +494,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
       const data = await res.json();
       let response = data.response;
 
-      if (data.previewDropId && onPreviewDrop) {
+      if (data.previewDropId && onPreviewDrop && aiReplyEpochRef.current === requestEpoch) {
         onPreviewDrop(data.previewDropId, data.previewWorkspaceId);
       }
 
@@ -799,7 +809,10 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
           )}
           {/* Close button */}
           <button
-            onClick={onClose}
+            onClick={() => {
+              aiReplyEpochRef.current += 1;
+              onClose();
+            }}
             className={`w-7 h-7 flex items-center justify-center rounded-md ${tc.text} opacity-50 hover:opacity-100 hover:bg-black/5 transition-all`}
             title="Close"
           >

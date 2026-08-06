@@ -36,6 +36,8 @@ interface TextModalProps {
   // when the host presses Start. The route call happens in DropZone.handleStartCall; this just
   // bubbles the stream up so the mesh can adopt it with no camera blink.
   onStartCall?: (stream: MediaStream | null) => void | Promise<void>;
+  // Invalidates the route when the host leaves Call mode before the start completes.
+  onCancelCallStart?: () => void;
   callCanStart?: boolean;
   callAccessLoading?: boolean;
   callAccessError?: string | null;
@@ -59,7 +61,7 @@ const BUILT_IN_CATEGORIES = [
   { value: 'link', label: 'Link' },
 ];
 
-export function TextModal({ onSubmit, onClose, theme = 'light', customCategories = [], onCreateCategory, editDrop, onEdit, currentUserId, mentionableDrops = [], isWorkspace = false, canMutate = false, onStartCall, callCanStart = true, callAccessLoading = false, callAccessError = null, onRefreshCallAccess }: TextModalProps) {
+export function TextModal({ onSubmit, onClose, theme = 'light', customCategories = [], onCreateCategory, editDrop, onEdit, currentUserId, mentionableDrops = [], isWorkspace = false, canMutate = false, onStartCall, onCancelCallStart, callCanStart = true, callAccessLoading = false, callAccessError = null, onRefreshCallAccess }: TextModalProps) {
   useBodyScrollLock();
   const isEditMode = !!editDrop;
   const [name, setName] = useState(editDrop?.name || '');
@@ -443,6 +445,7 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
   // without changes, close straight back (the parent re-opens the preview either way).
   const handleClose = () => {
     if (loading) return;
+    if (mode === 'call') onCancelCallStart?.();
     if (isEditMode && hasChanges) {
       setShowCloseDiscardConfirm(true);
       return;
@@ -456,6 +459,7 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
 
   const handleModeSwitch = (newMode: 'text' | 'draw') => {
     if (newMode === mode) return;
+    if (mode === 'call') onCancelCallStart?.();
     if (mode === 'draw' && hasDrawn) {
       setShowDiscardConfirm(true);
       return;
