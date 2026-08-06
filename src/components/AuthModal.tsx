@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useModalBackClose } from '@/hooks/useModalBackClose';
 
@@ -26,7 +26,6 @@ export function AuthModal({
   loading: externalLoading
 }: AuthModalProps) {
   useBodyScrollLock();
-  useModalBackClose(true, onClose);
   const [tab, setTab] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -36,6 +35,12 @@ export function AuthModal({
   const [resetEmailSent, setResetEmailSent] = useState(false);
   const [showResetForm, setShowResetForm] = useState(false);
   const [success, setSuccess] = useState(false);
+  const authRequestEpochRef = useRef(0);
+
+  // A closed auth window must not let a late network result surface a modal or other form state.
+  useEffect(() => () => {
+    authRequestEpochRef.current += 1;
+  }, []);
 
   const isDark = theme === 'dark';
   const isMinimal = theme === 'minimal';
@@ -98,10 +103,12 @@ export function AuthModal({
       return;
     }
 
+    const requestEpoch = ++authRequestEpochRef.current;
     setLoading(true);
 
     if (tab === 'signup') {
       const result = await onSignUp(email.trim(), password);
+      if (authRequestEpochRef.current !== requestEpoch) return;
       setLoading(false);
       if (result.error) {
         setError(result.error);
@@ -111,6 +118,7 @@ export function AuthModal({
       }
     } else {
       const result = await onSignIn(email.trim(), password);
+      if (authRequestEpochRef.current !== requestEpoch) return;
       setLoading(false);
       if (result.error) {
         setError(result.error);
@@ -120,7 +128,7 @@ export function AuthModal({
       } else {
         // Sign in successful - hide form immediately and close modal
         setSuccess(true);
-        onClose();
+        handleClose();
       }
     }
   };
@@ -131,8 +139,10 @@ export function AuthModal({
       return;
     }
 
+    const requestEpoch = ++authRequestEpochRef.current;
     setLoading(true);
     const result = await onResetPassword(email.trim());
+    if (authRequestEpochRef.current !== requestEpoch) return;
     setLoading(false);
 
     if (result.success) {
@@ -143,12 +153,19 @@ export function AuthModal({
     }
   };
 
+  const handleClose = () => {
+    authRequestEpochRef.current += 1;
+    onClose();
+  };
+
+  useModalBackClose(true, handleClose);
+
   const isLoading = loading || externalLoading;
 
   return (
     <div
       className={`fixed inset-0 ${tc.overlayBg} flex items-center justify-center z-50 p-4 transition-colors duration-300 overscroll-contain`}
-      onClick={(e) => e.target === e.currentTarget && onClose()}
+      onClick={(e) => e.target === e.currentTarget && handleClose()}
     >
       <div className={`${tc.bgColor} border ${tc.borderColor} ${tc.roundedClass} w-full max-w-md transition-colors duration-300`}>
         {/* Header */}
@@ -156,7 +173,7 @@ export function AuthModal({
           <h2 className={`${isMinimal ? 'text-sm font-medium' : 'text-sm font-bold uppercase tracking-wider'} text-white`}>
             {showResetForm ? 'Reset Password' : 'Account'}
           </h2>
-          <button onClick={onClose} className="text-white/70 hover:text-white transition-colors">
+          <button onClick={handleClose} className="text-white/70 hover:text-white transition-colors">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>

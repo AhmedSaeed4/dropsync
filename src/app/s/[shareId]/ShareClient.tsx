@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { contentToPlainText } from '@/lib/dropTagUtils';
 import ShareStage from '@/components/share/ShareStage';
@@ -32,7 +32,10 @@ const SHARE_DESIGN_LS_KEY = 'ds-share-last-design';
 export default function ShareClient({ initialTheme }: { initialTheme: ShareTheme }) {
   const params = useParams();
   const shareId = params.shareId as string;
+  const currentShareIdRef = useRef(shareId);
+  currentShareIdRef.current = shareId;
   const [share, setShare] = useState<ShareData | null>(null);
+  const [loadedShareId, setLoadedShareId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   // `loading` is intentionally not read — the content side derives its state from
@@ -58,7 +61,10 @@ export default function ShareClient({ initialTheme }: { initialTheme: ShareTheme
   const [design, setDesign] = useState<ShareDesign | null>(null);
   // Loading→content handoff state (see the handoff useEffect below).
   const [revealed, setRevealed] = useState(false);
-  const hasContent = !!(share && !error);
+  // Keep old data in state for cleanup, but never render it under a different shareId during the
+  // render before the fetch effect clears that state.
+  const currentShare = loadedShareId === shareId ? share : null;
+  const hasContent = !!(currentShare && !error);
   // Derived (not state): the loading pane fades the instant content arrives and stops fading
   // once revealed. Keeping it derived means the handoff effect below never calls setState for
   // it — only the reveal timeout does.
@@ -128,9 +134,24 @@ export default function ShareClient({ initialTheme }: { initialTheme: ShareTheme
   }, [hasContent, revealed]);
 
   useEffect(() => {
+    const requestShareId = shareId;
+    const controller = new AbortController();
+    const isCurrentRequest = () =>
+      !controller.signal.aborted && currentShareIdRef.current === requestShareId;
+
+    // Clear the previous share immediately. The same component is reused when only shareId changes,
+    // so keeping it visible would briefly render A's content on B's URL while B is loading.
+    setShare(null);
+    setLoadedShareId(null);
+    setError(null);
+    setLoading(true);
+    setRevealed(false);
+    setVideoSrc(null);
+
     async function fetchShare() {
       try {
-        const res = await fetch(`/api/share?id=${shareId}`);
+        const res = await fetch(`/api/share?id=${requestShareId}`, { signal: controller.signal });
+        if (!isCurrentRequest()) return;
         if (!res.ok) {
           if (res.status === 410 || res.status === 404) {
             setError('expired');
@@ -140,37 +161,42 @@ export default function ShareClient({ initialTheme }: { initialTheme: ShareTheme
           return;
         }
         const data = await res.json();
+        if (!isCurrentRequest()) return;
         setShare(data);
+        setLoadedShareId(requestShareId);
       } catch {
+        if (!isCurrentRequest()) return;
         setError('error');
       } finally {
-        setLoading(false);
+        if (isCurrentRequest()) setLoading(false);
       }
     }
-    fetchShare();
+
+    void fetchShare();
+    return () => controller.abort();
   }, [shareId]);
 
   useEffect(() => {
-    if (!share?.fileUrl || !share.mimeType?.startsWith('video/')) return;
+    if (!currentShare?.fileUrl || !currentShare.mimeType?.startsWith('video/')) return;
 
     // Binary (unencrypted large) video: stream the R2 URL directly — no fetch/decode. The object
     // is served with its real Content-Type, so the browser range-requests + streams it.
-    if (share.fileFormat === 'binary') {
-      setVideoSrc(share.fileUrl);
+    if (currentShare.fileFormat === 'binary') {
+      setVideoSrc(currentShare.fileUrl);
       return;
     }
 
     let cancelled = false;
     let blobUrl: string | null = null;
 
-    fetch(share.fileUrl)
+    fetch(currentShare.fileUrl)
       .then(res => res.text())
       .then(text => {
         if (cancelled) return;
         if (text.startsWith('data:')) {
           return fetch(text).then(r => r.blob());
         }
-        return new Blob([text], { type: share.mimeType || 'video/mp4' });
+        return new Blob([text], { type: currentShare.mimeType || 'video/mp4' });
       })
       .then(blob => {
         if (!cancelled && blob) {
@@ -184,7 +210,7 @@ export default function ShareClient({ initialTheme }: { initialTheme: ShareTheme
       cancelled = true;
       if (blobUrl) URL.revokeObjectURL(blobUrl);
     };
-  }, [share?.fileUrl, share?.mimeType, share?.fileFormat]);
+  }, [currentShare?.fileUrl, currentShare?.mimeType, currentShare?.fileFormat]);
 
   // Reset the ready flag only when the source actually changes (not on every effect re-run), so
   // the overlay shows for a new video and hides once onCanPlay fires for it. onError also clears
@@ -209,9 +235,9 @@ export default function ShareClient({ initialTheme }: { initialTheme: ShareTheme
   };
 
   const handleCopy = async () => {
-    if (share?.content) {
+    if (currentShare?.content) {
       // Copy the same clean text the viewer sees (mentions as plain names), not the raw tokens.
-      await navigator.clipboard.writeText(contentToPlainText(share.content));
+      await navigator.clipboard.writeText(contentToPlainText(currentShare.content));
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }
@@ -254,9 +280,9 @@ export default function ShareClient({ initialTheme }: { initialTheme: ShareTheme
 
       <div className="flex min-h-screen flex-col bg-[var(--ds-paper)] text-[var(--ds-ink)] sm:flex-row">
         <ShareStage design={design} theme={theme} />
-        {revealed && share ? (
+        {revealed && currentShare ? (
           <ShareContentPane
-            share={share}
+            share={currentShare}
             copied={copied}
             videoSrc={videoSrc}
             videoReady={videoReady}

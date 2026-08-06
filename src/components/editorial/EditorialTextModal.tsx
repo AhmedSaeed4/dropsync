@@ -36,6 +36,8 @@ interface EditorialTextModalProps {
   // LIVE CALL mode (create only): fired with the preview stream (ownership handed off to the mesh)
   // when the host presses Start. DropZone.handleStartCall does the route call; this bubbles the stream.
   onStartCall?: (stream: MediaStream | null) => void | Promise<void>;
+  // Invalidates the route when the host leaves Call mode before the start completes.
+  onCancelCallStart?: () => void;
   callCanStart?: boolean;
   callAccessLoading?: boolean;
   callAccessError?: string | null;
@@ -59,7 +61,7 @@ const BUILT_IN_CATEGORIES = [
   { value: 'link', label: 'Link' },
 ];
 
-export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customCategories = [], onCreateCategory, editDrop, onEdit, currentUserId, mentionableDrops = [], isWorkspace = false, canMutate = false, onStartCall, callCanStart = true, callAccessLoading = false, callAccessError = null, onRefreshCallAccess }: EditorialTextModalProps) {
+export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customCategories = [], onCreateCategory, editDrop, onEdit, currentUserId, mentionableDrops = [], isWorkspace = false, canMutate = false, onStartCall, onCancelCallStart, callCanStart = true, callAccessLoading = false, callAccessError = null, onRefreshCallAccess }: EditorialTextModalProps) {
   useBodyScrollLock();
   const isEditMode = !!editDrop;
   const isFileDrop = isEditMode && editDrop?.type === 'file';
@@ -337,6 +339,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
   // without changes, close straight back (the parent re-opens the preview either way).
   const handleClose = () => {
     if (loading) return;
+    if (mode === 'call') onCancelCallStart?.();
     if (isEditMode && hasChanges) {
       setShowCloseDiscardConfirm(true);
       return;
@@ -350,6 +353,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
 
   const handleModeSwitch = (newMode: 'text' | 'draw') => {
     if (newMode === mode) return;
+    if (mode === 'call') onCancelCallStart?.();
     if (mode === 'draw' && hasDrawn) {
       setShowDiscardConfirm(true);
       return;

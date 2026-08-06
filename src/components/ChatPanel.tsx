@@ -167,6 +167,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
   const [noticeLeaving, setNoticeLeaving] = useState(false);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const aiReplyEpochRef = useRef(0);
   const [menuMsg, setMenuMsg] = useState<{ msg: GroupChatMessage; x: number; y: number; panelRight: number } | null>(null);
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
   // Inline message editor — editingMsgId === msg.id swaps that bubble's text node for a textarea.
@@ -182,6 +183,12 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
   const groupUnsubRef = useRef<(() => void) | null>(null);
   const systemNoticeRef = useRef<HTMLDivElement>(null);
   const hadNoticeRef = useRef(false);
+
+  // Invalidate AI preview side effects before the panel's close animation finishes, not only after
+  // React unmounts the panel.
+  useEffect(() => () => {
+    aiReplyEpochRef.current += 1;
+  }, []);
 
   // Inline drop-reference chips — mirrors the drop-note editor (TextModal). The group composer AND
   // the inline edit box back a contentEditable <div> with the shared useMentionEditor hook; chips
@@ -402,6 +409,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
   }, [groupMessages, chatMode]);
 
   const handleNewChat = () => {
+    aiReplyEpochRef.current += 1;
     setActiveConvId(null);
     setMessages([]);
     setShowSidebar(false);
@@ -415,6 +423,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
       setShowSidebar(false);
       return;
     }
+    aiReplyEpochRef.current += 1;
     setSwitchingConv(convId);
     setMessages([]);
     setMessagesLoading(true);
@@ -447,6 +456,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
     const text = input.trim();
     if (!text || loading || !userId) return;
 
+    const requestEpoch = ++aiReplyEpochRef.current;
     setInput('');
     setLoading(true);
 
@@ -500,7 +510,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
       const data = await res.json();
       let response = data.response;
 
-      if (data.previewDropId && onPreviewDrop) {
+      if (data.previewDropId && onPreviewDrop && aiReplyEpochRef.current === requestEpoch) {
         onPreviewDrop(data.previewDropId, data.previewWorkspaceId);
       }
 
@@ -587,6 +597,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
   };
 
   const handleClose = () => {
+    aiReplyEpochRef.current += 1;
     setIsExiting(true);
     setTimeout(() => {
       onClose();
