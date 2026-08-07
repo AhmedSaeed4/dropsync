@@ -11,6 +11,7 @@ import {
   getCallUsageStatesInTransaction,
   getTrustedStatusMapInTransaction,
   reconcileTrustedCallTransitionInTransaction,
+  releaseReservationWrite,
   reserveCallUsageInTransaction,
   refreshCallLimitState,
 } from '../_lib';
@@ -69,8 +70,12 @@ export async function POST(request: NextRequest) {
     // Ask LiveKit who is ACTUALLY connected to this call's room, so GHOST roster entries (hard-killed
     // tabs whose leave never fired) can be dropped BEFORE the capacity check instead of falsely
     // holding a seat. Fail-open: null = LiveKit unreachable → keep the roster as-is (never block a real
-    // join on a LiveKit hiccup). Fetched OUTSIDE the txn (network round-trip); used inside it.
-    const liveIds = await getLiveCallParticipantIds(callDropId);
+    // join on a LiveKit hiccup). Fetched OUTSIDE the txn (network round-trip); used inside it. The
+    // room name is the generation-unique livekitRoomName (legacy calls fall back to the doc id).
+    const previewRoomName = callPreview.data()?.livekitRoomName;
+    const liveIds = await getLiveCallParticipantIds(
+      typeof previewRoomName === 'string' && previewRoomName ? previewRoomName : callDropId,
+    );
 
     let result:
       | { kind: 'notfound' }
@@ -85,6 +90,16 @@ export async function POST(request: NextRequest) {
         const snap = await txn.get(callRef);
         const currentWorkspaceSnap = await txn.get(workspaceRef);
         if (!snap.exists) return { kind: 'notfound' as const };
+        // Generation gate for the LiveKit snapshot: the roster reconcile below used the room name
+        // read BEFORE this txn. If the deterministic slot was replaced meanwhile (new generation),
+        // that snapshot belongs to the OLD room — ignore it (fail-open) instead of pruning the new
+        // call's real participants.
+        const txnRoomName = snap.data()?.livekitRoomName;
+        const previewRoomMatches =
+          typeof previewRoomName === 'string'
+            ? txnRoomName === previewRoomName
+            : txnRoomName == null;
+        const generationLiveIds = previewRoomMatches ? liveIds : null;
         if (
           snap.data()?.workspaceId !== workspaceId ||
           !currentWorkspaceSnap.exists ||
@@ -111,23 +126,47 @@ export async function POST(request: NextRequest) {
         const updateRoster = async (nextUids: string[], requiredUid: string | null = null) => {
           const callData = snap.data() || {};
           const trustedByUid = await getTrustedStatusMapInTransaction(txn, db, [...new Set([...historyUids, ...nextUids])]);
-          const usageStates = await getCallUsageStatesInTransaction(txn, db, nextUids, nowMs);
+          // Include the PRUNED (ghost) uids in the read set so their reservations for THIS call can
+          // be released in the same transaction (all reads still precede the writes below).
+          const prunedUids = uids.filter((u) => !nextUids.includes(u));
+          const usageStates = await getCallUsageStatesInTransaction(
+            txn,
+            db,
+            [...new Set([...nextUids, ...prunedUids])],
+            nowMs,
+          );
           const joinedAtByUid = getCallParticipantJoinedAtMap(callData, uids);
           for (const nextUid of nextUids) {
             if (!joinedAtByUid.has(nextUid)) joinedAtByUid.set(nextUid, nowMs);
           }
+          // PRUNED GHOSTS are EXCLUDED from the trusted-transition settlement below: they were never
+          // connected (that is why they were pruned), so they must never be charged or have their
+          // reservation re-instated by the transition accounting. The transition is computed over
+          // the surviving roster only.
+          const transitionCurrentUids = uids.filter((u) => !prunedUids.includes(u));
           const trustedTransition = await reconcileTrustedCallTransitionInTransaction(
             txn,
             db,
             callDropId,
             callData,
-            uids,
+            transitionCurrentUids,
             nextUids,
             trustedByUid,
             usageStates,
             joinedAtByUid,
             nowMs,
           );
+          // A pruned ghost's reservation for THIS call would otherwise block them (and be orphaned
+          // at deletion) — release it with zero charge, AFTER the transition settle (which never
+          // touches pruned uids now, but the ordering keeps the intent explicit). Their
+          // minutesUsedToday is untouched: the webhook normally settles an exit; the prune is the
+          // no-webhook fallback and the release keeps the accounting forgiving rather than blocking.
+          for (const prunedUid of prunedUids) {
+            const prunedState = usageStates.get(prunedUid);
+            if (prunedState?.reservedCallId === callDropId) {
+              releaseReservationWrite(txn, db, prunedUid);
+            }
+          }
           const remainingMinutesByUid = new Map<string, number>();
           const reservations: { uid: string; state: CallUsageTransactionState }[] = [];
           for (const nextUid of nextUids) {
@@ -184,8 +223,8 @@ export async function POST(request: NextRequest) {
         // tell "reconnecting" from "ghost". Self-corrects on their next join. The robust fix is a LiveKit
         // room-event webhook (Stage 3) that maintains the roster authoritatively; this one-sample prune
         // is the pragmatic Stage 2 compromise.
-        if (liveIds) {
-          const cleaned = uids.filter((u) => liveIds.has(u));
+        if (generationLiveIds) {
+          const cleaned = uids.filter((u) => generationLiveIds.has(u));
           if (cleaned.length !== uids.length) {
             if (cleaned.includes(uid)) {
               const update = await updateRoster(cleaned);

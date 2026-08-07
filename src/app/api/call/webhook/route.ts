@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { WebhookReceiver } from 'livekit-server-sdk';
 import { getAdminDb } from '@/lib/firebase-admin';
+import type { DocumentData } from 'firebase-admin/firestore';
 import {
-  cascadeCallSubcollections,
+  cascadeCallSubcollectionsIfGeneration,
   deriveCallLimitFields,
   enforceExpiredCall,
   getCallParticipantJoinedAtMap,
@@ -11,6 +12,8 @@ import {
   getCallUsageStatesInTransaction,
   getTrustedStatusMapInTransaction,
   reconcileTrustedCallTransitionInTransaction,
+  releaseReservationForCallInTransaction,
+  releaseReservationsForCallInTransaction,
   reserveCallUsageInTransaction,
   settleCallUsageInTransaction,
 } from '../_lib';
@@ -36,6 +39,38 @@ function isCallRoom(roomName: string): boolean {
 }
 
 /**
+ * Resolve a LiveKit room name to its Firestore call doc. New calls use generation-unique room names
+ * (livekitRoomName on the doc), so the room name is NEVER a document id anymore. The lookup keys on
+ * livekitRoomName; a delayed webhook from an OLD generation simply finds nothing (its unique room
+ * name cannot match a newer call), which is what makes the webhook generation-safe. Legacy calls
+ * (pre-lifecycle rooms named after the doc id) fall back to a direct doc-id read — the SID guard in
+ * every handler still rejects any stale event against a newer doc in the reused slot.
+ */
+async function findCallDropByRoomName(
+  roomName: string,
+): Promise<{ callDropId: string; data: DocumentData } | null> {
+  const db = getAdminDb();
+  try {
+    const byRoom = await db
+      .collection('drops')
+      .where('livekitRoomName', '==', roomName)
+      .limit(1)
+      .get();
+    if (!byRoom.empty) {
+      return { callDropId: byRoom.docs[0].id, data: byRoom.docs[0].data() };
+    }
+  } catch (error) {
+    console.warn(`[call/webhook] livekitRoomName lookup failed for ${roomName}`, error);
+    // Fall through to the legacy doc-id read; the SID guard below still protects against misuse.
+  }
+  const legacySnap = await db.collection('drops').doc(roomName).get();
+  if (legacySnap.exists) {
+    return { callDropId: roomName, data: legacySnap.data() as DocumentData };
+  }
+  return null;
+}
+
+/**
  * Remove one participant from the route-owned roster. The transaction makes duplicate LiveKit
  * deliveries harmless and ensures the call is deleted only when this participant was actually the
  * last roster entry.
@@ -44,6 +79,7 @@ async function removeParticipant(
   callDropId: string,
   roomSid: string,
   uid: string,
+  eventRoomName: string,
 ): Promise<CleanupDecision> {
   const db = getAdminDb();
   const callRef = db.collection('drops').doc(callDropId);
@@ -60,6 +96,20 @@ async function removeParticipant(
     decision = await db.runTransaction(async (txn): Promise<CleanupDecision> => {
     const snap = await txn.get(callRef);
     if (!snap.exists || snap.data()?.type !== 'call' || snap.data()?.callState !== 'live') {
+      // A pending call's host disconnecting before confirmation (e.g. the confirm step failed and
+      // the browser closed): the LiveKit leave event is the abort signal — release the reservation
+      // with zero charge and delete the invisible pending doc. This is a second safety net on top of
+      // the leave route + daily sweep.
+      if (snap.exists && snap.data()?.type === 'call' && snap.data()?.callState === 'pending') {
+        if (snap.data()?.callHostUid === uid && snap.data()?.livekitRoomSid === roomSid) {
+          // Raw read: normalization drops reservedCallId for a stale pending, which would skip the
+          // release and leave a persisted reservation that resurrects when the slot is reused.
+          await releaseReservationForCallInTransaction(txn, db, uid, callDropId);
+          txn.delete(callRef);
+          return { handled: true, callEnded: true, cascade: true, expired: false };
+        }
+        return { handled: true, callEnded: false, cascade: false, expired: false };
+      }
       // A previous delivery may have deleted the call before its subcollection cleanup completed.
       // Retrying the cascade is safe and makes cleanup resilient to that partial failure.
       return { handled: false, callEnded: false, cascade: !snap.exists, expired: false };
@@ -181,7 +231,8 @@ async function removeParticipant(
   }
 
   if (decision.cascade) {
-    await cascadeCallSubcollections(db, callDropId);
+    // Generation-aware: the slot may have been reused by a newer start before this cascade ran.
+    await cascadeCallSubcollectionsIfGeneration(db, callDropId, eventRoomName);
   }
   return decision;
 }
@@ -190,10 +241,26 @@ async function removeParticipant(
  * A room_finished event is the authoritative empty-room signal. Delete the call document in a
  * transaction, then clean its Firestore subcollections because Firestore does not cascade deletes.
  */
-async function finishRoom(callDropId: string, roomSid: string): Promise<CleanupDecision> {
+async function finishRoom(
+  callDropId: string,
+  roomSid: string,
+  eventRoomName: string,
+): Promise<CleanupDecision> {
   const db = getAdminDb();
   const callRef = db.collection('drops').doc(callDropId);
   const nowMs = Date.now();
+
+  // Legacy never-joined ghost detection: a LIVE call that was never confirmed (no callConfirmedAt —
+  // pre-lifecycle doc) with NO presence docs ever means nobody actually connected. Such ghosts must
+  // be released with ZERO charge, not billed by the settle below. Presence is read before the txn
+  // (queries are not allowed inside transactions).
+  const previewSnap = await callRef.get();
+  const preview = previewSnap.exists ? previewSnap.data() : null;
+  let neverJoinedLegacy = false;
+  if (preview?.type === 'call' && preview.callState === 'live' && preview.callConfirmedAt == null) {
+    const presenceSnap = await callRef.collection('callPresence').get();
+    neverJoinedLegacy = presenceSnap.empty;
+  }
 
   const decision = await db.runTransaction(async (txn): Promise<CleanupDecision> => {
     const snap = await txn.get(callRef);
@@ -207,6 +274,17 @@ async function finishRoom(callDropId: string, roomSid: string): Promise<CleanupD
       return { handled: false, callEnded: false, cascade: false, expired: false };
     }
 
+    // A pending (never-confirmed) room that finished: nobody ever joined, so release the host's
+    // reservation with zero charge and delete the invisible doc — mirrors the leave/sweep paths.
+    if (snap.data()?.callState === 'pending') {
+      const hostUid = snap.data()?.callHostUid;
+      if (typeof hostUid === 'string') {
+        await releaseReservationForCallInTransaction(txn, db, hostUid, callDropId);
+      }
+      txn.delete(callRef);
+      return { handled: true, callEnded: true, cascade: true, expired: false };
+    }
+
     if (snap.data()?.callState !== 'live') {
       // Expired calls keep their terminal reason briefly so clients can show why they ended.
       return { handled: true, callEnded: false, cascade: false, expired: false };
@@ -216,6 +294,14 @@ async function finishRoom(callDropId: string, roomSid: string): Promise<CleanupD
     const participantUids = Array.isArray(callData.callParticipantUids)
       ? callData.callParticipantUids.filter((uid): uid is string => typeof uid === 'string')
       : [];
+    if (neverJoinedLegacy) {
+      // Legacy never-joined ghost: release every roster member's reservation with zero charge and
+      // delete — nobody ever spent time in this room, so nobody is billed. Batch release: all
+      // reads precede all writes (Firestore transaction contract).
+      await releaseReservationsForCallInTransaction(txn, db, participantUids, callDropId);
+      txn.delete(callRef);
+      return { handled: true, callEnded: true, cascade: true, expired: false };
+    }
     const trustedByUid = await getTrustedStatusMapInTransaction(txn, db, participantUids);
     const usageStates = await getCallUsageStatesInTransaction(txn, db, participantUids, nowMs);
     await settleCallUsageInTransaction(
@@ -235,7 +321,8 @@ async function finishRoom(callDropId: string, roomSid: string): Promise<CleanupD
   });
 
   if (decision.cascade) {
-    await cascadeCallSubcollections(db, callDropId);
+    // Generation-aware: the slot may have been reused by a newer start before this cascade ran.
+    await cascadeCallSubcollectionsIfGeneration(db, callDropId, eventRoomName);
   }
   return decision;
 }
@@ -278,8 +365,17 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    // Generation-safe resolution: the unique room name maps to exactly one call doc (or none, if
+    // the call was already cleaned up). A delayed webhook from an old generation can never cascade
+    // a newer call in the reused `call-{workspaceId}` slot.
+    const resolved = await findCallDropByRoomName(roomName);
+    if (!resolved) {
+      return NextResponse.json({ ok: true, handled: false });
+    }
+    const callDropId = resolved.callDropId;
+
     if (event.event === 'room_finished') {
-      const decision = await finishRoom(roomName, roomSid);
+      const decision = await finishRoom(callDropId, roomSid, roomName);
       return NextResponse.json({ ok: true, ...decision });
     }
 
@@ -287,7 +383,7 @@ export async function POST(request: NextRequest) {
       const uid = event.participant?.identity;
       if (!uid) return NextResponse.json({ ok: true, handled: false });
 
-      const decision = await removeParticipant(roomName, roomSid, uid);
+      const decision = await removeParticipant(callDropId, roomSid, uid, roomName);
       return NextResponse.json({ ok: true, ...decision });
     }
 

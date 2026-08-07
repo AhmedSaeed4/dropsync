@@ -4,7 +4,7 @@ import { getAdminDb } from '@/lib/firebase-admin';
 import {
   ABANDONED_CALL_GRACE_MS,
   CALL_PRESENCE_STALE_MS,
-  cascadeCallSubcollections,
+  cascadeCallSubcollectionsIfGeneration,
   enforceExpiredCall,
   getCallParticipantJoinedAtMap,
   getCallTrustedReliefUids,
@@ -12,7 +12,10 @@ import {
   getLiveKitRoomService,
   getLiveKitRoomParticipantCount,
   getTrustedStatusMapInTransaction,
+  isPendingCallStale,
   refreshCallLimitState,
+  releaseReservationForCallInTransaction,
+  releaseReservationsForCallInTransaction,
   settleCallUsageInTransaction,
 } from '../_lib';
 
@@ -44,10 +47,17 @@ async function endAbandonedCall(
   const data = callDoc.data();
   const startedAtMs = timestampMs(data.callStartedAt);
   const expectedRoomSid = typeof data.livekitRoomSid === 'string' ? data.livekitRoomSid : null;
+  const roomName =
+    typeof data.livekitRoomName === 'string' && data.livekitRoomName
+      ? data.livekitRoomName
+      : callDoc.id;
+  // Covers legacy live ghosts WITH a deadline too (the old pass excluded them): a live call whose
+  // room has been empty for the grace period with no fresh presence is abandoned regardless of the
+  // no-trusted deadline. Confirmed new calls are filtered out upstream (callConfirmedAt set), and a
+  // genuinely-connected call always has participants + presence.
   if (
     data.type !== 'call' ||
     data.callState !== 'live' ||
-    data.callLimitDeadlineAt != null ||
     startedAtMs == null ||
     expectedRoomSid == null ||
     startedAtMs > nowMs - ABANDONED_CALL_GRACE_MS
@@ -55,15 +65,19 @@ async function endAbandonedCall(
     return false;
   }
 
-  const roomParticipantCount = await getLiveKitRoomParticipantCount(callDoc.id);
+  const roomParticipantCount = await getLiveKitRoomParticipantCount(roomName);
   if (roomParticipantCount == null || roomParticipantCount > 0) return false;
 
   const presenceSnap = await callDoc.ref.collection('callPresence').get();
-  const hasFreshPresence = presenceSnap.docs.some((presenceDoc) => {
+  const presenceDocs = presenceSnap.docs;
+  const hasFreshPresence = presenceDocs.some((presenceDoc) => {
     const lastSeenMs = timestampMs(presenceDoc.data().lastSeen);
     return lastSeenMs != null && nowMs - lastSeenMs <= CALL_PRESENCE_STALE_MS;
   });
   if (hasFreshPresence) return false;
+  // No presence doc EVER = nobody ever heartbeated = a legacy never-joined ghost. Release its
+  // reservation with ZERO charge instead of billing the host for time they never spent in the room.
+  const neverJoined = presenceDocs.length === 0;
 
   const ended = await db.runTransaction(async (txn) => {
     const snap = await txn.get(callDoc.ref);
@@ -72,7 +86,6 @@ async function endAbandonedCall(
       !snap.exists ||
       current?.type !== 'call' ||
       current.callState !== 'live' ||
-      current.callLimitDeadlineAt != null ||
       current.livekitRoomSid !== expectedRoomSid ||
       timestampMs(current.callStartedAt) !== startedAtMs
     ) {
@@ -83,6 +96,12 @@ async function endAbandonedCall(
       : [];
     const trustedByUid = await getTrustedStatusMapInTransaction(txn, db, participantUids);
     const usageStates = await getCallUsageStatesInTransaction(txn, db, participantUids, nowMs);
+    if (neverJoined) {
+      // Batch release (all reads before all writes — Firestore transaction contract).
+      await releaseReservationsForCallInTransaction(txn, db, participantUids, callDoc.id);
+      txn.delete(callDoc.ref);
+      return true;
+    }
     await settleCallUsageInTransaction(
       txn,
       db,
@@ -105,17 +124,83 @@ async function endAbandonedCall(
 
   if (!ended) return false;
 
+  if (neverJoined) {
+    // Doc was deleted by the txn — clean its subcollections explicitly. Generation-aware: a newer
+    // call reusing the slot is never touched.
+    await cascadeCallSubcollectionsIfGeneration(db, callDoc.id, roomName).catch((error) => {
+      console.warn(`[call/enforce] ghost cascade failed for ${callDoc.id}`, error);
+    });
+  }
+
   // The webhook normally removes the room and terminal document. This best-effort delete covers a
   // LiveKit webhook outage; the terminal retention pass removes the Firestore document later.
   const roomService = getLiveKitRoomService();
   if (roomService) {
     try {
-      await roomService.deleteRoom(callDoc.id);
+      await roomService.deleteRoom(roomName);
     } catch (error) {
-      console.warn(`[call/enforce] failed to close abandoned room ${callDoc.id}`, error);
+      console.warn(`[call/enforce] failed to close abandoned room ${roomName}`, error);
     }
   }
   return true;
+}
+
+/**
+ * Daily-cron sweep for stale PENDING (created-but-never-confirmed) calls — the tab-close ghost call
+ * safety net. The host's browser died before /api/call/confirm: the doc is invisible to members and
+ * nothing was ever charged, so this just releases the reservation with zero charge, deletes the doc
+ * + subcollections, and closes the never-joined LiveKit room. Lazy release (start/access routes)
+ * handles the user-facing unblock between runs; this is the final mop-up.
+ */
+async function sweepStalePendingCalls(db: Firestore, nowMs: number): Promise<number> {
+  const pendingSnap = await db.collection('drops').where('callState', '==', 'pending').get();
+  let cleaned = 0;
+  for (const callDoc of pendingSnap.docs) {
+    const data = callDoc.data();
+    if (data.type !== 'call') continue;
+    if (!isPendingCallStale(data, nowMs)) continue;
+    const roomName =
+      typeof data.livekitRoomName === 'string' && data.livekitRoomName
+        ? data.livekitRoomName
+        : callDoc.id;
+    const released = await db.runTransaction(async (txn) => {
+      const snap = await txn.get(callDoc.ref);
+      const current = snap.data();
+      if (!snap.exists || current?.type !== 'call' || current.callState !== 'pending') return false;
+      // Re-check staleness atomically (the pre-filter can race the grace boundary).
+      if (!isPendingCallStale(current, nowMs)) {
+        return false;
+      }
+      // Generation guard: only delete the doc that still owns the room we are about to close.
+      const currentRoomName =
+        typeof current.livekitRoomName === 'string' && current.livekitRoomName
+          ? current.livekitRoomName
+          : callDoc.id;
+      if (currentRoomName !== roomName) return false;
+      const hostUid = typeof current.callHostUid === 'string' ? current.callHostUid : null;
+      if (hostUid) {
+        // Raw read: normalization drops reservedCallId for a stale pending, which would skip the
+        // release and leave a persisted reservation that resurrects when the slot is reused.
+        await releaseReservationForCallInTransaction(txn, db, hostUid, callDoc.id);
+      }
+      txn.delete(callDoc.ref);
+      return true;
+    });
+    if (!released) continue;
+    await cascadeCallSubcollectionsIfGeneration(db, callDoc.id, roomName).catch((error) => {
+      console.warn(`[call/enforce] pending cascade failed for ${callDoc.id}`, error);
+    });
+    const roomService = getLiveKitRoomService();
+    if (roomService) {
+      try {
+        await roomService.deleteRoom(roomName);
+      } catch (error) {
+        console.warn(`[call/enforce] failed to close stale pending room ${roomName}`, error);
+      }
+    }
+    cleaned += 1;
+  }
+  return cleaned;
 }
 
 // GET /api/call/enforce — Vercel Cron backstop. The browser timer gives users an accurate display;
@@ -130,18 +215,39 @@ export async function GET(request: NextRequest) {
     // route deployable before a separate Firebase index deployment and the call count is bounded by
     // one active call per workspace.
     const liveSnap = await db.collection('drops').where('callState', '==', 'live').get();
+    // Deadline-expired live calls (ANY confirmation state): the LEGACY ghost case must take the
+    // no-charge abandoned path FIRST (empty room + no presence ever → no billing), so unconfirmed
+    // docs get the ghost check before the billing settle below; a legacy REAL call (room occupied)
+    // falls through to the normal enforce + charge, exactly as before this lifecycle change.
     const expiredDocs = liveSnap.docs.filter((callDoc) => {
       const data = callDoc.data();
       const deadline = data.callLimitDeadlineAt;
-      return data.type === 'call' && deadline && typeof deadline.toMillis === 'function' && deadline.toMillis() <= nowMs;
+      return (
+        data.type === 'call' &&
+        deadline &&
+        typeof deadline.toMillis === 'function' &&
+        deadline.toMillis() <= nowMs
+      );
     });
+    // Abandoned candidates: (a) unconfirmed live docs (no callConfirmedAt — legacy pre-lifecycle
+    // docs; the neverJoined heuristic inside endAbandonedCall decides charge vs no-charge) and
+    // (b) confirmed trusted-host calls (deadline null — the old pass's scope). A genuinely-connected
+    // call always has LiveKit participants + fresh presence, so it is skipped by endAbandonedCall.
     const abandonedDocs = liveSnap.docs.filter((callDoc) => {
       const data = callDoc.data();
-      return data.type === 'call' && data.callLimitDeadlineAt == null;
+      return (
+        data.type === 'call' &&
+        (data.callConfirmedAt == null || data.callLimitDeadlineAt == null)
+      );
     });
 
     let ended = 0;
     for (const callDoc of expiredDocs) {
+      const callData = callDoc.data();
+      if (callData.callConfirmedAt == null && (await endAbandonedCall(db, callDoc, nowMs))) {
+        ended += 1;
+        continue; // legacy never-joined ghost — released with zero charge
+      }
       // Re-read trust status immediately before ending. This catches a promotion to trusted even if
       // the participant's browser has not sent its next heartbeat yet.
       const state = await refreshCallLimitState(db, callDoc.id, nowMs);
@@ -155,8 +261,14 @@ export async function GET(request: NextRequest) {
       if (await endAbandonedCall(db, callDoc, nowMs)) ended += 1;
     }
 
+    // Stale never-confirmed pending calls (tab-close ghost calls): invisible, never charged — the
+    // sweep releases reservations with zero charge and deletes docs + rooms.
+    const pendingCleaned = await sweepStalePendingCalls(db, nowMs);
+
     // room_finished normally removes terminal docs. This second pass handles a LiveKit outage or a
-    // delayed webhook without leaving ended call metadata in the workspace list.
+    // delayed webhook without leaving ended call metadata in the workspace list. The delete is
+    // transactionally guarded (state must still be 'ended' + past retention) so a NEWER call that
+    // reused the deterministic slot is never removed.
     const terminalBefore = Timestamp.fromMillis(nowMs - TERMINAL_RETENTION_MS);
     const endedSnap = await db.collection('drops').where('callState', '==', 'ended').get();
     const terminalDocs = endedSnap.docs.filter((callDoc) => {
@@ -166,14 +278,41 @@ export async function GET(request: NextRequest) {
     });
     let cleaned = 0;
     for (const callDoc of terminalDocs) {
-      await cascadeCallSubcollections(db, callDoc.id).catch((error) => {
+      const data = callDoc.data();
+      const roomName =
+        typeof data.livekitRoomName === 'string' && data.livekitRoomName
+          ? data.livekitRoomName
+          : callDoc.id;
+      const deleted = await db
+        .runTransaction(async (txn) => {
+          const snap = await txn.get(callDoc.ref);
+          if (!snap.exists || snap.data()?.callState !== 'ended') return false;
+          // Generation guard: only delete the exact ended generation we captured (a newer call that
+          // reused the slot and somehow reached 'ended' must not be removed by this pass).
+          const currentRoom =
+            typeof snap.data()?.livekitRoomName === 'string' && snap.data()?.livekitRoomName
+              ? snap.data()?.livekitRoomName
+              : callDoc.id;
+          if (currentRoom !== roomName) return false;
+          const endedAt = snap.data()?.callEndedAt;
+          if (!endedAt || typeof endedAt.toMillis !== 'function' || endedAt.toMillis() > terminalBefore.toMillis()) {
+            return false;
+          }
+          txn.delete(callDoc.ref);
+          return true;
+        })
+        .catch((error) => {
+          console.warn(`[call/enforce] terminal delete failed for ${callDoc.id}`, error);
+          return false;
+        });
+      if (!deleted) continue;
+      await cascadeCallSubcollectionsIfGeneration(db, callDoc.id, roomName).catch((error) => {
         console.warn(`[call/enforce] cascade failed for ${callDoc.id}`, error);
       });
-      await callDoc.ref.delete();
       cleaned += 1;
     }
 
-    return NextResponse.json({ ok: true, ended, cleaned });
+    return NextResponse.json({ ok: true, ended, cleaned, pendingCleaned });
   } catch (error) {
     console.error('[call/enforce] failed:', error);
     return NextResponse.json({ error: 'Call enforcement failed' }, { status: 500 });

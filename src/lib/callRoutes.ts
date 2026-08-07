@@ -34,16 +34,33 @@ async function callRoute<T = unknown>(path: string, body: Record<string, unknown
 /**
  * Start (or join an existing live) call in a workspace. The start route is idempotent on the
  * deterministic doc id `drops/call-{workspaceId}` — if a live call already exists it returns that
- * id (intent: starting another just joins the existing one). Returns the call drop id to join.
+ * id (intent: starting another just joins the existing one). A FRESH start returns the call as
+ * `callState: 'pending'` + a one-time `attemptToken`: the host must connect to LiveKit and POST
+ * /api/call/confirm before the call becomes visible/live. Returns the call drop id to join.
  */
 export async function startCallRoute(workspaceId: string): Promise<{
   callDropId: string;
   created?: boolean;
+  callState?: 'live' | 'pending';
+  attemptToken?: string | null;
+  livekitRoomName?: string;
   callHostUid?: string;
   creatorName?: string;
   callParticipantUids?: string[];
 }> {
   return callRoute('start', { workspaceId });
+}
+
+/**
+ * Promote a pending call to live. Called by the host immediately after room.connect() succeeds.
+ * Only the verified host of THIS pending generation (one-time attempt token) can confirm; the route
+ * also verifies the host is actually present in the LiveKit room before starting the clock.
+ */
+export async function confirmCallRoute(
+  callDropId: string,
+  attemptToken: string,
+): Promise<{ ok: true }> {
+  return callRoute('confirm', { callDropId, attemptToken });
 }
 
 /** Join a call. Throws (status 409) with the exact capacity message when the call is full. */
@@ -53,11 +70,17 @@ export async function joinCallRoute(
   return callRoute('join', { callDropId });
 }
 
-/** Leave a call. `callEnded` is true when this was the last leaver (the route deleted the doc). */
+/**
+ * Leave a call. `callEnded` is true when this was the last leaver (the route deleted the doc).
+ * `expectedRoomName` is the generation credential (the LiveKit room THIS client connected to): when
+ * provided, the route no-ops unless the call doc still owns that generation — a stale client of an
+ * old generation can never delete or mutate a newer call that reused the deterministic slot.
+ */
 export async function leaveCallRoute(
   callDropId: string,
+  opts?: { expectedRoomName?: string | null },
 ): Promise<{ ok: boolean; callEnded?: boolean }> {
-  return callRoute('leave', { callDropId });
+  return callRoute('leave', { callDropId, expectedRoomName: opts?.expectedRoomName ?? null });
 }
 
 /**

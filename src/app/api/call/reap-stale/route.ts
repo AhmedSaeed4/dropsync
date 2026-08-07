@@ -3,7 +3,7 @@ import { getAdminDb } from '@/lib/firebase-admin';
 import {
   CALL_PRESENCE_STALE_MS,
   authUid,
-  cascadeCallSubcollections,
+  cascadeCallSubcollectionsIfGeneration,
   deriveCallLimitFields,
   enforceExpiredCall,
   getCallParticipantJoinedAtMap,
@@ -44,20 +44,24 @@ export async function POST(request: NextRequest) {
     const presenceRef = callRef.collection('callPresence').doc(staleUid);
     const nowMs = Date.now();
 
-    let decision: { cascade: boolean; expired: boolean } = { cascade: false, expired: false };
+    let decision: { cascade: boolean; expired: boolean; roomName: string | null } = { cascade: false, expired: false, roomName: null };
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
         decision = await db.runTransaction(async (txn) => {
         const callSnap = await txn.get(callRef);
-        if (!callSnap.exists) return { cascade: false, expired: false };
+        if (!callSnap.exists) return { cascade: false, expired: false, roomName: null };
         if (callSnap.data()?.type !== 'call' || callSnap.data()?.callState !== 'live') {
-          return { cascade: false, expired: false };
+          return { cascade: false, expired: false, roomName: null };
         }
+        const roomName =
+          typeof callSnap.data()?.livekitRoomName === 'string' && callSnap.data()?.livekitRoomName
+            ? callSnap.data()?.livekitRoomName
+            : callDropId;
         const rawDeadline = callSnap.data()?.callLimitDeadlineAt;
         const currentDeadlineMs =
           rawDeadline && typeof rawDeadline.toMillis === 'function' ? rawDeadline.toMillis() : null;
         if (currentDeadlineMs != null && currentDeadlineMs <= nowMs) {
-          return { cascade: false, expired: true };
+          return { cascade: false, expired: true, roomName };
         }
         const data = callSnap.data() as { callParticipantUids?: unknown; callParticipantJoinedAt?: unknown };
         const uids = Array.isArray(data.callParticipantUids)
@@ -65,16 +69,16 @@ export async function POST(request: NextRequest) {
           : [];
         // (a) caller must be a current participant (defense-in-depth — the client only invokes this
         //     from a remaining participant's tick; enforce it server-side too).
-        if (!uids.includes(uid)) return { cascade: false, expired: false };
+        if (!uids.includes(uid)) return { cascade: false, expired: false, roomName };
         // (b) staleUid must be in the roster.
-        if (!uids.includes(staleUid)) return { cascade: false, expired: false };
+        if (!uids.includes(staleUid)) return { cascade: false, expired: false, roomName };
         // (c) read staleUid's lastSeen and FAIL-CLOSED on anything but a provably-stale value.
         const presenceSnap = await txn.get(presenceRef);
         const lastSeen = presenceSnap.exists
           ? (presenceSnap.data() as { lastSeen?: { toMillis?: () => number } | null }).lastSeen
           : null;
-        if (!lastSeen || typeof lastSeen.toMillis !== 'function') return { cascade: false, expired: false };
-        if (nowMs - lastSeen.toMillis() <= CALL_PRESENCE_STALE_MS) return { cascade: false, expired: false }; // not stale yet
+        if (!lastSeen || typeof lastSeen.toMillis !== 'function') return { cascade: false, expired: false, roomName };
+        if (nowMs - lastSeen.toMillis() <= CALL_PRESENCE_STALE_MS) return { cascade: false, expired: false, roomName }; // not stale yet
 
         const callData = callSnap.data() || {};
         const trustedByUid = await getTrustedStatusMapInTransaction(txn, db, uids);
@@ -97,7 +101,7 @@ export async function POST(request: NextRequest) {
           );
           txn.delete(presenceRef);
           txn.delete(callRef);
-          return { cascade: true, expired: false };
+          return { cascade: true, expired: false, roomName };
         }
         const trustedTransition = await reconcileTrustedCallTransitionInTransaction(
           txn,
@@ -153,7 +157,7 @@ export async function POST(request: NextRequest) {
           trustedParticipantCount: limitFields.trustedParticipantCount,
           callLimitDeadlineAt: limitFields.callLimitDeadlineAt,
         });
-        return { cascade: false, expired: false };
+        return { cascade: false, expired: false, roomName };
         });
       } catch (err) {
         // FAIL-CLOSED on ANY txn error — never evicts on a blip.
@@ -173,7 +177,8 @@ export async function POST(request: NextRequest) {
     }
 
     if (decision.cascade) {
-      cascadeCallSubcollections(db, callDropId).catch(() => {});
+      // Generation-aware: a newer call reusing the slot is never touched.
+      cascadeCallSubcollectionsIfGeneration(db, callDropId, decision.roomName ?? callDropId).catch(() => {});
     }
 
     return NextResponse.json({ ok: true });

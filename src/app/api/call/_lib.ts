@@ -17,6 +17,11 @@ export const CALL_LIMIT_MS = 30 * 60 * 1000;
 export const CALL_TOTAL_MINUTES = CALL_LIMIT_MS / 60_000;
 export const CALL_PRESENCE_STALE_MS = 60_000;
 export const ABANDONED_CALL_GRACE_MS = 10 * 60 * 1000;
+// A pending (created-but-never-confirmed) call is a server-side reservation. If the host's browser
+// dies before its LiveKit join confirms, the doc is invisible (the drop listener only shows 'live')
+// and must be swept after this grace. 3 min = enough for a throttled-but-legit connect to confirm,
+// short enough that an abandoned pending never lingers long.
+export const PENDING_CALL_GRACE_MS = 3 * 60 * 1000;
 export const CALL_LIMIT_MESSAGE =
   'Your 30-minute daily call allowance has been used. You can still join a call with a trusted user.';
 
@@ -73,6 +78,37 @@ function timestampMs(value: unknown): number | null {
   return typeof toMillis === 'function'
     ? (value as { toMillis: () => number }).toMillis()
     : null;
+}
+
+// Exported so routes can read pending timestamps without duplicating the guard.
+export { timestampMs };
+
+/**
+ * A reservation is ACTIVE while its call is live, OR while the call is a FRESH pending (created but
+ * not yet confirmed — the host is mid-connect). A STALE pending (past the grace, nobody confirmed)
+ * is an abandoned start: the reservation no longer blocks anything, so the user can start/join
+ * again. The lazy-release paths (start/access) clear such reservations explicitly, and the daily
+ * sweep deletes the docs.
+ */
+export function isCallReservationActive(data: DocumentData | undefined, nowMs: number): boolean {
+  if (data?.callState === 'live') return true;
+  if (data?.callState !== 'pending') return false;
+  return !isPendingCallStale(data, nowMs);
+}
+
+/**
+ * A pending call is STALE when it is past its grace: callPendingExpiresAt (server-written at start =
+ * pendingAt + grace) is authoritative when present; legacy/partial docs fall back to the age of
+ * callPendingAt (or createdAt). Single source of truth for the start quick-path, the start txn, the
+ * confirm/token gates, and the daily sweep — all use the same rule.
+ */
+export function isPendingCallStale(data: DocumentData | undefined, nowMs: number): boolean {
+  if (!data || data.callState !== 'pending') return false;
+  const expiresMs = timestampMs(data.callPendingExpiresAt);
+  if (expiresMs != null) return nowMs >= expiresMs;
+  const pendingAtMs = timestampMs(data.callPendingAt) ?? timestampMs(data.createdAt);
+  if (pendingAtMs == null) return false; // unknown age → fail open (not stale yet)
+  return nowMs - pendingAtMs >= PENDING_CALL_GRACE_MS;
 }
 
 export type CallLimitFields = {
@@ -214,7 +250,7 @@ export async function getCallUsageState(
   const state = normalizeCallUsage(snap.data(), nowMs);
   if (!state.reservedCallId) return state;
   const reservationCall = await db.collection('drops').doc(state.reservedCallId).get();
-  if (reservationCall.exists && reservationCall.data()?.callState === 'live') return state;
+  if (reservationCall.exists && isCallReservationActive(reservationCall.data(), nowMs)) return state;
   return {
     ...state,
     limited: state.minutesRemaining <= 0,
@@ -236,7 +272,7 @@ export async function getCallUsageStatesInTransaction(
     const state = normalizeCallUsage(snap.data(), nowMs);
     if (state.reservedCallId) {
       const reservationCall = await txn.get(db.collection('drops').doc(state.reservedCallId));
-      if (!reservationCall.exists || reservationCall.data()?.callState !== 'live') {
+      if (!reservationCall.exists || !isCallReservationActive(reservationCall.data(), nowMs)) {
         states.set(uid, {
           ...state,
           limited: state.minutesRemaining <= 0,
@@ -249,6 +285,121 @@ export async function getCallUsageStatesInTransaction(
     states.set(uid, state);
   }
   return states;
+}
+
+/**
+ * Clear a PERSISTED reservation for a specific call, reading the raw usage doc inside the txn.
+ * Cleanup paths (sweep, pending leave, webhook, legacy ghosts) must use this, NOT the normalized
+ * state: normalization drops `reservedCallId` for a stale/deleted pending call, which would make
+ * the state-based release a silent no-op and leave `reservedCallId`/`minutesReservedToday`/
+ * `reservedAt` persisted — resurrecting a false "active" reservation when the deterministic call
+ * doc is later reused. minutesUsedToday is untouched — never-joined time is never billed.
+ *
+ * ONLY for transactions where no write happened before this call (it reads then writes). For
+ * multiple releases in one transaction use releaseReservationsForCallInTransaction (Firestore
+ * requires all reads to precede all writes).
+ */
+export async function releaseReservationForCallInTransaction(
+  txn: Transaction,
+  db: Firestore,
+  uid: string,
+  callDropId: string,
+): Promise<boolean> {
+  const usageSnap = await txn.get(db.collection('callUsage').doc(uid));
+  const raw = usageSnap.data();
+  if (!raw || raw.reservedCallId !== callDropId) return false;
+  txn.set(
+    db.collection('callUsage').doc(uid),
+    { minutesReservedToday: 0, reservedCallId: null, reservedAt: null },
+    { merge: true },
+  );
+  return true;
+}
+
+/**
+ * Write-only reservation release. The caller must ALREADY have read the usage doc in this
+ * transaction (e.g. via the preloaded states) and verified the reservation — this only issues the
+ * clearing write, so it is safe anywhere in the write phase.
+ */
+export function releaseReservationWrite(
+  txn: Transaction,
+  db: Firestore,
+  uid: string,
+): void {
+  txn.set(
+    db.collection('callUsage').doc(uid),
+    { minutesReservedToday: 0, reservedCallId: null, reservedAt: null },
+    { merge: true },
+  );
+}
+
+/**
+ * Batch release: read EVERY candidate's usage doc first, then write the clearing updates — the
+ * Firestore transaction contract (all reads before all writes) forbids read-after-write, which the
+ * single-uid helper would violate when called in a loop. Returns the uids whose reservation for
+ * callDropId was actually released. minutesUsedToday is untouched in every case.
+ */
+export async function releaseReservationsForCallInTransaction(
+  txn: Transaction,
+  db: Firestore,
+  uids: string[],
+  callDropId: string,
+): Promise<string[]> {
+  const uniqueUids = [...new Set(uids)];
+  const usageSnaps = new Map<string, DocumentData | undefined>();
+  for (const uid of uniqueUids) {
+    usageSnaps.set(uid, (await txn.get(db.collection('callUsage').doc(uid))).data());
+  }
+  const released: string[] = [];
+  for (const uid of uniqueUids) {
+    const raw = usageSnaps.get(uid);
+    if (!raw || raw.reservedCallId !== callDropId) continue;
+    txn.set(
+      db.collection('callUsage').doc(uid),
+      { minutesReservedToday: 0, reservedCallId: null, reservedAt: null },
+      { merge: true },
+    );
+    released.push(uid);
+  }
+  return released;
+}
+
+/**
+ * Lazy release OUTSIDE a transaction (non-cron routes): if the user's reservation points at a
+ * never-confirmed pending call, clear it with zero charge. This is load-bearing — a user whose tab
+ * died mid-start must NEVER be blocked from starting again, even before the daily sweep runs.
+ * Runs in a transaction so a concurrent confirm that promotes the call to live conflicts with it:
+ * after the retry the call is 'live' and the reservation is NOT released (no double-booking).
+ */
+export async function releaseNeverConfirmedReservation(
+  db: Firestore,
+  uid: string,
+): Promise<boolean> {
+  return db
+    .runTransaction(async (txn): Promise<boolean> => {
+      const usageSnap = await txn.get(db.collection('callUsage').doc(uid));
+      const raw = usageSnap.data();
+      if (!raw || typeof raw.reservedCallId !== 'string') return false;
+      const callSnap = await txn.get(db.collection('drops').doc(raw.reservedCallId));
+      if (!callSnap.exists) {
+        // Reservation points at a call that no longer exists (swept pending / cleaned ended call):
+        // an orphan — clear the persisted fields so they never resurrect on slot reuse.
+        txn.set(
+          db.collection('callUsage').doc(uid),
+          { minutesReservedToday: 0, reservedCallId: null, reservedAt: null },
+          { merge: true },
+        );
+        return true;
+      }
+      if (callSnap.data()?.callState !== 'pending') return false;
+      txn.set(
+        db.collection('callUsage').doc(uid),
+        { minutesReservedToday: 0, reservedCallId: null, reservedAt: null },
+        { merge: true },
+      );
+      return true;
+    })
+    .catch(() => false);
 }
 
 /** Reserve the user's remaining daily allowance for one active call atomically. */
@@ -568,9 +719,37 @@ export async function enforceExpiredCall(
   nowMs = Date.now(),
 ): Promise<{ ended: boolean; participantUids: string[] }> {
   const callRef = db.collection('drops').doc(callDropId);
+  // Room names are generation-unique now (livekitRoomName); legacy docs fall back to the doc id.
+  const preSnap = await callRef.get();
+  const preData = preSnap.exists ? preSnap.data() : null;
+  const roomName =
+    typeof preData?.livekitRoomName === 'string' && preData.livekitRoomName
+      ? preData.livekitRoomName
+      : callDropId;
+  const expectedSid = typeof preData?.livekitRoomSid === 'string' ? preData.livekitRoomSid : null;
+  // Legacy never-joined ghost detection (queries are not allowed inside transactions, so the
+  // checks happen before the txn): an UNCONFIRMED live call (no callConfirmedAt — only
+  // pre-lifecycle docs) with NO presence docs ever AND an EMPTY LiveKit room means nobody ever
+  // connected. Such ghosts are released with ZERO charge and deleted instead of billed — centralized
+  // here so EVERY caller of enforceExpiredCall (start/join/token/leave/sync/webhook/reap + cron)
+  // uses the same rule. The LiveKit-emptiness requirement makes the heuristic fail-safe: a real
+  // legacy call whose heartbeats all failed is still protected by having participants in the room.
+  let neverJoinedGhost = false;
+  if (preData?.type === 'call' && preData.callState === 'live' && preData.callConfirmedAt == null) {
+    const presenceSnap = await callRef.collection('callPresence').get();
+    if (presenceSnap.empty) {
+      const participantCount = await getLiveKitRoomParticipantCount(roomName);
+      neverJoinedGhost = participantCount === 0;
+    }
+  }
   const decision = await db.runTransaction(async (txn) => {
     const snap = await txn.get(callRef);
     if (!snap.exists || snap.data()?.type !== 'call' || snap.data()?.callState !== 'live') {
+      return { ended: false, participantUids: [] };
+    }
+    // Generation guard: the deterministic slot may have been reused between the pre-read and this
+    // txn (a new pending start overwrites the doc). Never act on or close the room of a newer call.
+    if (expectedSid != null && snap.data()?.livekitRoomSid !== expectedSid) {
       return { ended: false, participantUids: [] };
     }
     const deadlineMs = timestampMs(snap.data()?.callLimitDeadlineAt);
@@ -581,6 +760,14 @@ export async function enforceExpiredCall(
     const participantUids = Array.isArray(rawUids)
       ? rawUids.filter((uid): uid is string => typeof uid === 'string')
       : [];
+    if (neverJoinedGhost) {
+      // Legacy ghost: full refund — clear every roster member's reservation (batch release: reads
+      // first, then writes, per the Firestore transaction contract) and delete the doc.
+      // minutesUsedToday is untouched: never-joined time is never billed.
+      await releaseReservationsForCallInTransaction(txn, db, participantUids, callDropId);
+      txn.delete(callRef);
+      return { ended: true, participantUids };
+    }
     const callData = snap.data() || {};
     const trustedByUid = await getTrustedStatusMapInTransaction(txn, db, participantUids);
     const limitTrustedByUid = new Map(
@@ -615,12 +802,18 @@ export async function enforceExpiredCall(
   });
 
   if (!decision.ended) return decision;
+  if (neverJoinedGhost) {
+    // The doc was deleted by the txn — clean its subcollections explicitly (generation-aware).
+    await cascadeCallSubcollectionsIfGeneration(db, callDropId, roomName).catch((error) => {
+      console.warn(`[call] ghost cascade failed for ${callDropId}`, error);
+    });
+  }
   const roomService = getLiveKitRoomService();
   if (roomService) {
     try {
-      await roomService.deleteRoom(callDropId);
+      await roomService.deleteRoom(roomName);
     } catch (error) {
-      console.warn(`[call] failed to close expired LiveKit room ${callDropId}`, error);
+      console.warn(`[call] failed to close expired LiveKit room ${roomName}`, error);
     }
   }
   return decision;
@@ -642,6 +835,28 @@ export async function cascadeCallSubcollections(db: Firestore, callDropId: strin
       await batch.commit();
     }),
   );
+}
+
+/**
+ * Generation-aware variant: cascade the subcollections ONLY if the deterministic doc slot still
+ * holds the same generation (same livekitRoomName), or the doc is already gone entirely. Prevents
+ * a cleanup that started for an OLD generation from deleting a NEWER call's presence/signals after
+ * the slot was reused (`call-{workspaceId}` is deterministic). Legacy docs have no livekitRoomName —
+ * for them the generation token IS the doc id, so the match falls back to `callDropId`.
+ */
+export async function cascadeCallSubcollectionsIfGeneration(
+  db: Firestore,
+  callDropId: string,
+  expectedRoomName: string,
+): Promise<void> {
+  const snap = await db.collection('drops').doc(callDropId).get();
+  if (snap.exists) {
+    const room = snap.data()?.livekitRoomName;
+    const matches =
+      typeof room === 'string' ? room === expectedRoomName : callDropId === expectedRoomName;
+    if (!matches) return; // slot reused by a newer generation — never touch its subcollections
+  }
+  await cascadeCallSubcollections(db, callDropId);
 }
 
 // ---- LiveKit roster reconciliation ----------------------------------------------------------
