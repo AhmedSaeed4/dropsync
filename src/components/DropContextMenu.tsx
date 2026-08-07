@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { getEditorialThemeColors } from './editorial/editorialTheme';
 
 interface DropContextMenuProps {
@@ -77,7 +78,7 @@ export function DropContextMenu({ x, y, isPinned, onPin, onUnpin, onClose, theme
 
   if (editorial) {
     const tc = getEditorialThemeColors(theme);
-    return (
+    const menu = (
       <>
         <div className="fixed inset-0 z-[200]" onClick={stopAndClose} onContextMenu={stopAndClose} />
         <div
@@ -101,6 +102,8 @@ export function DropContextMenu({ x, y, isPinned, onPin, onUnpin, onClose, theme
         </div>
       </>
     );
+    if (typeof document === 'undefined') return null;
+    return createPortal(menu, document.body);
   }
 
   return (
