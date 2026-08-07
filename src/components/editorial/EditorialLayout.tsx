@@ -136,7 +136,7 @@ interface EditorialLayoutProps {
   callAccessLoading: boolean;
   callAccessError: string | null;
   onRefreshCallAccess: () => Promise<void>;
-  onStartCall: (callDropId: string, stream: MediaStream | null, callInfo?: { created?: boolean; callHostUid?: string; creatorName?: string; callParticipantUids?: string[] }) => void | Promise<void>;
+  onStartCall: (callDropId: string, stream: MediaStream | null, callInfo?: { created?: boolean; callState?: 'live' | 'pending'; attemptToken?: string | null; livekitRoomName?: string; callHostUid?: string; creatorName?: string; callParticipantUids?: string[] }) => void | Promise<void>;
   onJoinCall: (drop: Drop) => void;
   onMinimizeCall: () => void;
   onLeaveCall: () => void;

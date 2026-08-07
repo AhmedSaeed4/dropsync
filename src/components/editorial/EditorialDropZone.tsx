@@ -25,7 +25,7 @@ interface EditorialDropZoneProps {
   mentionableDrops?: Drop[];
   // LIVE CALL: page handler invoked after the start route creates the call drop. Receives the
   // callDropId + the preview stream (the mesh adopts the stream + joins).
-  onStartCall?: (callDropId: string, stream: MediaStream | null, callInfo?: { created?: boolean; callHostUid?: string; creatorName?: string; callParticipantUids?: string[] }) => void | Promise<void>;
+  onStartCall?: (callDropId: string, stream: MediaStream | null, callInfo?: { created?: boolean; callState?: 'live' | 'pending'; attemptToken?: string | null; livekitRoomName?: string; callHostUid?: string; creatorName?: string; callParticipantUids?: string[] }) => void | Promise<void>;
   callCanStart?: boolean;
   callAccessLoading?: boolean;
   callAccessError?: string | null;
@@ -255,7 +255,8 @@ export function EditorialDropZone({
 
   // LIVE CALL start — the host pressed Start in the TextModal's Call mode. The start route is the
   // SOLE creator of a call drop (one-call-per-workspace enforced server-side); on success, hand the
-  // callDropId + the preview stream up to the page so the mesh can adopt the stream + join.
+  // callDropId + the preview stream up to the page so the mesh can adopt the stream + join. The
+  // created call is 'pending' (invisible + never charged) until the page confirms it.
   const handleStartCall = async (stream: MediaStream | null) => {
     retractFooterIfUp();
     if (!workspaceId || !user) {
@@ -269,13 +270,22 @@ export function EditorialDropZone({
        if (callStartEpochRef.current !== startEpoch) {
          stream?.getTracks().forEach((track) => track.stop());
          if (callStartStreamRef.current === stream) callStartStreamRef.current = null;
-         // startCallRoute creates the caller as the first participant. Reuse the normal leave route
-         // so the last-leaver transaction deletes that just-created call and its roster entry.
-         if (result.created) {
-           await leaveCallRoute(result.callDropId).catch((cleanupError) => {
+         // A created call is 'pending' — the leave route releases its reservation with zero charge
+         // and deletes the invisible doc (the PR #203 cleanup, now pending-safe). The generation
+         // credential (livekitRoomName) keeps this cancellation from ever touching a NEWER call
+         // that reused the deterministic slot.
+         if (result.created && result.callState === 'pending') {
+           await leaveCallRoute(result.callDropId, { expectedRoomName: result.livekitRoomName ?? null }).catch((cleanupError) => {
              console.warn('Failed to clean up cancelled call start:', cleanupError);
            });
          }
+         return;
+       }
+       if (result.callState === 'pending' && result.created !== true) {
+         // A fresh pending already exists in this workspace (double-click / second tab).
+         stream?.getTracks().forEach((track) => track.stop());
+         if (callStartStreamRef.current === stream) callStartStreamRef.current = null;
+         setUploadState({ status: 'error', message: 'A call is already starting in this workspace.' });
          return;
        }
        await onStartCall?.(result.callDropId, stream, result);

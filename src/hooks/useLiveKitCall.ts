@@ -24,7 +24,7 @@
 // invisible to the UI.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot } from 'firebase/firestore';
 import {
   Room,
   RoomEvent,
@@ -38,7 +38,7 @@ import {
 import { auth } from '@/lib/firebase';
 import { db } from '@/lib/firebase';
 import { useCallMedia } from './useCallMedia';
-import { joinCallRoute, leaveCallRoute, getCallTokenRoute, syncCallLimitRoute } from '@/lib/callRoutes';
+import { joinCallRoute, leaveCallRoute, getCallTokenRoute, syncCallLimitRoute, confirmCallRoute } from '@/lib/callRoutes';
 import { heartbeatCallPresence, subscribeToCallLimit } from '@/lib/liveCallSignaling';
 import type { MemberInfo } from '@/lib/workspaces';
 
@@ -79,6 +79,9 @@ export function useLiveKitCall({ userId, callDropId, workspaceMembers }: UseLive
   const joiningRef = useRef(false);
   const leftRef = useRef(false); // guard against double-leave
   const activeCallDropIdRef = useRef<string | null>(null);
+  // The LiveKit room name of the CURRENT session's generation — passed to leaveCallRoute as the
+  // generation credential so a stale session can never delete/mutate a newer call in the slot.
+  const sessionRoomNameRef = useRef<string | null>(null);
   const localJoinStartedAtRef = useRef<number | null>(null);
   const adoptedPreviewRef = useRef<MediaStream | null>(null);
   // Live refs to the always-current media helpers, so stable callbacks (the [] teardown effect, the
@@ -246,12 +249,14 @@ export function useLiveKitCall({ userId, callDropId, workspaceMembers }: UseLive
     setDailyMinutesUsed(null);
     setCallTotalMinutes(null);
     setDailyUsageTrusted(false);
-    // 3. POST /api/call/leave (transactional; deletes the doc if this was the last leaver)
+    // 3. POST /api/call/leave (transactional; deletes the doc if this was the last leaver). The
+    //    generation credential ensures a stale session never mutates a newer call in the slot.
     try {
-      await leaveCallRoute(callId);
+      await leaveCallRoute(callId, { expectedRoomName: sessionRoomNameRef.current });
     } catch (e) {
       console.warn('leave route failed', e);
     }
+    sessionRoomNameRef.current = null;
   }, []);
 
   // ---- unmount / callDropId change → teardown once (the persisted-hook cleanup) ----
@@ -277,11 +282,15 @@ export function useLiveKitCall({ userId, callDropId, workspaceMembers }: UseLive
         : Promise.resolve(null);
       void token.then((tok) => {
         if (!tok) return;
-        // keepalive lets the request outlive the page tear-down (best-effort; the route is idempotent)
+        // keepalive lets the request outlive the page tear-down (best-effort; the route is idempotent).
+        // The generation credential keeps a stale page from mutating a newer call in the slot.
         void fetch('/api/call/leave', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}` },
-          body: JSON.stringify({ callDropId: id }),
+          body: JSON.stringify({
+            callDropId: id,
+            expectedRoomName: sessionRoomNameRef.current ?? null,
+          }),
           keepalive: true,
         }).catch(() => {});
       });
@@ -300,13 +309,20 @@ export function useLiveKitCall({ userId, callDropId, workspaceMembers }: UseLive
   }, []);
 
   const joinCall = useCallback(
-    async (id: string) => {
+    async (
+      id: string,
+      opts?: { skipJoinRoute?: boolean; attemptToken?: string | null; expectedRoomName?: string | null },
+    ) => {
       if (joiningRef.current || roomRef.current || status === 'joining' || status === 'joined') return;
       if (!userId) {
         setError('Sign in to join the call.');
         throw new Error('Sign in to join the call.');
       }
       joiningRef.current = true;
+      // Fresh session: no generation credential until the token route tells us the room name. The
+      // host's start response already knows it (opts.expectedRoomName) — that covers the failures
+      // that happen BEFORE the token fetch.
+      sessionRoomNameRef.current = null;
       setStatus('joining');
       setError(null);
       setCallEndReason(null);
@@ -325,8 +341,12 @@ export function useLiveKitCall({ userId, callDropId, workspaceMembers }: UseLive
       let createdRoom: Room | null = null;
       try {
         // Reserve the server-side seat before asking for camera/microphone permission. A full or
-        // expired call must never trigger a browser permission prompt.
-        await joinCallRoute(id);
+        // expired call must never trigger a browser permission prompt. The HOST of a fresh pending
+        // call skips this — startCallRoute already admitted them to the pending roster, and the
+        // join route only admits members of LIVE calls.
+        if (!opts?.skipJoinRoute) {
+          await joinCallRoute(id);
+        }
         rosterJoined = true;
         // Local media: the adopted preview stream if the host just handed one off (no re-acquire, no
         // camera blink), else acquire fresh (a joiner has no preview).
@@ -337,7 +357,8 @@ export function useLiveKitCall({ userId, callDropId, workspaceMembers }: UseLive
           const s = await media.acquire();
           if (!s) throw new Error(media.error || 'Could not access camera or microphone.');
         }
-        const { token, url } = await getCallTokenRoute(id);
+        const { token, url, roomName: connectedRoomName } = await getCallTokenRoute(id);
+        sessionRoomNameRef.current = connectedRoomName;
         const room = new Room({
           // adaptiveStream OFF. With it ON, LiveKit shrinks the RECEIVED stream to match the tile's
           // rendered size — so a shared screen (even a STILL image) was delivered at a low resolution
@@ -359,6 +380,44 @@ export function useLiveKitCall({ userId, callDropId, workspaceMembers }: UseLive
         await room.connect(url, token);
         // Publish our local camera+mic to the room (reuses the preview/acquired tracks).
         await publishLocalCameraMic(room);
+        // The host of a fresh pending call CONFIRMS now that the LiveKit connection is up: the
+        // server verifies this uid is actually in the room and promotes pending → live (starts the
+        // clock, makes the call visible). LiveKit's participant list can lag the connect by a moment,
+        // so one short retry covers the propagation race before giving up (on failure the catch path
+        // disconnects and leaves, which releases the pending call with zero charge).
+        if (opts?.attemptToken) {
+          let confirmError: unknown = null;
+          for (let attempt = 0; attempt < 2; attempt += 1) {
+            if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 1500));
+            try {
+              await confirmCallRoute(id, opts.attemptToken);
+              confirmError = null;
+              break;
+            } catch (e) {
+              const err = e as Error & { status?: number };
+              if (err.status === 404) {
+                // The doc is no longer pending: either the promotion already committed (response was
+                // lost) or the pending was cleaned up. Success ONLY when the doc is live AND still
+                // owns THIS session's room generation — a replaced/reused slot is a genuine failure.
+                try {
+                  const callSnap = await getDoc(doc(db, 'drops', id));
+                  const callData = callSnap.exists() ? callSnap.data() : null;
+                  if (
+                    callData?.callState === 'live' &&
+                    (callData.livekitRoomName ?? id) === connectedRoomName
+                  ) {
+                    confirmError = null;
+                    break;
+                  }
+                } catch {
+                  /* fall through to retry/fail */
+                }
+              }
+              confirmError = e;
+            }
+          }
+          if (confirmError) throw confirmError;
+        }
         roomRef.current = room;
         // Seed remote state from participants ALREADY present (their tracks arrive via
         // TrackSubscribed, but any already-subscribed publications are picked up here too).
@@ -394,11 +453,17 @@ export function useLiveKitCall({ userId, callDropId, workspaceMembers }: UseLive
         }
         if (rosterJoined) {
           try {
-            await leaveCallRoute(id);
+            // Generation credential: a stale failed attempt must never mutate a newer call in the
+            // slot. Prefer the credential known before the token fetch (host start response); the
+            // session ref covers failures after it.
+            await leaveCallRoute(id, {
+              expectedRoomName: opts?.expectedRoomName ?? sessionRoomNameRef.current,
+            });
           } catch {
             /* idempotent */
           }
         }
+        sessionRoomNameRef.current = null;
         activeCallDropIdRef.current = null;
         localJoinStartedAtRef.current = null;
         setCallJoinedAtMs(null);

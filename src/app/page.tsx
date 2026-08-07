@@ -585,10 +585,20 @@ export default function Home() {
 
   // Host pressed Start in the create-modal's Call mode. Adopt the preview stream (no camera blink),
   // set the active call drop (the real doc hydrates via createDropListener within ~1s), and join.
+  // A fresh start returns callState 'pending' + attemptToken: the host joins WITHOUT the join route
+  // (already admitted at start) and confirms pending → live right after the LiveKit connect.
   const handleStartCall = async (
     callDropId: string,
     stream: MediaStream | null,
-    callInfo?: { created?: boolean; callHostUid?: string; creatorName?: string; callParticipantUids?: string[] },
+    callInfo?: {
+      created?: boolean;
+      callState?: 'live' | 'pending';
+      attemptToken?: string | null;
+      livekitRoomName?: string;
+      callHostUid?: string;
+      creatorName?: string;
+      callParticipantUids?: string[];
+    },
   ) => {
     if (!user) return;
     retractFooterIfUp();
@@ -611,7 +621,7 @@ export default function Home() {
           callHostUid: callInfo?.callHostUid || user.uid,
           callParticipantUids: callInfo?.callParticipantUids || [user.uid],
           workspaceId: currentWorkspaceId,
-          callState: 'live',
+          callState: callInfo?.callState ?? 'live',
           createdAt: new Date(),
           callStartedAt: new Date(),
           expiresAt: null,
@@ -619,7 +629,11 @@ export default function Home() {
         });
     setCallMinimized(false);
     try {
-      await callState.joinCall(callDropId);
+      await callState.joinCall(callDropId, {
+        skipJoinRoute: callInfo?.callState === 'pending' && callInfo?.created === true,
+        attemptToken: callInfo?.attemptToken ?? null,
+        expectedRoomName: callInfo?.livekitRoomName ?? null,
+      });
     } catch (error) {
       setActiveCallDrop(null);
       throw error instanceof Error ? error : new Error('Failed to join the call.');
