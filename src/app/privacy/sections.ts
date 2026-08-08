@@ -50,7 +50,7 @@ export const sections: Section[] = [
     id: "how-why",
     title: "2. How and why we use your data",
     paragraphs: [
-      "We use your data only to operate and improve DropSync — for no other purpose. We do not sell, rent, or share it with anyone for their own use, and we do not use your content to train AI models. Our AI providers process your data only to handle your requests, not to train their models.",
+      "We use your data only to operate and improve DropSync — for no other purpose. We do not sell, rent, or share it with anyone for their own use. DropSync itself does not use your content to train AI models. However, our AI chat assistant is powered by a third-party model — currently Google Gemini on its free tier. When you use the assistant, your message and the relevant (non-password) drop content are sent to Google to generate a response, and under the free tier Google may use that data to improve its own services, which can include training its models. Drops in the “password” category are never sent to the AI provider. Voice-to-text clips are transcribed separately by Groq and are not used for training.",
       "The legal bases on which we process your data (under the EU/UK GDPR, Article 6) are:",
     ],
     items: [
@@ -111,8 +111,12 @@ export const sections: Section[] = [
         text: "Runs the AI assistant backend. To answer your requests, it processes your chat messages, decrypts the relevant drops, and sends them to the model provider.",
       },
       {
+        label: "Google (Gemini) — USA.",
+        text: "Powers the AI chat assistant. The backend is provider-switchable; the live model is shown at its /health endpoint. Under the free tier we use, Google may use the data sent to it to improve its services (see “How and why we use your data” above).",
+      },
+      {
         label: "Groq — USA.",
-        text: "Runs the AI model (gpt-oss-120b) that powers the assistant, and provides voice-to-text transcription (Whisper).",
+        text: "Provides voice-to-text transcription (Whisper) for voice clips. Groq does not use your voice audio to train its models.",
       },
       {
         label: "OpenAI — USA.",
@@ -124,7 +128,7 @@ export const sections: Section[] = [
     id: "transfers",
     title: "5. International data transfers",
     paragraphs: [
-      "Your data is processed in the United States (Google Firebase, Cloudflare R2, Vercel, Groq, and OpenAI). The AI assistant backend runs in the region of its hosting provider.",
+      "Your data is processed in the United States (Google Firebase, Google Gemini, Cloudflare R2, Vercel, Groq, and OpenAI). The AI assistant backend runs in the region of its hosting provider.",
       "Where data is transferred from the EU/UK/EEA, we rely on the EU-US Data Privacy Framework for US providers that participate in it, and on Standard Contractual Clauses (or other lawful transfer mechanisms) where applicable. We do not knowingly offer the service where doing so would be unlawful.",
     ],
   },
@@ -150,7 +154,7 @@ export const sections: Section[] = [
     title: "8. Data retention",
     paragraphs: [
       "You choose how long each drop lives: 1 hour, 2 hours, 6 hours, 24 hours, or “forever”. When a drop expires, it is deleted from the database and its file and image are deleted from storage. “Forever” drops are kept until you (or a workspace owner) delete them.",
-      "Account data is kept until you delete your account. Voice audio and AI requests are transient: they are not retained by us, and we have enabled Zero Data Retention with our AI provider (Groq) so they are not stored by that provider either. Other provider-side backups and logs may persist briefly as part of normal operations; we keep these to a minimum.",
+      "Account data is kept until you delete your account. Your AI conversation history is kept so you can refer back to it; voice audio is not stored after transcription. Because the chat assistant runs on Google Gemini's free tier, Google may retain and use the data you send to the assistant (your messages and the relevant decrypted drop content) to improve its services, including training its models. Voice-to-text audio is sent to Groq for transcription; Groq does not use it for training. Other provider-side backups and logs may persist briefly as part of normal operations; we keep these to a minimum.",
     ],
   },
   {

@@ -11,4 +11,4 @@
  * The clickwrap consent gate in src/app/page.tsx + src/components/TermsConsentGate.tsx reads it
  * from here so the gate and the write can't disagree.
  */
-export const CURRENT_TERMS_VERSION = 1;
+export const CURRENT_TERMS_VERSION = 2;
