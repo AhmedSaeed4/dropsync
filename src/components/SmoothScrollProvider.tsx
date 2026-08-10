@@ -64,6 +64,19 @@ export function retractFooterIfUp() {
   else window.scrollTo(0, 0);
 }
 
+/**
+ * Unconditionally cancel any window-level Footer movement before the Footer is removed. Unlike
+ * retractFooterIfUp(), this does not rely on window.scrollY: Lenis can be in the magnet pause/glide
+ * phase while the native scroll position is still zero. `force` also works if a modal currently
+ * holds Lenis stopped. This does not alter the ref-counted scroll-lock state.
+ */
+export function retractFooterImmediately() {
+  if (typeof window === 'undefined') return;
+  const lenis = getLenis();
+  if (lenis) lenis.scrollTo(0, { immediate: true, force: true });
+  else window.scrollTo(0, 0);
+}
+
 // Ref-counted scroll lock: stacked overlays (a modal over the chat overlay, or two modals) keep
 // the page frozen until the LAST one closes. Lenis's bare stop()/start() are idempotent booleans
 // with no depth counter, so without this an inner modal closing would re-enable smooth-scroll while

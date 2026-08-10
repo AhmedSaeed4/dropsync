@@ -16,6 +16,7 @@ import { EditorialMoveDropModal } from './EditorialMoveDropModal';
 import { getEditorialThemeColors } from './editorialTheme';
 import { MemberInfo } from '@/lib/workspaces';
 import { getCategoryCollapsed, setCategoryCollapsed, getDropSortPrefs, setDropSortMode, setDropOrder } from '@/lib/auth';
+import type { DropSortMode } from '@/lib/auth';
 
 interface EditorialDropListProps {
   drops: Drop[];
@@ -37,6 +38,7 @@ interface EditorialDropListProps {
   onJoinCall?: (drop: Drop) => void;
   isReopenCallId?: string;
   hoverable?: boolean;
+  onSortModeChange?: (mode: SortMode, spaceKey: string) => void;
 }
 
 const BUILT_IN_CATEGORIES = [
@@ -56,7 +58,7 @@ type PillItem =
 // Measure layout before paint without tripping useLayoutEffect's SSR warning.
 const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
 
-type SortMode = 'manual' | 'newest' | 'name' | 'size' | 'expiry';
+type SortMode = DropSortMode;
 
 const SORT_OPTIONS: { value: SortMode; label: string }[] = [
   { value: 'newest', label: 'Newest' },
@@ -172,6 +174,7 @@ export function EditorialDropList({
   onJoinCall,
   isReopenCallId,
   hoverable = false,
+  onSortModeChange,
 }: EditorialDropListProps) {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -445,33 +448,45 @@ export function EditorialDropList({
   const [sortMode, setSortMode] = useState<SortMode>('newest'); // default = current behavior
   const [manualOrder, setManualOrder] = useState<string[]>([]);
   const sortPrefsRef = useRef<{ mode: Record<string, string>; order: Record<string, string[]> }>({ mode: {}, order: {} });
+  const sortPrefsLoadedRef = useRef(false);
 
   // Load sort prefs once on mount (whole maps); default newest + empty order.
   useEffect(() => {
-    if (!currentUserId) return;
+    sortPrefsLoadedRef.current = false;
+    if (!currentUserId) {
+      onSortModeChange?.('newest', spaceKeyRef.current);
+      return;
+    }
     let cancelled = false;
     getDropSortPrefs(currentUserId)
       .then((prefs) => {
         if (cancelled) return;
         sortPrefsRef.current = prefs;
-        setSortMode((sortPrefsRef.current.mode[spaceKeyRef.current] as SortMode) ?? 'newest');
+        sortPrefsLoadedRef.current = true;
+        const nextMode = (sortPrefsRef.current.mode[spaceKeyRef.current] as SortMode) ?? 'newest';
+        setSortMode(nextMode);
         setManualOrder(sortPrefsRef.current.order[spaceKeyRef.current] ?? []);
+        onSortModeChange?.(nextMode, spaceKeyRef.current);
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [currentUserId]);
+  }, [currentUserId, onSortModeChange]);
 
-  // Apply this space's sort prefs instantly whenever the space changes.
+  // Apply this space's sort prefs instantly whenever the space changes. Do not report the default
+  // before the Firestore map resolves; the page keeps the Footer hidden until the mode is known.
   useEffect(() => {
-    setSortMode((sortPrefsRef.current.mode[spaceKey] as SortMode) ?? 'newest');
+    const nextMode = (sortPrefsRef.current.mode[spaceKey] as SortMode) ?? 'newest';
+    if (sortPrefsLoadedRef.current) onSortModeChange?.(nextMode, spaceKey);
+    setSortMode(nextMode);
     setManualOrder(sortPrefsRef.current.order[spaceKey] ?? []);
-  }, [spaceKey]);
+  }, [spaceKey, onSortModeChange]);
 
   const handleSortChange = useCallback((mode: SortMode) => {
+    onSortModeChange?.(mode, spaceKey);
     setSortMode(mode);
     sortPrefsRef.current.mode = { ...sortPrefsRef.current.mode, [spaceKey]: mode };
     if (currentUserId) setDropSortMode(currentUserId, spaceKey, mode); // background write; swallows its own errors
-  }, [spaceKey, currentUserId]);
+  }, [spaceKey, currentUserId, onSortModeChange]);
 
   // Custom sort dropdown: themed trigger button + portalled menu (mirrors the
   // @-mention dropdown — fixed positioning, click-outside overlay, tc tokens).
