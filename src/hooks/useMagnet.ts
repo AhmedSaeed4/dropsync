@@ -24,8 +24,9 @@ export function useMagnet(footerActive: boolean) {
 
   // Effect A — self-heal poll (mirror useDissolve): wait for #footer-shell AND a live Lenis.
   useEffect(() => {
-    // footerActive = isWide && footerEnabled — bail (and stop the poll) below 1400px OR when the
-    // footer is toggled off in Settings, so this self-heal poll never spins forever.
+    // footerActive = isWide && footerVisible — bail (and stop the poll) below 1400px OR when the
+    // footer is toggled off in Settings or suppressed by Editorial Manual mode, so this self-heal
+    // poll never spins forever.
     if (reduce || ready || !footerActive) return;
     let rafId = 0;
     const poll = () => {

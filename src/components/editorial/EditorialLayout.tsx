@@ -17,6 +17,7 @@ import { EditorialThemeSelector } from './EditorialThemeSelector';
 import { EditorialSavedPaths } from './EditorialSavedPaths';
 import { getEditorialThemeColors } from './editorialTheme';
 import { retractFooterIfUp } from '../SmoothScrollProvider';
+import type { DropSortMode } from '@/lib/auth';
 import { EditorialTextModal } from './EditorialTextModal';
 import { EditorialMoveDropModal } from './EditorialMoveDropModal';
 import WorkspaceOptionsModal from '@/components/WorkspaceOptionsModal';
@@ -59,6 +60,7 @@ interface EditorialLayoutProps {
   onToggleNotifications?: () => void;
   footerEnabled?: boolean;
   onToggleFooterEnabled?: () => void;
+  onSortModeChange?: (mode: DropSortMode, spaceKey: string) => void;
   showSettingsModal: boolean;
   setShowSettingsModal: (v: boolean) => void;
   showAuthModal: boolean;
@@ -151,7 +153,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
     chatMode = 'ai', setChatMode,
     unreadCount = 0,
     notifPermission, notifMuted, onToggleNotifications,
-    footerEnabled, onToggleFooterEnabled,
+    footerEnabled, onToggleFooterEnabled, onSortModeChange,
     showSettingsModal, setShowSettingsModal,
     showAuthModal, setShowAuthModal,
     showVerifyModal, setShowVerifyModal,
@@ -403,6 +405,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
               onJoinCall={onJoinCall}
               isReopenCallId={reopenCallDropId}
               hoverable={hoverable}
+              onSortModeChange={onSortModeChange}
             />
           </div>
         </div>

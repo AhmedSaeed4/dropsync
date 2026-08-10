@@ -42,8 +42,9 @@ export function useDissolve(showChat: boolean, footerActive: boolean) {
   // scrub effect so it attaches the listener. The dissolve then works on fresh load with no chat
   // toggle required. Skipped under reduced-motion (the dissolve is off then anyway).
   useEffect(() => {
-    // footerActive = isWide && footerEnabled — bail (and stop the poll) below 1400px OR when the
-    // footer is toggled off in Settings, so this self-heal poll never spins forever.
+    // footerActive = isWide && footerVisible — bail (and stop the poll) below 1400px OR when the
+    // footer is toggled off in Settings or suppressed by Editorial Manual mode, so this self-heal
+    // poll never spins forever.
     if (reduce || ready || !footerActive) return;
     let rafId = 0;
     const poll = () => {

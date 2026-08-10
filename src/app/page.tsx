@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
@@ -21,7 +21,7 @@ import { AuthModal } from '@/components/AuthModal';
 import { VerifyEmailModal } from '@/components/VerifyEmailModal';
 import { Toast } from '@/components/Toast';
 import { Footer } from '@/components/Footer';
-import { lockScroll, unlockScroll, retractFooterIfUp } from '@/components/SmoothScrollProvider';
+import { lockScroll, unlockScroll, retractFooterIfUp, retractFooterImmediately } from '@/components/SmoothScrollProvider';
 import { useDissolve } from '@/hooks/useDissolve';
 import { useMagnet } from '@/hooks/useMagnet';
 import { useIsWide } from '@/hooks/useIsWide';
@@ -40,7 +40,7 @@ import {
   registerChatServiceWorker,
   ensureFcmToken,
 } from '@/lib/notifications';
-import { reauthenticateUser } from '@/lib/auth';
+import { reauthenticateUser, type DropSortMode } from '@/lib/auth';
 import { CALL_LIMIT_MESSAGE } from '@/lib/callRoutes';
 import { db } from '@/lib/firebase';
 import { CURRENT_TERMS_VERSION } from '@/lib/termsVersion';
@@ -196,6 +196,12 @@ export default function Home() {
   // Approach-C: footer (dissolve + magnet) user toggle. Default ON. Persisted to Firestore
   // users/{uid}.footerEnabled (mirrors notifMuted) so it syncs across devices on reload.
   const [footerEnabled, setFooterEnabled] = useState(true);
+  // Editorial reports the current space's sort mode here so the page-level Footer gate can
+  // temporarily suppress the Footer without changing the user's saved footer preference.
+  const [editorialSortState, setEditorialSortState] = useState<{
+    spaceKey: string;
+    mode: DropSortMode;
+  } | null>(null);
   // Session-only guard for the chat-open permission prompt. Resets on every page load (NO
   // localStorage), so accounts created before the push feature get prompted again instead of being
   // permanently skipped. Only caps the prompt at once-per-tab-session.
@@ -853,7 +859,11 @@ export default function Home() {
   // Load the server-honored mute flag from users/{uid}.notifMuted so the foreground gate and the push
   // route agree on the same value across all of the user's devices.
   useEffect(() => {
-    if (!user) { setNotifMuted(false); return; }
+    if (!user) {
+      setNotifMuted(false);
+      setEditorialSortState(null);
+      return;
+    }
     let cancelled = false;
     getDoc(doc(db, 'users', user.uid))
       .then((snap) => {
@@ -1339,11 +1349,36 @@ export default function Home() {
   // 1400px the footer is not rendered, so the dissolve/magnet self-heal polls never find
   // #footer-shell and stay unattached (plain single-screen app). SSR-safe (false pre-mount).
   const isWide = useIsWide();
-  // The footer (dissolve + magnet) is active ONLY on wide screens (>=1400px) AND when the user
-  // hasn't toggled it off in Settings (footerEnabled, default ON). This single flag gates the
-  // render AND both hooks so toggling off fully removes the footer/dissolve/magnet and stops the
-  // self-heal polls (same gate the hooks' Effect A uses — bailing here prevents a perpetual poll).
-  const footerActive = isWide && footerEnabled;
+  const activeSpaceKey = currentWorkspaceId ?? 'personal';
+  const currentEditorialSortMode =
+    editorialSortState?.spaceKey === activeSpaceKey ? editorialSortState.mode : null;
+  // While Editorial's per-space sort preference is still loading, keep the Footer hidden rather
+  // than briefly showing it with the default mode before Firestore resolves a saved Manual mode.
+  const editorialSortReady = layoutMode !== 'editorial' || currentEditorialSortMode !== null;
+  const manualSortActive = layoutMode === 'editorial' && currentEditorialSortMode === 'manual';
+  // The saved preference remains untouched: Manual is only a temporary effective-visibility
+  // override. Classic has no Manual sort mode, so it follows footerEnabled exactly as before.
+  const footerVisible = footerEnabled && editorialSortReady && !manualSortActive;
+  // This single flag gates the Footer render and both footer hooks. Below 1400px the feature stays
+  // off as before, regardless of the saved preference or sort mode.
+  const footerActive = isWide && footerVisible;
+  const handleEditorialSortModeChange = useCallback((mode: DropSortMode, spaceKey: string) => {
+    // Retract before the state update when Manual is selected so a Footer already mid-reveal or
+    // Lenis glide cannot remain over the list while React removes it.
+    if (mode === 'manual') retractFooterImmediately();
+    setEditorialSortState({ mode, spaceKey });
+  }, []);
+
+  // Covers asynchronous sort-preference loading, workspace changes, responsive teardown, and the
+  // Settings toggle. The direct callback handles the normal Manual click before paint; this catches
+  // any other true → false transition. It intentionally does not touch Lenis stop/start locks.
+  const previousFooterActiveRef = useRef(false);
+  useLayoutEffect(() => {
+    if (previousFooterActiveRef.current && !footerActive) {
+      retractFooterImmediately();
+    }
+    previousFooterActiveRef.current = footerActive;
+  }, [footerActive]);
   // Approach-C Part 2: the dissolve (app lifts + fades as the footer rises). Frozen solid while
   // chat or a modal is open; off under reduced-motion. No-ops on login/loading (elements absent).
   useDissolve(showChat, footerActive);
@@ -2260,7 +2295,9 @@ export default function Home() {
   return (
     <>
       <div id="app-shell" className={`sticky top-0 z-[1] h-[100dvh] overflow-x-hidden overflow-y-hidden ${transitionClass}`}>
-        {layoutMode === 'editorial' ? <EditorialLayout {...layoutProps} /> : <ClassicLayout {...layoutProps} />}
+        {layoutMode === 'editorial'
+          ? <EditorialLayout {...layoutProps} onSortModeChange={handleEditorialSortModeChange} />
+          : <ClassicLayout {...layoutProps} />}
       </div>
       {footerActive && <Footer onHideFooter={onHideFooter} />}
       {activeCallDrop && callMinimized && hoverable && (
