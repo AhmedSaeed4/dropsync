@@ -138,6 +138,8 @@ interface EditorialLayoutProps {
   callAccessLoading: boolean;
   callAccessError: string | null;
   onRefreshCallAccess: () => Promise<void>;
+  onExportWorkspace?: () => void;
+  onImportWorkspace?: () => void;
   onStartCall: (callDropId: string, stream: MediaStream | null, callInfo?: { created?: boolean; callState?: 'live' | 'pending'; attemptToken?: string | null; livekitRoomName?: string; callHostUid?: string; creatorName?: string; callParticipantUids?: string[] }) => void | Promise<void>;
   onJoinCall: (drop: Drop) => void;
   onMinimizeCall: () => void;
@@ -178,6 +180,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
     signOutUser, updateDisplayName, reauthenticateUser,
     editDrop, handleEditDrop, handleEditSubmit, onEditClose, handlePreviewInvalidate, editPreparing,
     hoverable, activeCallDrop, callMinimized, callState, reopenCallDropId, callCanStart, callAccessLoading, callAccessError, onRefreshCallAccess,
+    onExportWorkspace, onImportWorkspace,
     onStartCall, onJoinCall, onMinimizeCall, onLeaveCall,
   } = props;
 
@@ -406,6 +409,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
               isReopenCallId={reopenCallDropId}
               hoverable={hoverable}
               onSortModeChange={onSortModeChange}
+              onExportWorkspace={onExportWorkspace}
             />
           </div>
         </div>
@@ -573,6 +577,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
           currentUserId={user?.uid || null}
           onDelete={handleDeleteWorkspace}
           onLeaveAndTransfer={handleLeaveAndTransfer}
+          onImport={onImportWorkspace ? () => { setWorkspaceToDelete(null); onImportWorkspace(); } : undefined}
           onClose={() => setWorkspaceToDelete(null)}
         />
       )}

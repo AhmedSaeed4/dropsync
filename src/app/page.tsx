@@ -45,6 +45,15 @@ import { CALL_LIMIT_MESSAGE } from '@/lib/callRoutes';
 import { db } from '@/lib/firebase';
 import { CURRENT_TERMS_VERSION } from '@/lib/termsVersion';
 import { TermsConsentGate } from '@/components/TermsConsentGate';
+import { WorkspaceArchiveModal } from '@/components/WorkspaceArchiveModal';
+import {
+  exportWorkspaceArchive,
+  importWorkspaceArchive,
+  inspectWorkspaceArchive,
+  recoverInterruptedWorkspaceArchiveImport,
+  type WorkspaceArchiveImportResult,
+  type WorkspaceArchiveProgress,
+} from '@/lib/workspaceArchive';
 import { collection, query, orderBy, limit, onSnapshot, getDocs, getDoc, doc, setDoc, serverTimestamp, updateDoc, waitForPendingWrites, Timestamp } from 'firebase/firestore';
 
 type Theme = 'light' | 'dark' | 'minimal';
@@ -183,6 +192,9 @@ export default function Home() {
   const [isKickingMember, setIsKickingMember] = useState(false);
   const [removedNotice, setRemovedNotice] = useState<string | null>(null);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [archiveMode, setArchiveMode] = useState<'export' | 'import' | null>(null);
+  const [archiveNotice, setArchiveNotice] = useState<string | null>(null);
+  const [pendingArchiveWorkspaceId, setPendingArchiveWorkspaceId] = useState<string | null>(null);
   const [showChat, setShowChat] = useState(false);
   const [chatMode, setChatMode] = useState<'ai' | 'group'>('ai');
   const [unreadCount, setUnreadCount] = useState(0);
@@ -213,6 +225,16 @@ export default function Home() {
   // Guards the /?chat=<id> deep link so it runs once, not after the user has navigated.
   const deepLinkHandledRef = useRef(false);
   const [resolvedWorkspaceMembers, setResolvedWorkspaceMembers] = useState<MemberInfo[]>([]);
+
+  // A newly restored workspace is not present in the listener snapshot until Firestore emits it.
+  // Wait for that emission before switching, otherwise useWorkspaces correctly treats the new ID as
+  // missing and immediately resets to Personal.
+  useEffect(() => {
+    if (!pendingArchiveWorkspaceId) return;
+    if (!workspaces.some((workspace) => workspace.id === pendingArchiveWorkspaceId)) return;
+    switchWorkspace(pendingArchiveWorkspaceId);
+    setPendingArchiveWorkspaceId(null);
+  }, [pendingArchiveWorkspaceId, switchWorkspace, workspaces]);
 
   // Auto-close auth modal when user successfully logs in
   useEffect(() => {
@@ -245,6 +267,15 @@ export default function Home() {
     if (user) {
       initializeEncryption();
     }
+  }, [user]);
+
+  // If the tab was reloaded during an import, best-effort cleanup resumes from the local journal.
+  // It only ever touches objects created by the interrupted import and never source workspace data.
+  useEffect(() => {
+    if (!user) return;
+    recoverInterruptedWorkspaceArchiveImport(user.uid).catch((error) => {
+      console.error('Failed to recover interrupted workspace import:', error);
+    });
   }, [user]);
 
   const initializeEncryption = async () => {
@@ -1469,6 +1500,79 @@ export default function Home() {
     signOutUser();
   };
 
+  const canManageWorkspaceArchive = !!user && !!currentWorkspace && currentWorkspace.ownerId === user.uid;
+  const openWorkspaceArchive = useCallback((mode: 'export' | 'import') => {
+    retractFooterIfUp();
+    setArchiveNotice(null);
+    setArchiveMode(mode);
+  }, []);
+
+  const handleWorkspaceArchiveExport = useCallback(async (
+    password: string,
+    signal: AbortSignal,
+    onProgress: (progress: WorkspaceArchiveProgress) => void
+  ): Promise<void> => {
+    if (!user || !currentWorkspace) throw new Error('Choose a workspace before exporting.');
+    const members = resolvedWorkspaceMembers.length > 0
+      ? resolvedWorkspaceMembers
+      : await getWorkspaceMembers(currentWorkspace.members, currentWorkspace.ownerId);
+    const result = await exportWorkspaceArchive({
+      workspace: currentWorkspace,
+      drops,
+      categories,
+      members,
+      userId: user.uid,
+      password,
+      signal,
+      onProgress,
+    });
+    setArchiveNotice([
+      'Workspace backup exported. The original workspace was not changed.',
+      result.skippedExpiredCount ? `${result.skippedExpiredCount} expired drop${result.skippedExpiredCount === 1 ? '' : 's'} skipped.` : '',
+    ].filter(Boolean).join(' '));
+  }, [categories, currentWorkspace, drops, resolvedWorkspaceMembers, user]);
+
+  const handleWorkspaceArchiveInspect = useCallback(async (
+    file: File,
+    password: string,
+    signal: AbortSignal,
+    onProgress: (progress: WorkspaceArchiveProgress) => void
+  ) => inspectWorkspaceArchive(file, password, signal, onProgress), []);
+
+  const handleWorkspaceArchiveImport = useCallback(async (
+    file: File,
+    password: string,
+    destination: { mode: 'new'; workspaceName: string } | { mode: 'merge'; workspaceId: string },
+    signal: AbortSignal,
+    onProgress: (progress: WorkspaceArchiveProgress) => void
+  ): Promise<WorkspaceArchiveImportResult> => {
+    if (!user) throw new Error('Sign in before importing a workspace backup.');
+    const result = await importWorkspaceArchive({
+      file,
+      password,
+      userId: user.uid,
+      destination,
+      signal,
+      onProgress,
+    });
+    if (destination.mode === 'new') setPendingArchiveWorkspaceId(result.workspaceId);
+    refreshDrops();
+    setArchiveNotice([
+      `Workspace backup imported: ${result.importedCount} drop${result.importedCount === 1 ? '' : 's'}.`,
+      result.skippedExpiredCount
+        ? `${result.skippedExpiredCount} expired drop${result.skippedExpiredCount === 1 ? ' was' : 's were'} skipped.`
+        : '',
+      result.downgradedForeverCount
+        ? `${result.downgradedForeverCount} forever drop${result.downgradedForeverCount === 1 ? ' was' : 's were'} downgraded to 24 hours (your account isn't trusted).`
+        : '',
+      result.unpinnedCount
+        ? `${result.unpinnedCount} pin${result.unpinnedCount === 1 ? ' was' : 's were'} adjusted for the two-pin limit.`
+        : '',
+      ...result.warnings,
+    ].filter(Boolean).join(' '));
+    return result;
+  }, [refreshDrops, user]);
+
   // Wait for theme to load to prevent flash. While waiting, emit the PREPAINT_BG <script> (runs
   // during parse, before first paint) so the body background is the saved theme color immediately —
   // closing the white/cream hard-refresh flash. This branch is what SSR renders.
@@ -2247,6 +2351,8 @@ export default function Home() {
     onToggleChat: handleToggleChat,
     notifPermission, notifMuted, onToggleNotifications: handleToggleNotifications,
     footerEnabled, onToggleFooterEnabled,
+    onExportWorkspace: canManageWorkspaceArchive ? () => openWorkspaceArchive('export') : undefined,
+    onImportWorkspace: canManageWorkspaceArchive ? () => openWorkspaceArchive('import') : undefined,
     showSettingsModal, setShowSettingsModal,
     showAuthModal, setShowAuthModal,
     showVerifyModal, setShowVerifyModal,
@@ -2299,6 +2405,19 @@ export default function Home() {
           ? <EditorialLayout {...layoutProps} onSortModeChange={handleEditorialSortModeChange} />
           : <ClassicLayout {...layoutProps} />}
       </div>
+      {archiveMode && (
+        <WorkspaceArchiveModal
+          mode={archiveMode}
+          variant={layoutMode === 'editorial' ? 'editorial' : 'classic'}
+          theme={theme}
+          currentWorkspace={currentWorkspace}
+          workspaces={workspaces.filter((workspace) => workspace.ownerId === user?.uid)}
+          onExport={handleWorkspaceArchiveExport}
+          onInspect={handleWorkspaceArchiveInspect}
+          onImport={handleWorkspaceArchiveImport}
+          onClose={() => setArchiveMode(null)}
+        />
+      )}
       {footerActive && <Footer onHideFooter={onHideFooter} />}
       {activeCallDrop && callMinimized && hoverable && (
         <LiveCallMinimizedPill
@@ -2322,6 +2441,15 @@ export default function Home() {
           theme={theme}
           editorial={layoutMode === 'editorial'}
           onDone={handleRemovedNoticeDone}
+        />
+      )}
+      {archiveNotice && (
+        <Toast
+          message={archiveNotice}
+          duration={8}
+          theme={theme}
+          editorial={layoutMode === 'editorial'}
+          onDone={() => setArchiveNotice(null)}
         />
       )}
       {workspaceDeleteError && (

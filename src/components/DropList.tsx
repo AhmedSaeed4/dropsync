@@ -33,9 +33,10 @@ interface DropListProps {
   onJoinCall?: (drop: Drop) => void;
   isReopenCallId?: string;
   hoverable?: boolean;
+  onExportWorkspace?: () => void;
 }
 
-export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspaces = [], theme = 'light', currentUserId, categories = [], onDeleteCategory, currentWorkspace, workspaceMembers, allDrops = [], onJoinCall, isReopenCallId, hoverable = false }: DropListProps) {
+export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspaces = [], theme = 'light', currentUserId, categories = [], onDeleteCategory, currentWorkspace, workspaceMembers, allDrops = [], onJoinCall, isReopenCallId, hoverable = false, onExportWorkspace }: DropListProps) {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
@@ -403,13 +404,26 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
 
           {/* Action buttons */}
           {!selectionMode ? (
-            <button
-              onClick={() => setSelectionMode(true)}
-              className={`${tc.fontClass} ${isMinimal ? 'text-[#1A1A1A]/50 hover:text-[#1A1A1A]' : 'text-white/60 hover:text-white'} transition-colors flex items-center gap-2`}
-            >
-              {!isMinimal && <span className="w-3 h-3 border border-white/30" />}
-              {isMinimal ? 'Select' : 'SELECT'}
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setSelectionMode(true)}
+                className={`${tc.fontClass} ${isMinimal ? 'text-[#1A1A1A]/50 hover:text-[#1A1A1A]' : 'text-white/60 hover:text-white'} transition-colors flex items-center gap-2`}
+              >
+                {!isMinimal && <span className="w-3 h-3 border border-white/30" />}
+                {isMinimal ? 'Select' : 'SELECT'}
+              </button>
+              {onExportWorkspace && (
+                <button
+                  type="button"
+                  onClick={onExportWorkspace}
+                  className={`${tc.fontClass} ${isMinimal ? 'text-[#1A1A1A]/50 hover:text-[#1A1A1A]' : 'text-white/60 hover:text-white'} transition-colors flex items-center gap-2`}
+                  title={isMinimal ? 'Export workspace' : 'EXPORT_WORKSPACE'}
+                >
+                  {!isMinimal && <span className="w-3 h-3 border border-white/30 flex items-center justify-center text-[8px]">↓</span>}
+                  {isMinimal ? 'Export' : 'EXPORT'}
+                </button>
+              )}
+            </div>
           ) : (
             <div className="flex items-center gap-3">
               <button

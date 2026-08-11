@@ -67,6 +67,9 @@ export interface Drop {
   // Storage format flag. 'binary' = the R2 object is real binary (streamable); absence (legacy)
   // = data-URI text the player must fetch + decode. Only set on NEW unencrypted large files.
   fileFormat?: 'binary';
+  // Optional provenance marker written by workspace archive import. It is used only to warn about
+  // importing the same archive into the same target twice; it carries no encryption authority.
+  importedFromArchiveId?: string;
   // ---- Call-drop-only fields (type === 'call'). A call drop carries NO content/fileUrl/
   // encrypted/pinned/locked/reminderAt/categories (those stay undefined). callHostUid is DISPLAY
   // ONLY (the host name reuses creatorName). callStartedAt (serverTimestamp) drives the "LIVE · Xm"

@@ -249,6 +249,7 @@ export function createDropListener(
           reminderSetByUid: data.reminderSetByUid || null,
           reminderDismissedBy: data.reminderDismissedBy || null,
           fileFormat: data.fileFormat,
+          importedFromArchiveId: data.importedFromArchiveId || undefined,
           callHostUid: data.callHostUid || undefined,
           callStartedAt: data.callStartedAt?.toDate() || null,
            callParticipantUids: data.callParticipantUids || undefined,
@@ -1947,7 +1948,7 @@ export async function decryptDrop(drop: Drop, currentUserId: string): Promise<Dr
 // Helper function to upload to R2
 // Uses Firebase ID token for authentication
 // =============================================
-async function uploadToR2(
+export async function uploadToR2(
   fileData: string,
   onProgress?: (ratio: number) => void
 ): Promise<{ url: string; key: string }> {
@@ -2005,7 +2006,7 @@ async function uploadToR2(
 // Blob body and its real Content-Type. The Content-Type sent on the PUT MUST match the one presign
 // signed (R2 rejects mismatched types with SignatureDoesNotMatch), so we pass blob.type to both.
 // uploadToR2 (which uploads ciphertext / data-URI strings) is intentionally left untouched.
-async function uploadBinaryFileToR2(
+export async function uploadBinaryFileToR2(
   blob: Blob,
   onProgress?: (ratio: number) => void
 ): Promise<{ url: string; key: string }> {
@@ -2059,6 +2060,46 @@ async function uploadBinaryFileToR2(
     xhr.send(blob);
   });
 
+  return { url: fileUrl, key };
+}
+
+// Upload a streamed binary payload directly to R2. This is used by workspace archive import so a
+// large raw file can flow from the ZIP reader into the presigned PUT without first becoming a Blob.
+export async function uploadBinaryStreamToR2(
+  stream: ReadableStream<Uint8Array>,
+  contentType = 'application/octet-stream',
+  signal?: AbortSignal
+): Promise<{ url: string; key: string }> {
+  const currentUser = auth.currentUser;
+  if (!currentUser) throw new Error('Not authenticated');
+  const idToken = await currentUser.getIdToken();
+  const presignResponse = await fetch('/api/presign', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${idToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ contentType: contentType || 'application/octet-stream' }),
+    signal,
+  });
+  if (!presignResponse.ok) {
+    const error = await presignResponse.json();
+    throw new Error(error.error || 'Failed to get upload URL');
+  }
+  const { presignedUrl, key, fileUrl } = await presignResponse.json() as {
+    presignedUrl: string;
+    key: string;
+    fileUrl: string;
+  };
+  const requestInit = {
+    method: 'PUT',
+    headers: { 'Content-Type': contentType || 'application/octet-stream' },
+    body: stream,
+    signal,
+    duplex: 'half' as const,
+  } as RequestInit & { duplex: 'half' };
+  const uploadResponse = await fetch(presignedUrl, requestInit);
+  if (!uploadResponse.ok) throw new Error(`R2 streamed upload failed: ${uploadResponse.status}`);
   return { url: fileUrl, key };
 }
 
