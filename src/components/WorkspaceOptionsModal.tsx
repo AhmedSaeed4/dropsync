@@ -31,6 +31,7 @@ interface Props {
   currentUserId: string | null;
   onDelete: () => void;
   onLeaveAndTransfer: (newOwnerId: string) => void;
+  onImport?: () => void;
   onClose: () => void;
   variant: 'classic' | 'editorial';
 }
@@ -45,6 +46,7 @@ export default function WorkspaceOptionsModal({
   currentUserId,
   onDelete,
   onLeaveAndTransfer,
+  onImport,
   onClose,
   variant,
 }: Props) {
@@ -251,6 +253,11 @@ export default function WorkspaceOptionsModal({
               <p className={`${bodyText} mb-4`}>
                 {`You're the only member of "${workspace.name}". Deleting will permanently remove the workspace and all its drops. This cannot be undone.`}
               </p>
+              {onImport && (
+                <button onClick={onImport} disabled={busy} className={`w-full mb-3 ${actionBtnChrome('transfer')}`}>
+                  {L('Import backup', 'IMPORT_BACKUP')}
+                </button>
+              )}
               <div className="flex gap-2">
                 <button onClick={() => !busy && onClose()} disabled={busy} className={`flex-1 ${actionBtnChrome('cancel')}`}>
                   {L('Cancel', 'CANCEL')}
@@ -363,6 +370,12 @@ export default function WorkspaceOptionsModal({
                   ? `You'll leave and ${selectedMember.displayName} will become the owner. The workspace and all its drops stay intact for remaining members.`
                   : 'Select a member to transfer ownership to.'}
               </p>
+
+              {onImport && (
+                <button onClick={onImport} disabled={busy} className={`w-full mt-3 ${actionBtnChrome('transfer')}`}>
+                  {L('Import backup', 'IMPORT_BACKUP')}
+                </button>
+              )}
 
               {/* Delete workspace. */}
               <button onClick={() => setConfirming('delete')} disabled={isDeleting} className={`w-full mt-3 ${actionBtnChrome('delete')}`}>

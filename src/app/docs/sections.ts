@@ -75,6 +75,7 @@ export const docsSections: DocsSection[] = [
       { anchor: 'create-a-workspace', title: 'Create a workspace & invite codes' },
       { anchor: 'join-a-workspace', title: 'Join' },
       { anchor: 'roles-and-ownership', title: 'Roles & owner actions' },
+      { anchor: 'backup-and-restore', title: 'Backup & restore' },
       { anchor: 'leave-or-be-removed', title: 'Leave or be removed' },
     ],
   },

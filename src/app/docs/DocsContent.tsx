@@ -129,8 +129,8 @@ const PROSE: Record<string, SectionProse> = {
       ),
       'locked-drops': (
         <p className={BODY}>
-          A drop can be locked so only the workspace owner can open or change it — useful for
-          sensitive reference material that other members can see exists but should not open.
+          A drop can be locked so only its creator or the workspace owner can change it. Members
+          can still read locked drops; the lock protects editing and deletion, not visibility.
         </p>
       ),
     },
@@ -207,6 +207,20 @@ const PROSE: Record<string, SectionProse> = {
           Owners can delete the workspace, remove (kick) members, and leave (optionally
           transferring ownership). Kicking a member rotates the workspace’s invite code so a
           removed member cannot rejoin with the old code. All members can add and edit drops.
+        </p>
+      ),
+      'backup-and-restore': (
+        <p className={BODY}>
+          Workspace owners can export a password-protected <code>.dropsync</code> backup from the
+          drop-list toolbar and import it from Workspace options. The backup includes active drops,
+          files, drawings, categories, display-name snapshots, reminders, locked drops, and
+          password-category drops. It excludes chat, calls, expired drops, share links, invite
+          codes, and encryption keys. The original workspace is never changed by export. Keep the
+          password safe: DropSync cannot recover it. Restored drops receive new IDs and imported
+          locked drops are owned by the importer, so their edit authority follows the importer.
+          Large files remain raw binary, matching the live app&apos;s existing 10 MB+ storage behavior.
+          The owner-only button is a convenience gate, not a cryptographic boundary: workspace
+          members already have access to the shared workspace key and current drops.
         </p>
       ),
       'leave-or-be-removed': (
