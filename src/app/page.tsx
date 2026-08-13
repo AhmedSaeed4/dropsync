@@ -121,6 +121,14 @@ export default function Home() {
   const { user, loading: authLoading, signIn, signUp, signInWithEmail: emailSignIn, resetPassword, resendVerification, signOutUser, updateDisplayName } = useAuth();
   const [previewDrop, setPreviewDrop] = useState<Drop | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [dropTrail, setDropTrail] = useState<string[]>([]);
+  const previewDropRef = useRef<Drop | null>(null);
+  const decryptedPreviewCache = useRef<Map<string, Drop>>(new Map());
+  previewDropRef.current = previewDrop;
+  const resetPreviewNavigation = useCallback(() => {
+    setDropTrail([]);
+    decryptedPreviewCache.current.clear();
+  }, []);
   // Monotonic generation counter for preview decryption. Bumped whenever the preview's context is
   // invalidated (an edit session starts). An in-flight decryptDrop from handlePreview only commits
   // if the epoch is unchanged — so a decrypt that finishes during/after an edit session can never
@@ -170,6 +178,12 @@ export default function Home() {
 
   // Pass currentWorkspaceId to useDrops
   const { drops, loading: dropsLoading, refreshDrops } = useDrops(currentWorkspaceId);
+
+  // A workspace/personal scope change starts a fresh preview trail. Layout switches do not affect
+  // this state because the trail belongs to Home, not either layout branch.
+  useEffect(() => {
+    resetPreviewNavigation();
+  }, [user?.uid, currentWorkspaceId, resetPreviewNavigation]);
 
   // Categories for current workspace
   const { categories, addCategory, removeCategory } = useCategories(currentWorkspaceId, user?.uid);
@@ -537,6 +551,7 @@ export default function Home() {
         // preview behind the edit modal nor clobber the post-save merged drop.
         if (previewEpochRef.current === epoch) {
           setPreviewDrop(decryptedDrop); // Update with decrypted content
+          decryptedPreviewCache.current.set(drop.id, decryptedDrop);
         }
       } finally {
         if (previewEpochRef.current === epoch) {
@@ -1249,6 +1264,51 @@ export default function Home() {
     setEditPreparing(false);
   };
 
+  const handleOpenRootDrop = (drop: Drop) => {
+    resetPreviewNavigation();
+    handlePreview(drop);
+  };
+
+  const handleOpenMentionedDrop = (target: Drop) => {
+    const current = previewDropRef.current;
+    if (current && target.id === current.id) return;
+
+    const liveTarget = drops.find((drop) => drop.id === target.id);
+    if (!liveTarget || (liveTarget.expiresAt !== null && liveTarget.expiresAt.getTime() <= Date.now())) return;
+
+    if (current) {
+      setDropTrail((previous) => {
+        const next = [...previous, current.id];
+        return next.length > 50 ? next.slice(next.length - 50) : next;
+      });
+    }
+    handlePreview(liveTarget);
+  };
+
+  const handleClosePreview = () => {
+    resetPreviewNavigation();
+    handlePreviewInvalidate();
+    setPreviewDrop(null);
+    setPreviewLoading(false);
+  };
+
+  const handlePreviewBack = () => {
+    const remainingTrail = [...dropTrail];
+    while (remainingTrail.length > 0) {
+      const previousId = remainingTrail.pop()!;
+      setDropTrail((previous) => previous.slice(0, -1));
+      const previousDrop = drops.find((drop) => drop.id === previousId);
+      if (previousDrop && (previousDrop.expiresAt === null || previousDrop.expiresAt.getTime() > Date.now())) {
+        const cached = decryptedPreviewCache.current.get(previousId);
+        handlePreview(cached ?? previousDrop);
+        return;
+      }
+    }
+    handleClosePreview();
+  };
+
+  const clearPreviewTrail = resetPreviewNavigation;
+
   // Build the preview drop from the edit session's knowledge. The DB stores content/images
   // encrypted, and updateTextDrop/updateDropMetadata only return booleans — so the preview's
   // post-save state must be merged here: new plaintext content, name, categories, expiration,
@@ -1328,6 +1388,7 @@ export default function Home() {
         ? await loadLatestDrop(merged, true)
         : merged;
       setEditDrop(null);
+      decryptedPreviewCache.current.set(savedPreview.id, savedPreview);
       reopenPreview(savedPreview);
     }
     return success;
@@ -2525,7 +2586,9 @@ export default function Home() {
     handleCreateWorkspace, handleJoinWorkspace,
     handleDeleteWorkspace, handleLeaveWorkspace, handleLeaveAndTransfer,
     onKick: handleKickMember, isKicking: isKickingMember,
-    handlePreview, handleShowVerifyModal, handleCheckVerification,
+    handlePreview, handleOpenRootDrop, handleOpenMentionedDrop, handlePreviewBack,
+    handleClosePreview, clearPreviewTrail, dropTrailLength: dropTrail.length,
+    handleShowVerifyModal, handleCheckVerification,
     signIn, emailSignIn, signUp, resetPassword, resendVerification,
     signOutUser, updateDisplayName, reauthenticateUser,
     editDrop, setEditDrop, handleEditDrop, handleEditSubmit, onEditClose: handleEditClose,

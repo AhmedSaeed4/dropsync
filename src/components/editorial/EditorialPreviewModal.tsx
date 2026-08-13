@@ -18,6 +18,8 @@ const YOUTUBE_PLAYER_TRANSITION = 'transition-[grid-template-rows] duration-300 
 interface EditorialPreviewModalProps {
   drop: Drop;
   onClose: () => void;
+  onBack: () => void;
+  canBack: boolean;
   theme?: 'light' | 'dark' | 'minimal';
   isLoading?: boolean;
   onEdit?: (drop: Drop) => void;
@@ -41,9 +43,9 @@ function isTextFile(drop: Drop): boolean {
          textExtensions.some(ext => drop.name.toLowerCase().endsWith(ext));
 }
 
-export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoading = false, onEdit, editPreparing = false, onMove, allDrops = [], onPreview, canMutate = false, currentUserId }: EditorialPreviewModalProps) {
+export function EditorialPreviewModal({ drop, onClose, onBack, canBack, theme = 'light', isLoading = false, onEdit, editPreparing = false, onMove, allDrops = [], onPreview, canMutate = false, currentUserId }: EditorialPreviewModalProps) {
   useBodyScrollLock();
-  useModalBackClose(true, onClose);
+  useModalBackClose(true, onBack);
   const [copied, setCopied] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
@@ -252,12 +254,23 @@ export function EditorialPreviewModal({ drop, onClose, theme = 'light', isLoadin
   return (
     <div
       className={`fixed inset-0 bg-[#1a1a1a]/60 flex items-center justify-center z-50 p-4 transition-colors duration-300 overscroll-contain`}
-      onClick={(e) => e.target === e.currentTarget && onClose()}
+      onClick={(e) => e.target === e.currentTarget && onBack()}
     >
       <div className={`${tc.bg} border ${tc.border} rounded-xl w-full max-w-3xl max-h-[85vh] overflow-hidden flex flex-col transition-colors duration-300 shadow-xl`}>
         {/* Header */}
         <div className={`border-b ${tc.border} px-5 py-4 flex items-center justify-between`}>
           <div className="flex items-center gap-3">
+            {canBack && (
+              <button
+                type="button"
+                onClick={onBack}
+                aria-label="Back"
+                title="Back"
+                className={`${tc.muted} hover:${tc.text} transition-colors text-2xl leading-none`}
+              >
+                <span aria-hidden>←</span>
+              </button>
+            )}
             <div className={`w-9 h-9 border ${tc.border} rounded-lg flex items-center justify-center`}>
               {drop.type === 'call' ? (
                 <svg className={`w-4 h-4 ${tc.text}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">

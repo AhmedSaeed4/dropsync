@@ -105,6 +105,12 @@ interface ClassicLayoutProps {
   handleLeaveWorkspace: () => void;
   handleLeaveAndTransfer: (newOwnerId: string) => void;
   handlePreview: (drop: Drop) => void;
+  handleOpenRootDrop: (drop: Drop) => void;
+  handleOpenMentionedDrop: (drop: Drop) => void;
+  handlePreviewBack: () => void;
+  handleClosePreview: () => void;
+  clearPreviewTrail: () => void;
+  dropTrailLength: number;
   handleShowVerifyModal: (email: string) => void;
   handleCheckVerification: () => Promise<boolean>;
   signIn: () => Promise<void>;
@@ -175,7 +181,9 @@ export function ClassicLayout(props: ClassicLayoutProps) {
     categories, handleCreateCategory, handleDeleteCategory,
     handleCreateWorkspace, handleJoinWorkspace,
     handleDeleteWorkspace, handleLeaveWorkspace, handleLeaveAndTransfer,
-    handlePreview, handleShowVerifyModal, handleCheckVerification,
+    handlePreview, handleOpenRootDrop, handleOpenMentionedDrop, handlePreviewBack,
+    handleClosePreview, clearPreviewTrail, dropTrailLength,
+    handleShowVerifyModal, handleCheckVerification,
     signIn, emailSignIn, signUp, resetPassword, resendVerification,
     signOutUser, updateDisplayName, reauthenticateUser,
     editDrop, handleEditDrop, handleEditSubmit, onEditClose, handlePreviewInvalidate, editPreparing,
@@ -306,7 +314,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
     }
     const found = dropsRef.current.find(d => d.id === dropId);
     if (found) {
-      handlePreview(found);
+      handleOpenRootDrop(found);
     }
   };
 
@@ -364,7 +372,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
                 drops={drops}
                 loading={dropsLoading}
                 onDelete={refreshDrops}
-                onPreview={handlePreview}
+                onPreview={handleOpenRootDrop}
                 onEdit={handleEditDrop}
                 workspaces={workspaces}
                 theme={theme}
@@ -467,16 +475,15 @@ export function ClassicLayout(props: ClassicLayoutProps) {
         <PreviewModal
           drop={previewDrop}
           canMutate={!!user && (user.uid === previewDrop.userId || (!!currentWorkspace && user.uid === currentWorkspace.ownerId))}
-          onClose={() => {
-            handlePreviewInvalidate();
-            setPreviewDrop(null);
-            setPreviewLoading(false);
-          }}
+          onClose={handleClosePreview}
+          onBack={handlePreviewBack}
+          canBack={dropTrailLength > 0}
           theme={theme}
           isLoading={previewLoading}
           onEdit={handleEditDrop}
           editPreparing={editPreparing}
           onMove={(drop) => {
+            clearPreviewTrail();
             setPreviewDrop(null);
             setPreviewLoading(false);
             handlePreviewInvalidate(); // a late preview decrypt must not resurrect behind the modal
@@ -502,7 +509,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
             setMoveDrops([operationDrop]);
           }}
           allDrops={drops}
-          onPreview={handlePreview}
+          onPreview={handleOpenMentionedDrop}
           currentUserId={user?.uid}
         />
       )}
