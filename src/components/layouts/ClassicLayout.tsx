@@ -138,6 +138,8 @@ interface ClassicLayoutProps {
   onRefreshCallAccess: () => Promise<void>;
   onExportWorkspace?: () => void;
   onImportWorkspace?: () => void;
+  onExportPersonal?: () => void;
+  onOpenPersonalOptions?: () => void;
   onStartCall: (callDropId: string, stream: MediaStream | null, callInfo?: { created?: boolean; callState?: 'live' | 'pending'; attemptToken?: string | null; livekitRoomName?: string; callHostUid?: string; creatorName?: string; callParticipantUids?: string[] }) => void | Promise<void>;
   onJoinCall: (drop: Drop) => void;
   onMinimizeCall: () => void;
@@ -178,7 +180,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
     signOutUser, updateDisplayName, reauthenticateUser,
     editDrop, handleEditDrop, handleEditSubmit, onEditClose, handlePreviewInvalidate, editPreparing,
     hoverable, activeCallDrop, callMinimized, callState, reopenCallDropId, callCanStart, callAccessLoading, callAccessError, onRefreshCallAccess,
-    onExportWorkspace, onImportWorkspace,
+    onExportWorkspace, onImportWorkspace, onExportPersonal, onOpenPersonalOptions,
     onStartCall, onJoinCall, onMinimizeCall, onLeaveCall,
   } = props;
 
@@ -333,6 +335,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
           onJoin={() => { retractFooterIfUp(); setShowJoinModal(true); }}
           onDelete={(workspace) => { retractFooterIfUp(); setWorkspaceToDelete(workspace); }}
           onLeave={(workspace) => { retractFooterIfUp(); setWorkspaceToLeave(workspace); }}
+          onPersonalOptions={onOpenPersonalOptions}
           theme={theme}
           mentionedWorkspaceIds={mentionedWorkspaceIds}
         />
@@ -375,6 +378,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
                 isReopenCallId={reopenCallDropId}
                 hoverable={hoverable}
                 onExportWorkspace={onExportWorkspace}
+                onExportPersonal={onExportPersonal}
               />
             </section>
           </div>

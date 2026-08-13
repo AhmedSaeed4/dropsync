@@ -40,6 +40,7 @@ interface EditorialDropListProps {
   hoverable?: boolean;
   onSortModeChange?: (mode: SortMode, spaceKey: string) => void;
   onExportWorkspace?: () => void;
+  onExportPersonal?: () => void;
 }
 
 const BUILT_IN_CATEGORIES = [
@@ -177,6 +178,7 @@ export function EditorialDropList({
   hoverable = false,
   onSortModeChange,
   onExportWorkspace,
+  onExportPersonal,
 }: EditorialDropListProps) {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -941,16 +943,16 @@ export function EditorialDropList({
                 Select
               </button>
               <AnimatePresence initial={false}>
-                {onExportWorkspace && visibleDrops.length > 0 && (
+                {(onExportWorkspace || onExportPersonal) && visibleDrops.length > 0 && (
                   <motion.button
                     type="button"
                     initial={{ opacity: 0, maxWidth: 0, paddingLeft: 0, paddingRight: 0 }}
                     animate={{ opacity: 1, maxWidth: 160, paddingLeft: 12, paddingRight: 12 }}
                     exit={{ opacity: 0, maxWidth: 0, paddingLeft: 0, paddingRight: 0 }}
                     transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
-                    onClick={onExportWorkspace}
+                    onClick={onExportPersonal || onExportWorkspace}
                     className={`min-w-0 overflow-hidden text-xs ${font} ${tc.muted} ${tc.inactivePillHoverBg} px-3 py-1.5 ${tc.roundedClass} border ${tc.border} transition-colors flex items-center gap-1.5`}
-                    title="Export workspace"
+                    title={onExportPersonal ? 'Export personal drops' : 'Export workspace'}
                   >
                     <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
                       <path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14" />

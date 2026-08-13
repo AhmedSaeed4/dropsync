@@ -140,6 +140,8 @@ interface EditorialLayoutProps {
   onRefreshCallAccess: () => Promise<void>;
   onExportWorkspace?: () => void;
   onImportWorkspace?: () => void;
+  onExportPersonal?: () => void;
+  onOpenPersonalOptions?: () => void;
   onStartCall: (callDropId: string, stream: MediaStream | null, callInfo?: { created?: boolean; callState?: 'live' | 'pending'; attemptToken?: string | null; livekitRoomName?: string; callHostUid?: string; creatorName?: string; callParticipantUids?: string[] }) => void | Promise<void>;
   onJoinCall: (drop: Drop) => void;
   onMinimizeCall: () => void;
@@ -180,7 +182,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
     signOutUser, updateDisplayName, reauthenticateUser,
     editDrop, handleEditDrop, handleEditSubmit, onEditClose, handlePreviewInvalidate, editPreparing,
     hoverable, activeCallDrop, callMinimized, callState, reopenCallDropId, callCanStart, callAccessLoading, callAccessError, onRefreshCallAccess,
-    onExportWorkspace, onImportWorkspace,
+    onExportWorkspace, onImportWorkspace, onExportPersonal, onOpenPersonalOptions,
     onStartCall, onJoinCall, onMinimizeCall, onLeaveCall,
   } = props;
 
@@ -344,6 +346,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
         onJoin={() => { retractFooterIfUp(); setShowJoinModal(true); }}
         onDelete={(ws) => { retractFooterIfUp(); setWorkspaceToDelete(ws); }}
         onLeave={(ws) => { retractFooterIfUp(); setWorkspaceToLeave(ws); }}
+        onPersonalOptions={onOpenPersonalOptions}
         mentionedWorkspaceIds={mentionedWorkspaceIds}
       />
 
@@ -410,6 +413,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
               hoverable={hoverable}
               onSortModeChange={onSortModeChange}
               onExportWorkspace={onExportWorkspace}
+              onExportPersonal={onExportPersonal}
             />
           </div>
         </div>
