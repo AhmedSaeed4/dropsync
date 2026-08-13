@@ -15,6 +15,8 @@ import { LockedActionButton } from './LockedActionButton';
 interface PreviewModalProps {
   drop: Drop;
   onClose: () => void;
+  onBack: () => void;
+  canBack: boolean;
   theme?: 'light' | 'dark' | 'minimal';
   isLoading?: boolean;
   onEdit?: (drop: Drop) => void;
@@ -38,9 +40,9 @@ function isTextFile(drop: Drop): boolean {
          textExtensions.some(ext => drop.name.toLowerCase().endsWith(ext));
 }
 
-export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false, onEdit, editPreparing = false, onMove, allDrops = [], onPreview, canMutate = false, currentUserId }: PreviewModalProps) {
+export function PreviewModal({ drop, onClose, onBack, canBack, theme = 'light', isLoading = false, onEdit, editPreparing = false, onMove, allDrops = [], onPreview, canMutate = false, currentUserId }: PreviewModalProps) {
   useBodyScrollLock();
-  useModalBackClose(true, onClose);
+  useModalBackClose(true, onBack);
   const [copied, setCopied] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
@@ -269,12 +271,23 @@ export function PreviewModal({ drop, onClose, theme = 'light', isLoading = false
   return (
     <div
       className={`fixed inset-0 ${tc.overlayBg} flex items-center justify-center z-50 p-4 transition-colors duration-300 overscroll-contain`}
-      onClick={(e) => e.target === e.currentTarget && onClose()}
+      onClick={(e) => e.target === e.currentTarget && onBack()}
     >
       <div className={`${tc.bgColor} border ${tc.borderColor} ${tc.roundedClass} w-full max-w-3xl max-h-[85vh] overflow-hidden flex flex-col transition-colors duration-300`}>
         {/* Header */}
         <div className={`border-b ${tc.borderColor} px-6 py-4 flex items-center justify-between ${tc.headerBg}`}>
           <div className="flex items-center gap-4">
+            {canBack && (
+              <button
+                type="button"
+                onClick={onBack}
+                aria-label="Back"
+                title="Back"
+                className="text-white/70 hover:text-white transition-colors text-2xl leading-none"
+              >
+                <span aria-hidden>←</span>
+              </button>
+            )}
             <div className={`w-10 h-10 border ${isMinimal ? 'border-white/30 rounded-lg' : 'border-white/30'} flex items-center justify-center`}>
               {drop.type === 'call' ? (
                 <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
