@@ -61,6 +61,7 @@ import {
 } from './keys';
 import {
   deleteFromR2,
+  getExpirationDate,
   uploadBinaryFileToR2,
   uploadToR2,
 } from './drops';
@@ -80,6 +81,7 @@ export const WORKSPACE_ARCHIVE_CHUNK_SIZE = ARCHIVE_CHUNK_SIZE;
 export const WORKSPACE_ARCHIVE_KDF_ITERATIONS = ARCHIVE_KDF_ITERATIONS;
 
 const MAX_WORKSPACE_NAME_LENGTH = 120;
+const MAX_REMAINING_SECONDS = 24 * 60 * 60;
 const IMPORT_JOURNAL_KEY = 'dropsync_archive_import_journal';
 
 interface ImportJournal {
@@ -113,6 +115,7 @@ export interface WorkspaceArchiveInspection {
   passwordDropCount: number;
   lockedDropCount: number;
   foreverDropCount: number;
+  zeroRemainingDropCount: number;
   totalPayloadBytes: number;
   warnings: string[];
 }
@@ -131,7 +134,8 @@ export interface WorkspaceArchiveImportOptions {
 export interface WorkspaceArchiveImportResult {
   workspaceId: string;
   importedCount: number;
-  skippedExpiredCount: number;
+  legacyExpiryFallbackCount: number;
+  zeroRemainingCount: number;
   downgradedForeverCount: number;
   unpinnedCount: number;
   warnings: string[];
@@ -171,6 +175,7 @@ export interface WorkspaceArchiveDrop {
   creatorName?: string;
   createdAt: string;
   expiresAt: string | null;
+  remainingSeconds?: number | null;
   expirationOption?: ExpirationOption;
   reminderAt: string | null;
   reminderSetByUid: string | null;
@@ -248,7 +253,8 @@ function sourceDropToManifest(
   drop: Drop,
   payloads: WorkspaceArchiveDrop['payloads'],
   content: string | undefined,
-  drawingScene: unknown
+  drawingScene: unknown,
+  exportNow: Date
 ): WorkspaceArchiveDrop {
   return {
     sourceId: drop.id,
@@ -262,6 +268,9 @@ function sourceDropToManifest(
     creatorName: drop.creatorName,
     createdAt: drop.createdAt.toISOString(),
     expiresAt: isoDate(drop.expiresAt),
+    remainingSeconds: drop.expiresAt == null
+      ? null
+      : Math.max(0, Math.round((drop.expiresAt.getTime() - exportNow.getTime()) / 1000)),
     expirationOption: drop.expirationOption,
     reminderAt: isoDate(drop.reminderAt),
     reminderSetByUid: drop.reminderSetByUid ?? null,
@@ -307,6 +316,13 @@ function validateManifestBody(manifest: WorkspaceArchiveManifest): void {
       throw new Error('The archive contains an invalid or duplicate drop record.');
     }
     sourceIds.add(drop.sourceId);
+    if (
+      drop.remainingSeconds !== undefined
+      && drop.remainingSeconds !== null
+      && (!Number.isSafeInteger(drop.remainingSeconds) || drop.remainingSeconds < 0 || drop.remainingSeconds > MAX_REMAINING_SECONDS)
+    ) {
+      throw new ArchiveValidationError(`The remaining expiry time is invalid for "${drop.name}".`);
+    }
     if (drop.type === 'file' && (!drop.payloads?.file || !drop.payloads.file.startsWith('files/') || !isSafeZipPath(drop.payloads.file))) {
       throw new Error(`The file payload is missing or unsafe for "${drop.name}".`);
     }
@@ -335,7 +351,10 @@ function summarizeManifest(manifest: WorkspaceArchiveManifest, totalPayloadBytes
     fileCount: manifest.drops.filter((drop) => drop.type === 'file').length,
     passwordDropCount: manifest.drops.filter((drop) => drop.categories.some((category) => category.toLowerCase() === 'password')).length,
     lockedDropCount: manifest.drops.filter((drop) => drop.locked).length,
-    foreverDropCount: manifest.drops.filter((drop) => drop.expiresAt === null).length,
+    foreverDropCount: manifest.drops.filter((drop) => (
+      drop.remainingSeconds !== undefined ? drop.remainingSeconds === null : drop.expiresAt === null
+    )).length,
+    zeroRemainingDropCount: manifest.drops.filter((drop) => drop.remainingSeconds === 0).length,
     totalPayloadBytes,
     warnings: manifest.drops.some((drop) => drop.categories.some((category) => category.toLowerCase() === 'password'))
       ? ['This archive includes password-category drops.']
@@ -369,6 +388,7 @@ export async function exportWorkspaceArchive(options: WorkspaceArchiveExportOpti
   assertPassword(password);
   throwIfAborted(signal);
   if (!workspace.id || workspace.ownerId !== userId) throw new Error('Only the workspace owner can export this workspace.');
+  const exportNow = new Date();
 
   emitProgress(onProgress, { phase: 'preflight', processedBytes: 0, totalBytes: drops.length, message: 'Preparing workspace backup…' });
   const workspaceKey = await getWorkspaceKey(workspace.id, userId);
@@ -424,7 +444,7 @@ export async function exportWorkspaceArchive(options: WorkspaceArchiveExportOpti
       }
     }
 
-    archiveDrops.push(sourceDropToManifest(drop, payloads, content, drawingScene));
+    archiveDrops.push(sourceDropToManifest(drop, payloads, content, drawingScene, exportNow));
     emitProgress(onProgress, {
       phase: 'preflight',
       processedBytes: index + 1,
@@ -621,6 +641,11 @@ async function readExistingTargetDrops(workspaceId: string): Promise<Drop[]> {
   });
 }
 
+export async function hasLiveWorkspaceArchiveOverlap(workspaceId: string, archiveId: string): Promise<boolean> {
+  const existingDrops = await readExistingTargetDrops(workspaceId);
+  return existingDrops.some((drop) => drop.importedFromArchiveId === archiveId && !isExpired(drop));
+}
+
 async function createImportWorkspace(userId: string, name: string, createdAt: Date): Promise<Workspace> {
   const inviteChars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   const inviteLimit = Math.floor(256 / inviteChars.length) * inviteChars.length;
@@ -705,7 +730,8 @@ export async function importWorkspaceArchive(options: WorkspaceArchiveImportOpti
   const persistJournal = () => saveImportJournal(journal);
   const warnings: string[] = [...summarizeManifest(loaded.manifest, loaded.totalPayloadBytes).warnings];
   let importedCount = 0;
-  let skippedExpiredCount = 0;
+  let legacyExpiryFallbackCount = 0;
+  let zeroRemainingCount = 0;
   let downgradedForeverCount = 0;
   let unpinnedCount = 0;
 
@@ -732,12 +758,9 @@ export async function importWorkspaceArchive(options: WorkspaceArchiveImportOpti
         inviteCode: targetData.inviteCode,
         createdAt: targetData.createdAt?.toDate?.() || new Date(),
       };
-      const existingDrops = await readExistingTargetDrops(destination.workspaceId);
-      if (existingDrops.some((drop) => (drop as Drop & { importedFromArchiveId?: string }).importedFromArchiveId === loaded.manifest.archiveId)) {
-        throw new Error('This archive has already been imported into the selected workspace.');
-      }
     }
 
+    const importNow = new Date();
     journal.workspaceId = destinationWorkspace.id;
     journal.createdWorkspace = createdWorkspace;
     persistJournal();
@@ -751,18 +774,13 @@ export async function importWorkspaceArchive(options: WorkspaceArchiveImportOpti
     let pinnedCount = existingDrops.filter((drop) => drop.pinned && !isExpired(drop)).length;
     const sourceToNewId = new Map<string, string>();
     for (const archiveDrop of loaded.manifest.drops) {
-      if (!isExpired(archiveDrop)) sourceToNewId.set(archiveDrop.sourceId, doc(collection(db, 'drops')).id);
+      sourceToNewId.set(archiveDrop.sourceId, doc(collection(db, 'drops')).id);
     }
 
     const totalBytes = Math.max(loaded.totalPayloadBytes, 1);
     let processedBytes = 0;
     for (const archiveDrop of loaded.manifest.drops) {
       throwIfAborted(signal);
-      if (isExpired(archiveDrop)) {
-        sourceToNewId.delete(archiveDrop.sourceId);
-        skippedExpiredCount += 1;
-        continue;
-      }
       const newDropId = sourceToNewId.get(archiveDrop.sourceId);
       if (!newDropId) throw new Error(`Missing destination ID for "${archiveDrop.name}".`);
       const categories = archiveDrop.categories
@@ -773,10 +791,31 @@ export async function importWorkspaceArchive(options: WorkspaceArchiveImportOpti
       if (missingReferenceIds.size > 0) {
         warnings.push(`Drop "${archiveDrop.name}" references ${missingReferenceIds.size} excluded or missing drop${missingReferenceIds.size === 1 ? '' : 's'}.`);
       }
-      const originalExpiresAt = parseDate(archiveDrop.expiresAt, 'expiresAt');
       let expirationOption: ExpirationOption | undefined = archiveDrop.expirationOption;
-      if (!originalExpiresAt) expirationOption = 'forever';
-      let expiresAt = originalExpiresAt;
+      let expiresAt: Date | null;
+      if (archiveDrop.remainingSeconds !== undefined) {
+        if (archiveDrop.remainingSeconds === null) {
+          expirationOption = 'forever';
+          expiresAt = null;
+        } else {
+          if (archiveDrop.remainingSeconds === 0) zeroRemainingCount += 1;
+          expiresAt = new Date(importNow.getTime() + Math.min(archiveDrop.remainingSeconds, MAX_REMAINING_SECONDS) * 1000);
+        }
+      } else if (archiveDrop.expiresAt === null) {
+        expirationOption = 'forever';
+        expiresAt = null;
+      } else {
+        legacyExpiryFallbackCount += 1;
+        const legacyOption: Exclude<ExpirationOption, 'forever'> = archiveDrop.expirationOption === '1h'
+          || archiveDrop.expirationOption === '2h'
+          || archiveDrop.expirationOption === '4h'
+          || archiveDrop.expirationOption === '6h'
+          || archiveDrop.expirationOption === '24h'
+          ? archiveDrop.expirationOption
+          : '2h';
+        expirationOption = legacyOption;
+        expiresAt = getExpirationDate(legacyOption);
+      }
 
       let pinned = archiveDrop.pinned;
       if (pinned && pinnedCount >= 2) {
@@ -918,7 +957,8 @@ export async function importWorkspaceArchive(options: WorkspaceArchiveImportOpti
     return {
       workspaceId: destinationWorkspace.id,
       importedCount,
-      skippedExpiredCount,
+      legacyExpiryFallbackCount,
+      zeroRemainingCount,
       downgradedForeverCount,
       unpinnedCount,
       warnings,

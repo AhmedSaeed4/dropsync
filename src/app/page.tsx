@@ -49,6 +49,7 @@ import { WorkspaceArchiveModal } from '@/components/WorkspaceArchiveModal';
 import WorkspaceOptionsModal from '@/components/WorkspaceOptionsModal';
 import {
   exportWorkspaceArchive,
+  hasLiveWorkspaceArchiveOverlap,
   importWorkspaceArchive,
   inspectWorkspaceArchive,
   recoverInterruptedWorkspaceArchiveImport,
@@ -58,6 +59,7 @@ import {
 } from '@/lib/workspaceArchive';
 import {
   exportPersonalArchive,
+  hasLivePersonalArchiveOverlap,
   importPersonalArchive,
   inspectPersonalArchive,
   recoverInterruptedPersonalArchiveImport,
@@ -1587,8 +1589,11 @@ export default function Home() {
     refreshDrops();
     setArchiveNotice([
       `Workspace backup imported: ${result.importedCount} drop${result.importedCount === 1 ? '' : 's'}.`,
-      result.skippedExpiredCount
-        ? `${result.skippedExpiredCount} expired drop${result.skippedExpiredCount === 1 ? ' was' : 's were'} skipped.`
+      result.legacyExpiryFallbackCount
+        ? 'This older backup had no saved remaining-time data, so finite drops restarted from their saved duration.'
+        : 'Finite drop timers resumed from their saved remaining time.',
+      result.zeroRemainingCount
+        ? `${result.zeroRemainingCount} drop${result.zeroRemainingCount === 1 ? '' : 's'} may expire immediately after import.`
         : '',
       result.downgradedForeverCount
         ? `${result.downgradedForeverCount} forever drop${result.downgradedForeverCount === 1 ? ' was' : 's were'} downgraded to 24 hours (your account isn't trusted).`
@@ -1652,8 +1657,11 @@ export default function Home() {
     refreshDrops();
     setArchiveNotice([
       `Personal backup imported: ${result.importedCount} drop${result.importedCount === 1 ? '' : 's'}.`,
-      result.skippedExpiredCount
-        ? `${result.skippedExpiredCount} expired drop${result.skippedExpiredCount === 1 ? ' was' : 's were'} skipped.`
+      result.legacyExpiryFallbackCount
+        ? 'This older backup had no saved remaining-time data, so finite drops restarted from their saved duration.'
+        : 'Finite drop timers resumed from their saved remaining time.',
+      result.zeroRemainingCount
+        ? `${result.zeroRemainingCount} drop${result.zeroRemainingCount === 1 ? '' : 's'} may expire immediately after import.`
         : '',
       result.downgradedForeverCount
         ? `${result.downgradedForeverCount} forever drop${result.downgradedForeverCount === 1 ? ' was' : 's were'} downgraded to 24 hours (your account isn't trusted).`
@@ -1687,6 +1695,18 @@ export default function Home() {
     if (archiveScope === 'personal') return handlePersonalArchiveInspect(file, password, signal, onProgress);
     return handleWorkspaceArchiveInspect(file, password, signal, onProgress);
   }, [archiveScope, handlePersonalArchiveInspect, handleWorkspaceArchiveInspect]);
+
+  const handleArchiveImportOverlap = useCallback(async (
+    archiveId: string,
+    destinationWorkspaceId: string | null
+  ): Promise<boolean> => {
+    if (!user) throw new Error('Sign in before checking archive overlap.');
+    if (archiveScope === 'personal') {
+      return hasLivePersonalArchiveOverlap(user.uid, archiveId);
+    }
+    if (!destinationWorkspaceId) return false;
+    return hasLiveWorkspaceArchiveOverlap(destinationWorkspaceId, archiveId);
+  }, [archiveScope, user]);
 
   const handleArchiveImport = useCallback(async (
     file: File,
@@ -2567,6 +2587,7 @@ export default function Home() {
           onExport={handleArchiveExport}
           onInspect={handleArchiveInspect}
           onImport={handleArchiveImport}
+          onCheckImportOverlap={handleArchiveImportOverlap}
           onClose={() => setArchiveMode(null)}
         />
       )}
