@@ -43,7 +43,7 @@ import {
   throwIfAborted,
   type ArchiveProgress,
 } from './archiveFormat';
-import { decryptPersonalDropForArchive, deleteFromR2, uploadBinaryFileToR2, uploadToR2 } from './drops';
+import { decryptPersonalDropForArchive, deleteFromR2, getExpirationDate, uploadBinaryFileToR2, uploadToR2 } from './drops';
 import { generateAESKey, encryptData } from './crypto';
 import { encryptDEKForUser, getUserKeys } from './keys';
 import type { Category, Drop, ExpirationOption } from '@/types';
@@ -53,6 +53,7 @@ export const PERSONAL_ARCHIVE_SCHEMA_VERSION = 1;
 export const PERSONAL_ARCHIVE_EXTENSION = ARCHIVE_EXTENSION;
 
 const PERSONAL_IMPORT_JOURNAL_KEY = 'dropsync_personal_archive_import_journal';
+const MAX_REMAINING_SECONDS = 24 * 60 * 60;
 const MAX_PERSONAL_NAME_LENGTH = 120;
 const RAW_FILE_THRESHOLD = 10 * 1024 * 1024;
 
@@ -74,6 +75,7 @@ export interface PersonalArchiveDrop {
   isDrawing: boolean;
   createdAt: string;
   expiresAt: string | null;
+  remainingSeconds?: number | null;
   expirationOption?: ExpirationOption;
   reminderAt: string | null;
   reminderSetByUid: string | null;
@@ -110,7 +112,7 @@ export interface PersonalArchiveInspection {
   passwordDropCount: number;
   lockedDropCount: number;
   foreverDropCount: number;
-  expiredDropCount: number;
+  zeroRemainingDropCount: number;
   totalPayloadBytes: number;
   warnings: string[];
 }
@@ -148,7 +150,8 @@ export interface PersonalArchiveImportOptions {
 
 export interface PersonalArchiveImportResult {
   importedCount: number;
-  skippedExpiredCount: number;
+  legacyExpiryFallbackCount: number;
+  zeroRemainingCount: number;
   downgradedForeverCount: number;
   unpinnedCount: number;
   warnings: string[];
@@ -223,7 +226,8 @@ function sourceDropToManifest(
   drop: Drop,
   payloads: PersonalArchiveDrop['payloads'],
   content: string | undefined,
-  drawingScene: unknown
+  drawingScene: unknown,
+  exportNow: Date
 ): PersonalArchiveDrop {
   return {
     sourceId: drop.id,
@@ -236,6 +240,9 @@ function sourceDropToManifest(
     isDrawing: !!drop.isDrawing,
     createdAt: drop.createdAt.toISOString(),
     expiresAt: drop.expiresAt ? drop.expiresAt.toISOString() : null,
+    remainingSeconds: drop.expiresAt == null
+      ? null
+      : Math.max(0, Math.round((drop.expiresAt.getTime() - exportNow.getTime()) / 1000)),
     expirationOption: drop.expirationOption,
     reminderAt: drop.reminderAt ? drop.reminderAt.toISOString() : null,
     reminderSetByUid: drop.reminderSetByUid ?? null,
@@ -301,6 +308,13 @@ function validatePersonalManifestBody(raw: unknown): void {
       throw new Error('The personal archive contains an invalid or duplicate drop record.');
     }
     sourceIds.add(drop.sourceId);
+    if (
+      drop.remainingSeconds !== undefined
+      && drop.remainingSeconds !== null
+      && (!Number.isSafeInteger(drop.remainingSeconds) || drop.remainingSeconds < 0 || drop.remainingSeconds > MAX_REMAINING_SECONDS)
+    ) {
+      throw new ArchiveValidationError(`The remaining expiry time is invalid for "${drop.name}".`);
+    }
     if (drop.categories.some((category) => typeof category !== 'string')) {
       throw new Error(`The categories are invalid for "${drop.name}".`);
     }
@@ -332,7 +346,6 @@ function validatePersonalManifestBody(raw: unknown): void {
 }
 
 function summarizeManifest(manifest: PersonalArchiveManifest, totalPayloadBytes: number): PersonalArchiveInspection {
-  const now = new Date();
   const hasPasswordDrops = manifest.drops.some((drop) => drop.categories.some((category) => category.toLowerCase() === 'password'));
   return {
     manifest,
@@ -340,8 +353,10 @@ function summarizeManifest(manifest: PersonalArchiveManifest, totalPayloadBytes:
     fileCount: manifest.drops.filter((drop) => drop.type === 'file').length,
     passwordDropCount: manifest.drops.filter((drop) => drop.categories.some((category) => category.toLowerCase() === 'password')).length,
     lockedDropCount: manifest.drops.filter((drop) => drop.locked).length,
-    foreverDropCount: manifest.drops.filter((drop) => drop.expiresAt === null).length,
-    expiredDropCount: manifest.drops.filter((drop) => isExpired(drop, now)).length,
+    foreverDropCount: manifest.drops.filter((drop) => (
+      drop.remainingSeconds !== undefined ? drop.remainingSeconds === null : drop.expiresAt === null
+    )).length,
+    zeroRemainingDropCount: manifest.drops.filter((drop) => drop.remainingSeconds === 0).length,
     totalPayloadBytes,
     warnings: hasPasswordDrops ? ['This archive includes password-category drops.'] : [],
   };
@@ -420,6 +435,11 @@ async function readExistingPersonalDrops(userId: string): Promise<ExistingPerson
   });
 }
 
+export async function hasLivePersonalArchiveOverlap(userId: string, archiveId: string): Promise<boolean> {
+  const existingDrops = await readExistingPersonalDrops(userId);
+  return existingDrops.some((drop) => drop.importedFromArchiveId === archiveId && !isExpired(drop));
+}
+
 async function uploadArchiveEntryAsBinary(
   entry: FileEntry,
   mimeType: string | undefined,
@@ -464,6 +484,7 @@ export async function exportPersonalArchive(
   assertPassword(password);
   throwIfAborted(signal);
   if (!auth.currentUser || auth.currentUser.uid !== userId) throw new Error('You must be signed in to export personal drops.');
+  const exportNow = new Date();
 
   emitProgress(onProgress, { phase: 'preflight', processedBytes: 0, totalBytes: drops.length, message: 'Preparing personal backup…' });
 
@@ -538,7 +559,7 @@ export async function exportPersonalArchive(
         }
       }
 
-      archiveDrops.push(sourceDropToManifest(drop, payloads, content, drawingScene));
+      archiveDrops.push(sourceDropToManifest(drop, payloads, content, drawingScene, exportNow));
       preparedDrops.set(drop.id, prepared);
       emitProgress(onProgress, {
         phase: 'preflight',
@@ -711,16 +732,15 @@ export async function importPersonalArchive(
   const persistJournal = () => saveImportJournal(journal);
   const warnings: string[] = [...summarizeManifest(loaded.manifest, loaded.totalPayloadBytes).warnings];
   let importedCount = 0;
-  let skippedExpiredCount = 0;
+  let legacyExpiryFallbackCount = 0;
+  let zeroRemainingCount = 0;
   let downgradedForeverCount = 0;
   let unpinnedCount = 0;
 
   try {
     const existingDrops = await readExistingPersonalDrops(userId);
-    if (existingDrops.some((drop) => drop.importedFromArchiveId === loaded.manifest.archiveId)) {
-      throw new Error('This personal archive has already been imported.');
-    }
 
+    const importNow = new Date();
     persistJournal();
     const categoryResult = await readPersonalCategories(userId, loaded.manifest);
     createdCategoryIds.push(...categoryResult.createdIds);
@@ -729,7 +749,7 @@ export async function importPersonalArchive(
     let pinnedCount = existingDrops.filter((drop) => drop.pinned && !isExpired(drop)).length;
     const sourceToNewId = new Map<string, string>();
     for (const archiveDrop of loaded.manifest.drops) {
-      if (!isExpired(archiveDrop)) sourceToNewId.set(archiveDrop.sourceId, doc(collection(db, 'drops')).id);
+      sourceToNewId.set(archiveDrop.sourceId, doc(collection(db, 'drops')).id);
     }
 
     const totalBytes = Math.max(loaded.totalPayloadBytes, 1);
@@ -737,11 +757,6 @@ export async function importPersonalArchive(
 
     for (const archiveDrop of loaded.manifest.drops) {
       throwIfAborted(signal);
-      if (isExpired(archiveDrop)) {
-        sourceToNewId.delete(archiveDrop.sourceId);
-        skippedExpiredCount += 1;
-        continue;
-      }
       const newDropId = sourceToNewId.get(archiveDrop.sourceId);
       if (!newDropId) throw new Error(`Missing destination ID for "${archiveDrop.name}".`);
 
@@ -756,10 +771,31 @@ export async function importPersonalArchive(
         warnings.push(`Drop "${archiveDrop.name}" references ${missingReferenceIds.size} excluded or missing drop${missingReferenceIds.size === 1 ? '' : 's'}.`);
       }
 
-      const originalExpiresAt = parseDate(archiveDrop.expiresAt, 'expiresAt');
       let expirationOption: ExpirationOption | undefined = archiveDrop.expirationOption;
-      if (!originalExpiresAt) expirationOption = 'forever';
-      let expiresAt = originalExpiresAt;
+      let expiresAt: Date | null;
+      if (archiveDrop.remainingSeconds !== undefined) {
+        if (archiveDrop.remainingSeconds === null) {
+          expirationOption = 'forever';
+          expiresAt = null;
+        } else {
+          if (archiveDrop.remainingSeconds === 0) zeroRemainingCount += 1;
+          expiresAt = new Date(importNow.getTime() + Math.min(archiveDrop.remainingSeconds, MAX_REMAINING_SECONDS) * 1000);
+        }
+      } else if (archiveDrop.expiresAt === null) {
+        expirationOption = 'forever';
+        expiresAt = null;
+      } else {
+        legacyExpiryFallbackCount += 1;
+        const legacyOption: Exclude<ExpirationOption, 'forever'> = archiveDrop.expirationOption === '1h'
+          || archiveDrop.expirationOption === '2h'
+          || archiveDrop.expirationOption === '4h'
+          || archiveDrop.expirationOption === '6h'
+          || archiveDrop.expirationOption === '24h'
+          ? archiveDrop.expirationOption
+          : '2h';
+        expirationOption = legacyOption;
+        expiresAt = getExpirationDate(legacyOption);
+      }
 
       let pinned = archiveDrop.pinned;
       if (pinned && pinnedCount >= 2) {
@@ -905,7 +941,8 @@ export async function importPersonalArchive(
     }
     return {
       importedCount,
-      skippedExpiredCount,
+      legacyExpiryFallbackCount,
+      zeroRemainingCount,
       downgradedForeverCount,
       unpinnedCount,
       warnings,

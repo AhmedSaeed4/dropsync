@@ -48,6 +48,7 @@ interface WorkspaceArchiveModalProps {
     signal: AbortSignal,
     onProgress: (progress: WorkspaceArchiveProgress | PersonalArchiveProgress) => void
   ) => Promise<ArchiveImportResult>;
+  onCheckImportOverlap?: (archiveId: string, destinationWorkspaceId: string | null) => Promise<boolean>;
   onClose: () => void;
 }
 
@@ -61,6 +62,7 @@ export function WorkspaceArchiveModal({
   onExport,
   onInspect,
   onImport,
+  onCheckImportOverlap,
   onClose,
 }: WorkspaceArchiveModalProps) {
   const isPersonal = scope === 'personal';
@@ -80,6 +82,8 @@ export function WorkspaceArchiveModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [completeMessage, setCompleteMessage] = useState<string | null>(null);
+  const [checkingOverlap, setCheckingOverlap] = useState(false);
+  const [duplicateWarning, setDuplicateWarning] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   useBodyScrollLock();
@@ -138,6 +142,8 @@ export function WorkspaceArchiveModal({
     setProgress(null);
     setError(null);
     setCompleteMessage(null);
+    setCheckingOverlap(false);
+    setDuplicateWarning(false);
     operation(controller)
       .catch((caught: unknown) => {
         if (!controller.signal.aborted) {
@@ -183,6 +189,35 @@ export function WorkspaceArchiveModal({
     });
   };
 
+  const runImport = async (controller: AbortController) => {
+    if (!file || !inspection) return;
+    const result = await onImport(
+      file,
+      password,
+      isPersonal
+        ? undefined
+        : destinationMode === 'new'
+          ? { mode: 'new', workspaceName: workspaceName.trim() }
+          : { mode: 'merge', workspaceId: targetWorkspaceId },
+      controller.signal,
+      setProgress
+    );
+    const details = [
+      `Imported ${result.importedCount} drop${result.importedCount === 1 ? '' : 's'}.`,
+      result.legacyExpiryFallbackCount
+        ? 'This older backup had no saved remaining-time data, so finite drops restarted from their saved duration.'
+        : 'Finite drop timers resumed from their saved remaining time.',
+      result.zeroRemainingCount
+        ? `${result.zeroRemainingCount} drop${result.zeroRemainingCount === 1 ? '' : 's'} may expire immediately after import.`
+        : '',
+      result.downgradedForeverCount ? `${result.downgradedForeverCount} forever drop${result.downgradedForeverCount === 1 ? '' : 's'} downgraded to 24 hours.` : '',
+      result.unpinnedCount ? `${result.unpinnedCount} pin${result.unpinnedCount === 1 ? '' : 's'} adjusted for the two-pin limit.` : '',
+    ].filter(Boolean);
+    setCompleteMessage(details.join(' '));
+    setDuplicateWarning(false);
+    setInspection(null);
+  };
+
   const handleImport = () => {
     if (!file || !inspection) return;
     if (!isPersonal && destinationMode === 'new' && !workspaceName.trim()) {
@@ -193,30 +228,39 @@ export function WorkspaceArchiveModal({
       setError('Choose a destination workspace.');
       return;
     }
+    const destinationWorkspaceId = !isPersonal && destinationMode === 'merge'
+      ? targetWorkspaceId
+      : null;
+    if (!onCheckImportOverlap) {
+      start(runImport);
+      return;
+    }
     start(async (controller) => {
-      const result = await onImport(
-        file,
-        password,
-        isPersonal
-          ? undefined
-          : destinationMode === 'new'
-            ? { mode: 'new', workspaceName: workspaceName.trim() }
-            : { mode: 'merge', workspaceId: targetWorkspaceId },
-        controller.signal,
-        setProgress
-      );
-      const details = [
-        `Imported ${result.importedCount} drop${result.importedCount === 1 ? '' : 's'}.`,
-        result.skippedExpiredCount ? `${result.skippedExpiredCount} expired drop${result.skippedExpiredCount === 1 ? '' : 's'} skipped.` : '',
-        result.downgradedForeverCount ? `${result.downgradedForeverCount} forever drop${result.downgradedForeverCount === 1 ? '' : 's'} downgraded to 24 hours.` : '',
-        result.unpinnedCount ? `${result.unpinnedCount} pin${result.unpinnedCount === 1 ? '' : 's'} adjusted for the two-pin limit.` : '',
-      ].filter(Boolean);
-      setCompleteMessage(details.join(' '));
-      setInspection(null);
+      setCheckingOverlap(true);
+      try {
+        const hasOverlap = await onCheckImportOverlap(inspection.manifest.archiveId, destinationWorkspaceId);
+        if (controller.signal.aborted) return;
+        if (hasOverlap) {
+          setDuplicateWarning(true);
+          return;
+        }
+        setCheckingOverlap(false);
+        await runImport(controller);
+      } finally {
+        setCheckingOverlap(false);
+      }
     });
   };
 
+  const handleImportAnyway = () => {
+    if (!file || !inspection || !duplicateWarning) return;
+    setDuplicateWarning(false);
+    start(runImport);
+  };
+
   const closeOrCancel = () => {
+    setDuplicateWarning(false);
+    setCheckingOverlap(false);
     if (abortRef.current) {
       abortRef.current.abort();
       abortRef.current = null;
@@ -282,13 +326,13 @@ export function WorkspaceArchiveModal({
                 <input
                   type="file"
                   accept={WORKSPACE_ARCHIVE_EXTENSION}
-                  onChange={(event) => { setFile(event.target.files?.[0] || null); setInspection(null); setError(null); }}
+                  onChange={(event) => { setFile(event.target.files?.[0] || null); setInspection(null); setDuplicateWarning(false); setError(null); }}
                   className={`mt-1 block w-full text-xs ${colors.font} ${colors.text}`}
                 />
               </div>
               <div>
                 <label className={labelClass}>Archive password</label>
-                <input type="password" value={password} onChange={(event) => { setPassword(event.target.value); setInspection(null); }} className={`mt-1 w-full border px-3 py-2 text-sm outline-none ${colors.input} ${colors.font} ${colors.rounded}`} autoComplete="current-password" />
+                <input type="password" value={password} onChange={(event) => { setPassword(event.target.value); setInspection(null); setDuplicateWarning(false); }} className={`mt-1 w-full border px-3 py-2 text-sm outline-none ${colors.input} ${colors.font} ${colors.rounded}`} autoComplete="current-password" />
               </div>
               {!inspection && (
                 <button type="button" onClick={handleInspect} disabled={busy || !file} className={`${buttonClass} ${colors.primary}`}>
@@ -305,15 +349,20 @@ export function WorkspaceArchiveModal({
                     {inspection.passwordDropCount > 0 && <p className="text-amber-600">Includes {inspection.passwordDropCount} password-category drop{inspection.passwordDropCount === 1 ? '' : 's'}.</p>}
                     {inspection.lockedDropCount > 0 && <p className={colors.muted}>Includes {inspection.lockedDropCount} locked drop{inspection.lockedDropCount === 1 ? '' : 's'}. Imported locks remain flags, but edit authority belongs to the importer.</p>}
                     {inspection.foreverDropCount > 0 && <p className="text-amber-600">Includes {inspection.foreverDropCount} forever drop{inspection.foreverDropCount === 1 ? '' : 's'}; standard-tier importers will downgrade them to 24 hours.</p>}
-                    {isPersonal && 'expiredDropCount' in inspection && inspection.expiredDropCount > 0 && <p className={colors.muted}>{inspection.expiredDropCount} expired drop{inspection.expiredDropCount === 1 ? '' : 's'} will be skipped.</p>}
+                    <p className={colors.muted}>
+                      {inspection.manifest.drops.some((drop) => drop.remainingSeconds === undefined)
+                        ? 'This older backup has no saved remaining-time data; finite drops will restart from their saved duration.'
+                        : 'Finite drop timers resume with the time remaining when this backup was created.'}
+                    </p>
+                    {inspection.zeroRemainingDropCount > 0 && <p className={colors.muted}>{inspection.zeroRemainingDropCount} drop{inspection.zeroRemainingDropCount === 1 ? '' : 's'} may expire immediately after import.</p>}
                   </div>
                   {!isPersonal && (
                     <>
                       <div>
                         <label className={labelClass}>Destination</label>
                         <div className="mt-1 flex gap-2">
-                          <button type="button" onClick={() => setDestinationMode('new')} className={`${buttonClass} flex-1 border ${destinationMode === 'new' ? colors.primary : colors.secondary}`}>New workspace</button>
-                          <button type="button" onClick={() => setDestinationMode('merge')} className={`${buttonClass} flex-1 border ${destinationMode === 'merge' ? colors.primary : colors.secondary}`}>Merge</button>
+                          <button type="button" onClick={() => { setDestinationMode('new'); setDuplicateWarning(false); }} className={`${buttonClass} flex-1 border ${destinationMode === 'new' ? colors.primary : colors.secondary}`}>New workspace</button>
+                          <button type="button" onClick={() => { setDestinationMode('merge'); setDuplicateWarning(false); }} className={`${buttonClass} flex-1 border ${destinationMode === 'merge' ? colors.primary : colors.secondary}`}>Merge</button>
                         </div>
                       </div>
                       {destinationMode === 'new' ? (
@@ -324,7 +373,7 @@ export function WorkspaceArchiveModal({
                       ) : (
                         <div>
                           <label className={labelClass}>Merge into</label>
-                          <select value={targetWorkspaceId} onChange={(event) => setTargetWorkspaceId(event.target.value)} className={`mt-1 w-full border px-3 py-2 text-sm outline-none ${colors.input} ${colors.font} ${colors.rounded}`}>
+                          <select value={targetWorkspaceId} onChange={(event) => { setTargetWorkspaceId(event.target.value); setDuplicateWarning(false); }} className={`mt-1 w-full border px-3 py-2 text-sm outline-none ${colors.input} ${colors.font} ${colors.rounded}`}>
                             {workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}
                           </select>
                           <p className={`mt-1 text-[11px] ${colors.font} ${colors.muted}`}>Existing drops and members are unchanged. Imported drops receive fresh IDs.</p>
@@ -349,6 +398,15 @@ export function WorkspaceArchiveModal({
               {progress.currentName && <p className={`mt-2 text-[10px] truncate ${colors.muted}`}>{progress.currentName}</p>}
             </div>
           )}
+          {duplicateWarning && (
+            <div role="alertdialog" aria-live="assertive" className={`border p-3 ${colors.border} ${colors.rounded} ${colors.font}`}>
+              <p className={`text-xs ${colors.text}`}>Some of these drops are already here. Importing again will create duplicates. Continue?</p>
+              <div className="mt-3 flex justify-end gap-2">
+                <button type="button" onClick={() => setDuplicateWarning(false)} className={`${buttonClass} border ${colors.secondary}`}>Cancel</button>
+                <button type="button" onClick={handleImportAnyway} disabled={busy} className={`${buttonClass} ${colors.primary}`}>Import anyway</button>
+              </div>
+            </div>
+          )}
           {error && <p className={`border p-3 text-xs ${colors.font} ${colors.rounded} ${colors.error}`}>{error}</p>}
           {completeMessage && <p className={`border p-3 text-xs ${colors.font} ${colors.rounded} ${colors.success}`}>{completeMessage}</p>}
         </div>
@@ -362,8 +420,8 @@ export function WorkspaceArchiveModal({
               {busy ? 'Exporting…' : (isPersonal ? 'Export personal drops' : 'Export workspace')}
             </button>
           ) : inspection ? (
-            <button type="button" onClick={handleImport} disabled={busy || !!completeMessage} className={`${buttonClass} ${colors.primary}`}>
-              {busy ? 'Importing…' : (isPersonal ? 'Import personal drops' : 'Import backup')}
+            <button type="button" onClick={handleImport} disabled={busy || !!completeMessage || duplicateWarning} className={`${buttonClass} ${colors.primary}`}>
+              {busy ? (checkingOverlap ? 'Checking…' : 'Importing…') : (isPersonal ? 'Import personal drops' : 'Import backup')}
             </button>
           ) : null}
         </div>
