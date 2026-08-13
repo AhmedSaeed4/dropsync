@@ -22,7 +22,8 @@ import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
  * across both layout families.
  */
 interface Props {
-  workspace: Workspace;
+  scope?: 'workspace' | 'personal';
+  workspace: Workspace | null;
   theme: string; // 'dark' | 'minimal' | default('light')
   isDeleting: boolean;
   isLeaving: boolean;
@@ -37,6 +38,7 @@ interface Props {
 }
 
 export default function WorkspaceOptionsModal({
+  scope = 'workspace',
   workspace,
   theme,
   isDeleting,
@@ -50,6 +52,7 @@ export default function WorkspaceOptionsModal({
   onClose,
   variant,
 }: Props) {
+  const isPersonal = scope === 'personal';
   const [members, setMembers] = useState<MemberInfo[] | null>(null);
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<null | 'delete' | 'transfer' | 'kick'>(null);
@@ -64,10 +67,14 @@ export default function WorkspaceOptionsModal({
   // unmount; the modal is dismissed once a transfer/delete resolves, so this guards the race.
   useEffect(() => {
     let cancelled = false;
-    setMembers(null);
     setSelectedMemberId(null);
     setConfirming(null);
     setKickTargetId(null);
+    if (isPersonal || !workspace) {
+      setMembers([]);
+      return () => { cancelled = true; };
+    }
+    setMembers(null);
     getWorkspaceMembers(workspace.members, workspace.ownerId)
       .then((fetched) => {
         if (cancelled) return;
@@ -82,7 +89,7 @@ export default function WorkspaceOptionsModal({
     return () => {
       cancelled = true;
     };
-  }, [workspace]);
+  }, [isPersonal, workspace]);
 
   const busy = isDeleting || isLeaving || isKicking;
   const isDark = theme === 'dark';
@@ -110,6 +117,11 @@ export default function WorkspaceOptionsModal({
 
   const panelClass = isEditorial && tc
     ? `relative z-10 w-96 border ${tc.border} ${tc.cardBg} rounded-lg overflow-hidden`
+    : `relative z-10 w-80 border ${
+        isDark ? 'bg-[#1A1A1A] border-white/10' : isMinimal ? 'bg-[#D4D8C8] border-[#1A1A1A]/20 rounded-lg' : 'bg-white border-[#1A1A1A]'
+      }`;
+  const personalPanelClass = isEditorial && tc
+    ? `relative z-10 w-96 border ${tc.border} ${isDark ? tc.bg : tc.cardBg} rounded-lg overflow-hidden`
     : `relative z-10 w-80 border ${
         isDark ? 'bg-[#1A1A1A] border-white/10' : isMinimal ? 'bg-[#D4D8C8] border-[#1A1A1A]/20 rounded-lg' : 'bg-white border-[#1A1A1A]'
       }`;
@@ -144,6 +156,41 @@ export default function WorkspaceOptionsModal({
         : 'bg-[#FF5A47] hover:bg-[#FF5A47]/90 text-white';
     return `px-4 py-2 ${bg} transition-colors ${btnFont} flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed ${isMinimal ? 'rounded-lg' : ''}`;
   };
+
+  if (isPersonal) {
+    const personalPrimary = isEditorial ? editorialPrimary : classicChrome('primary');
+    const personalCancel = isEditorial ? editorialOutline : classicChrome('cancel');
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center overscroll-contain">
+        <div className="fixed inset-0 bg-black/50" onClick={onClose} />
+        <div className={personalPanelClass}>
+          <div className={headerClass}>
+            <h3 className={titleClass}>{L('Personal options', 'PERSONAL_OPTIONS')}</h3>
+            <button onClick={onClose} className={closeBtnClass} aria-label="Close">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <div className={isEditorial ? 'p-5' : 'p-4'}>
+            <p className={`${bodyText} mb-4`}>
+              {L('Restore a password-protected backup into your personal drops. Existing drops are not changed.', 'IMPORT A PERSONAL BACKUP. EXISTING DROPS ARE NOT CHANGED.')}
+            </p>
+            {onImport && (
+              <button onClick={onImport} className={`w-full ${personalPrimary}`}>
+                {L('Import backup', 'IMPORT_BACKUP')}
+              </button>
+            )}
+            <button onClick={onClose} className={`w-full mt-3 ${personalCancel}`}>
+              {L('Cancel', 'CANCEL')}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!workspace) return null;
 
   // Members still loading.
   if (members === null) {

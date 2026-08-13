@@ -46,14 +46,26 @@ import { db } from '@/lib/firebase';
 import { CURRENT_TERMS_VERSION } from '@/lib/termsVersion';
 import { TermsConsentGate } from '@/components/TermsConsentGate';
 import { WorkspaceArchiveModal } from '@/components/WorkspaceArchiveModal';
+import WorkspaceOptionsModal from '@/components/WorkspaceOptionsModal';
 import {
   exportWorkspaceArchive,
   importWorkspaceArchive,
   inspectWorkspaceArchive,
   recoverInterruptedWorkspaceArchiveImport,
   type WorkspaceArchiveImportResult,
+  type WorkspaceArchiveInspection,
   type WorkspaceArchiveProgress,
 } from '@/lib/workspaceArchive';
+import {
+  exportPersonalArchive,
+  importPersonalArchive,
+  inspectPersonalArchive,
+  recoverInterruptedPersonalArchiveImport,
+  type PersonalArchiveExportResult,
+  type PersonalArchiveImportResult,
+  type PersonalArchiveInspection,
+  type PersonalArchiveProgress,
+} from '@/lib/personalArchive';
 import { collection, query, orderBy, limit, onSnapshot, getDocs, getDoc, doc, setDoc, serverTimestamp, updateDoc, waitForPendingWrites, Timestamp } from 'firebase/firestore';
 
 type Theme = 'light' | 'dark' | 'minimal';
@@ -193,6 +205,8 @@ export default function Home() {
   const [removedNotice, setRemovedNotice] = useState<string | null>(null);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [archiveMode, setArchiveMode] = useState<'export' | 'import' | null>(null);
+  const [archiveScope, setArchiveScope] = useState<'workspace' | 'personal'>('workspace');
+  const [personalOptionsOpen, setPersonalOptionsOpen] = useState(false);
   const [archiveNotice, setArchiveNotice] = useState<string | null>(null);
   const [pendingArchiveWorkspaceId, setPendingArchiveWorkspaceId] = useState<string | null>(null);
   const [showChat, setShowChat] = useState(false);
@@ -275,6 +289,9 @@ export default function Home() {
     if (!user) return;
     recoverInterruptedWorkspaceArchiveImport(user.uid).catch((error) => {
       console.error('Failed to recover interrupted workspace import:', error);
+    });
+    recoverInterruptedPersonalArchiveImport(user.uid).catch((error) => {
+      console.error('Failed to recover interrupted personal import:', error);
     });
   }, [user]);
 
@@ -1504,7 +1521,18 @@ export default function Home() {
   const openWorkspaceArchive = useCallback((mode: 'export' | 'import') => {
     retractFooterIfUp();
     setArchiveNotice(null);
+    setArchiveScope('workspace');
     setArchiveMode(mode);
+  }, []);
+  const openPersonalArchive = useCallback((mode: 'export' | 'import') => {
+    retractFooterIfUp();
+    setArchiveNotice(null);
+    setArchiveScope('personal');
+    setArchiveMode(mode);
+  }, []);
+  const openPersonalOptions = useCallback(() => {
+    retractFooterIfUp();
+    setPersonalOptionsOpen(true);
   }, []);
 
   const handleWorkspaceArchiveExport = useCallback(async (
@@ -1572,6 +1600,107 @@ export default function Home() {
     ].filter(Boolean).join(' '));
     return result;
   }, [refreshDrops, user]);
+
+  const handlePersonalArchiveExport = useCallback(async (
+    password: string,
+    signal: AbortSignal,
+    onProgress: (progress: PersonalArchiveProgress) => void
+  ): Promise<void> => {
+    if (!user) throw new Error('Sign in before exporting personal drops.');
+    if (currentWorkspace) throw new Error('Switch to Personal before exporting personal drops.');
+    const result: PersonalArchiveExportResult = await exportPersonalArchive({
+      drops,
+      categories,
+      userId: user.uid,
+      sourceDisplayName: user.displayName || user.email?.split('@')[0] || null,
+      password,
+      suggestedName: 'personal',
+      signal,
+      onProgress,
+    });
+    const skippedSummary = result.skippedDrops.length > 0
+      ? `${result.skippedDrops.length} drop${result.skippedDrops.length === 1 ? '' : 's'} skipped because they could not be decrypted: ${result.skippedDrops.map((skipped) => `"${skipped.name}" (${skipped.reason})`).join('; ')}.`
+      : '';
+    setArchiveNotice([
+      'Personal backup exported. Your personal drops were not changed.',
+      result.skippedExpiredCount ? `${result.skippedExpiredCount} expired drop${result.skippedExpiredCount === 1 ? '' : 's'} skipped.` : '',
+      skippedSummary,
+    ].filter(Boolean).join(' '));
+  }, [categories, currentWorkspace, drops, user]);
+
+  const handlePersonalArchiveInspect = useCallback(async (
+    file: File,
+    password: string,
+    signal: AbortSignal,
+    onProgress: (progress: PersonalArchiveProgress) => void
+  ): Promise<PersonalArchiveInspection> => inspectPersonalArchive(file, password, signal, onProgress), []);
+
+  const handlePersonalArchiveImport = useCallback(async (
+    file: File,
+    password: string,
+    signal: AbortSignal,
+    onProgress: (progress: PersonalArchiveProgress) => void
+  ): Promise<PersonalArchiveImportResult> => {
+    if (!user) throw new Error('Sign in before importing a personal backup.');
+    const result = await importPersonalArchive({
+      file,
+      password,
+      userId: user.uid,
+      signal,
+      onProgress,
+    });
+    refreshDrops();
+    setArchiveNotice([
+      `Personal backup imported: ${result.importedCount} drop${result.importedCount === 1 ? '' : 's'}.`,
+      result.skippedExpiredCount
+        ? `${result.skippedExpiredCount} expired drop${result.skippedExpiredCount === 1 ? ' was' : 's were'} skipped.`
+        : '',
+      result.downgradedForeverCount
+        ? `${result.downgradedForeverCount} forever drop${result.downgradedForeverCount === 1 ? ' was' : 's were'} downgraded to 24 hours (your account isn't trusted).`
+        : '',
+      result.unpinnedCount
+        ? `${result.unpinnedCount} pin${result.unpinnedCount === 1 ? ' was' : 's were'} adjusted for the two-pin limit.`
+        : '',
+      ...result.warnings,
+    ].filter(Boolean).join(' '));
+    return result;
+  }, [refreshDrops, user]);
+
+  const handleArchiveExport = useCallback(async (
+    password: string,
+    signal: AbortSignal,
+    onProgress: (progress: WorkspaceArchiveProgress | PersonalArchiveProgress) => void
+  ): Promise<void> => {
+    if (archiveScope === 'personal') {
+      await handlePersonalArchiveExport(password, signal, onProgress);
+    } else {
+      await handleWorkspaceArchiveExport(password, signal, onProgress);
+    }
+  }, [archiveScope, handlePersonalArchiveExport, handleWorkspaceArchiveExport]);
+
+  const handleArchiveInspect = useCallback(async (
+    file: File,
+    password: string,
+    signal: AbortSignal,
+    onProgress: (progress: WorkspaceArchiveProgress | PersonalArchiveProgress) => void
+  ): Promise<WorkspaceArchiveInspection | PersonalArchiveInspection> => {
+    if (archiveScope === 'personal') return handlePersonalArchiveInspect(file, password, signal, onProgress);
+    return handleWorkspaceArchiveInspect(file, password, signal, onProgress);
+  }, [archiveScope, handlePersonalArchiveInspect, handleWorkspaceArchiveInspect]);
+
+  const handleArchiveImport = useCallback(async (
+    file: File,
+    password: string,
+    destination: { mode: 'new'; workspaceName: string } | { mode: 'merge'; workspaceId: string } | undefined,
+    signal: AbortSignal,
+    onProgress: (progress: WorkspaceArchiveProgress | PersonalArchiveProgress) => void
+  ): Promise<WorkspaceArchiveImportResult | PersonalArchiveImportResult> => {
+    if (archiveScope === 'personal') {
+      return handlePersonalArchiveImport(file, password, signal, onProgress);
+    }
+    if (!destination) throw new Error('Choose a workspace destination.');
+    return handleWorkspaceArchiveImport(file, password, destination, signal, onProgress);
+  }, [archiveScope, handlePersonalArchiveImport, handleWorkspaceArchiveImport]);
 
   // Wait for theme to load to prevent flash. While waiting, emit the PREPAINT_BG <script> (runs
   // during parse, before first paint) so the body background is the saved theme color immediately —
@@ -2353,6 +2482,8 @@ export default function Home() {
     footerEnabled, onToggleFooterEnabled,
     onExportWorkspace: canManageWorkspaceArchive ? () => openWorkspaceArchive('export') : undefined,
     onImportWorkspace: canManageWorkspaceArchive ? () => openWorkspaceArchive('import') : undefined,
+    onExportPersonal: user && !currentWorkspace ? () => openPersonalArchive('export') : undefined,
+    onOpenPersonalOptions: user ? openPersonalOptions : undefined,
     showSettingsModal, setShowSettingsModal,
     showAuthModal, setShowAuthModal,
     showVerifyModal, setShowVerifyModal,
@@ -2405,16 +2536,37 @@ export default function Home() {
           ? <EditorialLayout {...layoutProps} onSortModeChange={handleEditorialSortModeChange} />
           : <ClassicLayout {...layoutProps} />}
       </div>
+      {personalOptionsOpen && (
+        <WorkspaceOptionsModal
+          scope="personal"
+          workspace={null}
+          theme={theme}
+          variant={layoutMode === 'editorial' ? 'editorial' : 'classic'}
+          isDeleting={false}
+          isLeaving={false}
+          isKicking={false}
+          onKick={() => {}}
+          currentUserId={user?.uid || null}
+          onDelete={() => {}}
+          onLeaveAndTransfer={() => {}}
+          onImport={() => {
+            setPersonalOptionsOpen(false);
+            openPersonalArchive('import');
+          }}
+          onClose={() => setPersonalOptionsOpen(false)}
+        />
+      )}
       {archiveMode && (
         <WorkspaceArchiveModal
+          scope={archiveScope}
           mode={archiveMode}
           variant={layoutMode === 'editorial' ? 'editorial' : 'classic'}
           theme={theme}
-          currentWorkspace={currentWorkspace}
-          workspaces={workspaces.filter((workspace) => workspace.ownerId === user?.uid)}
-          onExport={handleWorkspaceArchiveExport}
-          onInspect={handleWorkspaceArchiveInspect}
-          onImport={handleWorkspaceArchiveImport}
+          currentWorkspace={archiveScope === 'workspace' ? currentWorkspace : null}
+          workspaces={archiveScope === 'workspace' ? workspaces.filter((workspace) => workspace.ownerId === user?.uid) : []}
+          onExport={handleArchiveExport}
+          onInspect={handleArchiveInspect}
+          onImport={handleArchiveImport}
           onClose={() => setArchiveMode(null)}
         />
       )}

@@ -24,6 +24,7 @@ interface EditorialHeaderProps {
   onJoin: () => void;
   onDelete: (workspace: Workspace) => void;
   onLeave: (workspace: Workspace) => void;
+  onPersonalOptions?: () => void;
   // Workspace ids with ≥1 unread @mention of this user → the switcher name glows.
   mentionedWorkspaceIds?: Set<string>;
 }
@@ -43,6 +44,7 @@ export function EditorialHeader({
   onJoin,
   onDelete,
   onLeave,
+  onPersonalOptions,
   mentionedWorkspaceIds,
 }: EditorialHeaderProps) {
   const tc = getEditorialThemeColors(theme);
@@ -73,6 +75,7 @@ export function EditorialHeader({
             onJoin={onJoin}
             onDelete={onDelete}
             onLeave={onLeave}
+            onPersonalOptions={onPersonalOptions}
             theme={theme}
             showChat={chatOpen}
             mentionedWorkspaceIds={mentionedWorkspaceIds}

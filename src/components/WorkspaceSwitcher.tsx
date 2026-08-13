@@ -13,6 +13,7 @@ interface WorkspaceSwitcherProps {
   onJoin: () => void;
   onDelete: (workspace: Workspace) => void;
   onLeave: (workspace: Workspace) => void;
+  onPersonalOptions?: () => void;
   theme?: 'light' | 'dark' | 'minimal';
   // Workspace ids with ≥1 unread @mention of this user → their names glow (tags-only signal).
   mentionedWorkspaceIds?: Set<string>;
@@ -27,6 +28,7 @@ export function WorkspaceSwitcher({
   onJoin,
   onDelete,
   onLeave,
+  onPersonalOptions,
   theme = 'light',
   mentionedWorkspaceIds,
 }: WorkspaceSwitcherProps) {
@@ -135,22 +137,38 @@ export function WorkspaceSwitcher({
         <>
           <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
           <div className={`absolute top-full ${isMinimal ? 'right-0 sm:left-0 sm:right-auto' : 'left-0'} mt-1 w-56 sm:w-64 border ${tc.borderColor} ${tc.dropdownBg} shadow-lg z-50 ${tc.roundedClass}`}>
-            {/* Personal option */}
-            <button
-              onClick={() => {
-                onSwitch(null);
-                setIsOpen(false);
-              }}
-              className={`w-full px-4 py-3 text-left flex items-center gap-3 ${!currentWorkspace ? `${tc.activeBg} ${tc.activeText}` : tc.hoverBg} transition-colors ${tc.roundedClass} ${isOpen && !currentWorkspace ? '' : ''}`}
-              style={{ borderRadius: isMinimal && !currentWorkspace ? '0.5rem 0.5rem 0 0' : undefined }}
-            >
-              <svg className={`w-4 h-4 ${!currentWorkspace ? 'text-white' : tc.textColor}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-              </svg>
-              <span className={`${tc.fontClass} ${!currentWorkspace ? 'text-white' : tc.textColor}`}>
-                {isMinimal ? 'Personal' : 'PERSONAL'}
-              </span>
-            </button>
+            {/* Personal option + backup gear */}
+            <div className={`flex items-stretch ${!currentWorkspace ? tc.activeBg : tc.dropdownBg}`}>
+              <button
+                onClick={() => {
+                  onSwitch(null);
+                  setIsOpen(false);
+                }}
+                className={`flex-1 px-4 py-3 text-left flex items-center gap-3 ${!currentWorkspace ? tc.activeText : tc.hoverBg} transition-colors ${tc.roundedClass}`}
+                style={{ borderRadius: isMinimal && !currentWorkspace ? '0.5rem 0.5rem 0 0' : undefined }}
+              >
+                <svg className={`w-4 h-4 ${!currentWorkspace ? 'text-white' : tc.textColor}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                </svg>
+                <span className={`${tc.fontClass} ${!currentWorkspace ? 'text-white' : tc.textColor}`}>
+                  {isMinimal ? 'Personal' : 'PERSONAL'}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onPersonalOptions?.();
+                  setIsOpen(false);
+                }}
+                className={`shrink-0 px-3 ${!currentWorkspace ? 'text-white hover:bg-white/20' : `${tc.textMuted} ${tc.hoverBg}`} transition-colors ${tc.roundedClass}`}
+                title="Personal options"
+                aria-label="Personal options"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                </svg>
+              </button>
+            </div>
 
             {/* Divider */}
             {workspaces.length > 0 && (

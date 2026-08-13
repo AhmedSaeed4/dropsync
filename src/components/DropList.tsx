@@ -34,9 +34,10 @@ interface DropListProps {
   isReopenCallId?: string;
   hoverable?: boolean;
   onExportWorkspace?: () => void;
+  onExportPersonal?: () => void;
 }
 
-export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspaces = [], theme = 'light', currentUserId, categories = [], onDeleteCategory, currentWorkspace, workspaceMembers, allDrops = [], onJoinCall, isReopenCallId, hoverable = false, onExportWorkspace }: DropListProps) {
+export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspaces = [], theme = 'light', currentUserId, categories = [], onDeleteCategory, currentWorkspace, workspaceMembers, allDrops = [], onJoinCall, isReopenCallId, hoverable = false, onExportWorkspace, onExportPersonal }: DropListProps) {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
@@ -418,6 +419,17 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
                   onClick={onExportWorkspace}
                   className={`${tc.fontClass} ${isMinimal ? 'text-[#1A1A1A]/50 hover:text-[#1A1A1A]' : 'text-white/60 hover:text-white'} transition-colors flex items-center gap-2`}
                   title={isMinimal ? 'Export workspace' : 'EXPORT_WORKSPACE'}
+                >
+                  {!isMinimal && <span className="w-3 h-3 border border-white/30 flex items-center justify-center text-[8px]">↓</span>}
+                  {isMinimal ? 'Export' : 'EXPORT'}
+                </button>
+              )}
+              {onExportPersonal && visibleDrops.length > 0 && (
+                <button
+                  type="button"
+                  onClick={onExportPersonal}
+                  className={`${tc.fontClass} ${isMinimal ? 'text-[#1A1A1A]/50 hover:text-[#1A1A1A]' : 'text-white/60 hover:text-white'} transition-colors flex items-center gap-2`}
+                  title={isMinimal ? 'Export personal drops' : 'EXPORT_PERSONAL_DROPS'}
                 >
                   {!isMinimal && <span className="w-3 h-3 border border-white/30 flex items-center justify-center text-[8px]">↓</span>}
                   {isMinimal ? 'Export' : 'EXPORT'}

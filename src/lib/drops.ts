@@ -1944,6 +1944,94 @@ export async function decryptDrop(drop: Drop, currentUserId: string): Promise<Dr
   }
 }
 
+// Strict personal-drop decryption for archive export. The UI-facing decryptDrop above intentionally
+// swallows failures for a graceful card state; an archive must never mistake a failed decrypt for a
+// successful plaintext export. The caller loads getUserKeys once and passes the live key pair so
+// export does not repeatedly restore the private key or race userPublicKeys publication.
+export interface PersonalArchiveDecryptedPayload {
+  dek?: CryptoKey;
+  content?: string;
+  fileData?: string;
+  imageData?: string;
+}
+
+export async function decryptPersonalDropForArchive(
+  drop: Drop,
+  currentUserId: string,
+  keys: { publicKey: CryptoKey; privateKey: CryptoKey } | null,
+  signal?: AbortSignal
+): Promise<PersonalArchiveDecryptedPayload> {
+  if (drop.type === 'call') throw new Error('Call drops are not supported in personal archives.');
+  if (drop.workspaceId !== null) throw new Error('The drop is not in personal space.');
+  if (drop.userId !== currentUserId) throw new Error('The drop belongs to a different user.');
+
+  if (!drop.encrypted) {
+    if (drop.type === 'file') {
+      if (drop.fileFormat === 'binary') return {};
+      if (drop.fileData) return { fileData: drop.fileData };
+      if (!drop.fileUrl) throw new Error('The unencrypted file payload is missing.');
+      const response = await fetch(drop.fileUrl, { signal });
+      if (!response.ok) throw new Error(`R2 fetch failed: ${response.status}`);
+      return { fileData: await response.text() };
+    }
+
+    let imageData: string | undefined;
+    if (drop.imageUrl) {
+      const response = await fetch(drop.imageUrl, { signal });
+      if (!response.ok) throw new Error(`R2 image fetch failed: ${response.status}`);
+      imageData = await response.text();
+    }
+    return { content: drop.content ?? '', imageData };
+  }
+
+  if (!keys) throw new Error('Personal encryption keys are unavailable.');
+  if (!drop.encryptedDEK) throw new Error('The personal drop has no encrypted DEK.');
+  let parsed: { encryptedDEK?: string; iv?: string };
+  try {
+    parsed = JSON.parse(drop.encryptedDEK) as { encryptedDEK?: string; iv?: string };
+  } catch {
+    throw new Error('The personal drop DEK wrapper is invalid.');
+  }
+  if (!parsed.encryptedDEK || !parsed.iv) throw new Error('The personal drop DEK wrapper is incomplete.');
+
+  // Personal export is restricted to the current user's own drops, so the public key already
+  // returned by getUserKeys is the correct peer. Do not perform a second userPublicKeys lookup.
+  const dek = await decryptDEKForUser(parsed.encryptedDEK, parsed.iv, keys.publicKey, keys.privateKey);
+  let content: string | undefined;
+  let fileData: string | undefined;
+
+  if (drop.type === 'file') {
+    if (drop.fileFormat === 'binary') throw new Error('A binary file is marked as encrypted.');
+    const encryptedFile = drop.fileUrl
+      ? await (async () => {
+          const response = await fetch(drop.fileUrl!, { signal });
+          if (!response.ok) throw new Error(`R2 fetch failed: ${response.status}`);
+          return response.text();
+        })()
+      : drop.fileData;
+    if (!encryptedFile) throw new Error('The encrypted file payload is missing.');
+    if (!drop.iv) throw new Error('The encrypted file IV is missing.');
+    fileData = await decryptData(encryptedFile, dek, drop.iv);
+  } else {
+    if (!drop.iv) throw new Error('The encrypted text IV is missing.');
+    content = await decryptData(drop.content ?? '', dek, drop.iv);
+  }
+
+  let imageData: string | undefined;
+  if (drop.type === 'text' && drop.imageUrl) {
+    const response = await fetch(drop.imageUrl, { signal });
+    if (!response.ok) throw new Error(`R2 image fetch failed: ${response.status}`);
+    const encryptedImage = await response.text();
+    // Older records can contain an unencrypted data-URI image alongside encrypted text. Preserve
+    // that legacy shape; newly-created personal images always have imageIv and use the same DEK.
+    imageData = drop.imageIv
+      ? await decryptData(encryptedImage, dek, drop.imageIv)
+      : encryptedImage;
+  }
+
+  return { dek, content, fileData, imageData };
+}
+
 // =============================================
 // Helper function to upload to R2
 // Uses Firebase ID token for authentication
@@ -2060,46 +2148,6 @@ export async function uploadBinaryFileToR2(
     xhr.send(blob);
   });
 
-  return { url: fileUrl, key };
-}
-
-// Upload a streamed binary payload directly to R2. This is used by workspace archive import so a
-// large raw file can flow from the ZIP reader into the presigned PUT without first becoming a Blob.
-export async function uploadBinaryStreamToR2(
-  stream: ReadableStream<Uint8Array>,
-  contentType = 'application/octet-stream',
-  signal?: AbortSignal
-): Promise<{ url: string; key: string }> {
-  const currentUser = auth.currentUser;
-  if (!currentUser) throw new Error('Not authenticated');
-  const idToken = await currentUser.getIdToken();
-  const presignResponse = await fetch('/api/presign', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${idToken}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ contentType: contentType || 'application/octet-stream' }),
-    signal,
-  });
-  if (!presignResponse.ok) {
-    const error = await presignResponse.json();
-    throw new Error(error.error || 'Failed to get upload URL');
-  }
-  const { presignedUrl, key, fileUrl } = await presignResponse.json() as {
-    presignedUrl: string;
-    key: string;
-    fileUrl: string;
-  };
-  const requestInit = {
-    method: 'PUT',
-    headers: { 'Content-Type': contentType || 'application/octet-stream' },
-    body: stream,
-    signal,
-    duplex: 'half' as const,
-  } as RequestInit & { duplex: 'half' };
-  const uploadResponse = await fetch(presignedUrl, requestInit);
-  if (!uploadResponse.ok) throw new Error(`R2 streamed upload failed: ${uploadResponse.status}`);
   return { url: fileUrl, key };
 }
 

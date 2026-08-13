@@ -11,8 +11,20 @@ import type {
   WorkspaceArchiveInspection,
   WorkspaceArchiveProgress,
 } from '@/lib/workspaceArchive';
+import type {
+  PersonalArchiveImportResult,
+  PersonalArchiveInspection,
+  PersonalArchiveProgress,
+} from '@/lib/personalArchive';
+
+type ArchiveInspection = WorkspaceArchiveInspection | PersonalArchiveInspection;
+type ArchiveImportResult = WorkspaceArchiveImportResult | PersonalArchiveImportResult;
+type WorkspaceArchiveDestination =
+  | { mode: 'new'; workspaceName: string }
+  | { mode: 'merge'; workspaceId: string };
 
 interface WorkspaceArchiveModalProps {
+  scope?: 'workspace' | 'personal';
   mode: 'export' | 'import';
   variant: 'classic' | 'editorial';
   theme: 'light' | 'dark' | 'minimal';
@@ -27,19 +39,20 @@ interface WorkspaceArchiveModalProps {
     file: File,
     password: string,
     signal: AbortSignal,
-    onProgress: (progress: WorkspaceArchiveProgress) => void
-  ) => Promise<WorkspaceArchiveInspection>;
+    onProgress: (progress: WorkspaceArchiveProgress | PersonalArchiveProgress) => void
+  ) => Promise<ArchiveInspection>;
   onImport: (
     file: File,
     password: string,
-    destination: { mode: 'new'; workspaceName: string } | { mode: 'merge'; workspaceId: string },
+    destination: WorkspaceArchiveDestination | undefined,
     signal: AbortSignal,
-    onProgress: (progress: WorkspaceArchiveProgress) => void
-  ) => Promise<WorkspaceArchiveImportResult>;
+    onProgress: (progress: WorkspaceArchiveProgress | PersonalArchiveProgress) => void
+  ) => Promise<ArchiveImportResult>;
   onClose: () => void;
 }
 
 export function WorkspaceArchiveModal({
+  scope = 'workspace',
   mode,
   variant,
   theme,
@@ -50,13 +63,14 @@ export function WorkspaceArchiveModal({
   onImport,
   onClose,
 }: WorkspaceArchiveModalProps) {
+  const isPersonal = scope === 'personal';
   const isEditorial = variant === 'editorial';
   const isDark = theme === 'dark';
   const isMinimal = theme === 'minimal';
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [file, setFile] = useState<File | null>(null);
-  const [inspection, setInspection] = useState<WorkspaceArchiveInspection | null>(null);
+  const [inspection, setInspection] = useState<ArchiveInspection | null>(null);
   const [destinationMode, setDestinationMode] = useState<'new' | 'merge'>('new');
   const [workspaceName, setWorkspaceName] = useState(
     currentWorkspace ? `${currentWorkspace.name} Restored` : 'Restored workspace'
@@ -147,7 +161,7 @@ export function WorkspaceArchiveModal({
     }
     start(async (controller) => {
       await onExport(password, controller.signal, setProgress);
-      setCompleteMessage('Workspace backup saved successfully.');
+      setCompleteMessage(isPersonal ? 'Personal backup saved successfully.' : 'Workspace backup saved successfully.');
     });
   };
 
@@ -163,7 +177,7 @@ export function WorkspaceArchiveModal({
     start(async (controller) => {
       const result = await onInspect(file, password, controller.signal, setProgress);
       setInspection(result);
-      if (result.manifest.sourceWorkspace.name) {
+      if (!isPersonal && 'sourceWorkspace' in result.manifest && result.manifest.sourceWorkspace.name) {
         setWorkspaceName(`${result.manifest.sourceWorkspace.name} Restored`);
       }
     });
@@ -171,11 +185,11 @@ export function WorkspaceArchiveModal({
 
   const handleImport = () => {
     if (!file || !inspection) return;
-    if (destinationMode === 'new' && !workspaceName.trim()) {
+    if (!isPersonal && destinationMode === 'new' && !workspaceName.trim()) {
       setError('Enter a name for the restored workspace.');
       return;
     }
-    if (destinationMode === 'merge' && !targetWorkspaceId) {
+    if (!isPersonal && destinationMode === 'merge' && !targetWorkspaceId) {
       setError('Choose a destination workspace.');
       return;
     }
@@ -183,9 +197,11 @@ export function WorkspaceArchiveModal({
       const result = await onImport(
         file,
         password,
-        destinationMode === 'new'
-          ? { mode: 'new', workspaceName: workspaceName.trim() }
-          : { mode: 'merge', workspaceId: targetWorkspaceId },
+        isPersonal
+          ? undefined
+          : destinationMode === 'new'
+            ? { mode: 'new', workspaceName: workspaceName.trim() }
+            : { mode: 'merge', workspaceId: targetWorkspaceId },
         controller.signal,
         setProgress
       );
@@ -224,10 +240,14 @@ export function WorkspaceArchiveModal({
         <div className={`px-5 py-4 border-b ${colors.border} flex items-center justify-between`}>
           <div>
             <h2 className={`text-sm font-medium ${isEditorial ? 'tracking-wide' : 'font-mono uppercase tracking-wider'} ${colors.font} ${colors.text}`}>
-              {mode === 'export' ? (isEditorial ? 'Export workspace' : 'EXPORT_WORKSPACE') : (isEditorial ? 'Import workspace backup' : 'IMPORT_WORKSPACE_BACKUP')}
+              {mode === 'export'
+                ? (isPersonal ? (isEditorial ? 'Export personal drops' : 'EXPORT_PERSONAL_DROPS') : (isEditorial ? 'Export workspace' : 'EXPORT_WORKSPACE'))
+                : (isPersonal ? (isEditorial ? 'Import personal backup' : 'IMPORT_PERSONAL_BACKUP') : (isEditorial ? 'Import workspace backup' : 'IMPORT_WORKSPACE_BACKUP'))}
             </h2>
             <p className={`mt-1 text-[11px] ${colors.muted}`}>
-              {mode === 'export' ? 'Create a password-protected copy. Your workspace will not be changed.' : 'Unlock a .dropsync backup and restore its contents.'}
+              {mode === 'export'
+                ? (isPersonal ? 'Create a password-protected copy. Your personal drops will not be changed.' : 'Create a password-protected copy. Your workspace will not be changed.')
+                : 'Unlock a .dropsync backup and restore its contents.'}
             </p>
           </div>
           <button type="button" onClick={closeOrCancel} className={`${colors.muted} hover:opacity-70 transition-opacity`} aria-label="Close">
@@ -241,7 +261,9 @@ export function WorkspaceArchiveModal({
           {mode === 'export' ? (
             <>
               <div className={`border ${colors.border} ${colors.rounded} p-3 text-xs leading-relaxed ${colors.font} ${colors.muted}`}>
-                This includes all active text/file drops, drawings, custom categories, display names, reminders, locked drops, and password-category drops. Chat, calls, expired drops, invite codes, share links, and encryption keys are excluded. Files at or above 10 MB remain raw binary on restore to match the live app&apos;s existing storage behavior.
+                {isPersonal
+                  ? 'This includes all active personal text/file drops, drawings, custom categories, reminders, locked drops, and password-category drops. Calls, expired drops, share links, and encryption keys are excluded. Files at or above 10 MB remain raw binary on restore to match the live app\'s existing storage behavior.'
+                  : 'This includes all active text/file drops, drawings, custom categories, display names, reminders, locked drops, and password-category drops. Chat, calls, expired drops, invite codes, share links, and encryption keys are excluded. Files at or above 10 MB remain raw binary on restore to match the live app\'s existing storage behavior.'}
               </div>
               <div>
                 <label className={labelClass}>Archive password</label>
@@ -276,32 +298,39 @@ export function WorkspaceArchiveModal({
               {inspection && (
                 <>
                   <div className={`border ${colors.border} ${colors.rounded} p-3 space-y-1 text-xs ${colors.font} ${colors.text}`}>
-                    <p><strong>{inspection.manifest.sourceWorkspace.name}</strong></p>
+                    <p><strong>{isPersonal
+                      ? (('sourceUser' in inspection.manifest && inspection.manifest.sourceUser?.displayName) ? `Personal drops from ${inspection.manifest.sourceUser.displayName}` : 'Personal drops')
+                      : ('sourceWorkspace' in inspection.manifest ? inspection.manifest.sourceWorkspace.name : 'Workspace backup')}</strong></p>
                     <p className={colors.muted}>{inspection.dropCount} drops · {inspection.fileCount} files · {inspection.totalPayloadBytes.toLocaleString()} payload bytes</p>
                     {inspection.passwordDropCount > 0 && <p className="text-amber-600">Includes {inspection.passwordDropCount} password-category drop{inspection.passwordDropCount === 1 ? '' : 's'}.</p>}
                     {inspection.lockedDropCount > 0 && <p className={colors.muted}>Includes {inspection.lockedDropCount} locked drop{inspection.lockedDropCount === 1 ? '' : 's'}. Imported locks remain flags, but edit authority belongs to the importer.</p>}
                     {inspection.foreverDropCount > 0 && <p className="text-amber-600">Includes {inspection.foreverDropCount} forever drop{inspection.foreverDropCount === 1 ? '' : 's'}; standard-tier importers will downgrade them to 24 hours.</p>}
+                    {isPersonal && 'expiredDropCount' in inspection && inspection.expiredDropCount > 0 && <p className={colors.muted}>{inspection.expiredDropCount} expired drop{inspection.expiredDropCount === 1 ? '' : 's'} will be skipped.</p>}
                   </div>
-                  <div>
-                    <label className={labelClass}>Destination</label>
-                    <div className="mt-1 flex gap-2">
-                      <button type="button" onClick={() => setDestinationMode('new')} className={`${buttonClass} flex-1 border ${destinationMode === 'new' ? colors.primary : colors.secondary}`}>New workspace</button>
-                      <button type="button" onClick={() => setDestinationMode('merge')} className={`${buttonClass} flex-1 border ${destinationMode === 'merge' ? colors.primary : colors.secondary}`}>Merge</button>
-                    </div>
-                  </div>
-                  {destinationMode === 'new' ? (
-                    <div>
-                      <label className={labelClass}>New workspace name</label>
-                      <input value={workspaceName} onChange={(event) => setWorkspaceName(event.target.value)} className={`mt-1 w-full border px-3 py-2 text-sm outline-none ${colors.input} ${colors.font} ${colors.rounded}`} maxLength={120} />
-                    </div>
-                  ) : (
-                    <div>
-                      <label className={labelClass}>Merge into</label>
-                      <select value={targetWorkspaceId} onChange={(event) => setTargetWorkspaceId(event.target.value)} className={`mt-1 w-full border px-3 py-2 text-sm outline-none ${colors.input} ${colors.font} ${colors.rounded}`}>
-                        {workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}
-                      </select>
-                      <p className={`mt-1 text-[11px] ${colors.font} ${colors.muted}`}>Existing drops and members are unchanged. Imported drops receive fresh IDs.</p>
-                    </div>
+                  {!isPersonal && (
+                    <>
+                      <div>
+                        <label className={labelClass}>Destination</label>
+                        <div className="mt-1 flex gap-2">
+                          <button type="button" onClick={() => setDestinationMode('new')} className={`${buttonClass} flex-1 border ${destinationMode === 'new' ? colors.primary : colors.secondary}`}>New workspace</button>
+                          <button type="button" onClick={() => setDestinationMode('merge')} className={`${buttonClass} flex-1 border ${destinationMode === 'merge' ? colors.primary : colors.secondary}`}>Merge</button>
+                        </div>
+                      </div>
+                      {destinationMode === 'new' ? (
+                        <div>
+                          <label className={labelClass}>New workspace name</label>
+                          <input value={workspaceName} onChange={(event) => setWorkspaceName(event.target.value)} className={`mt-1 w-full border px-3 py-2 text-sm outline-none ${colors.input} ${colors.font} ${colors.rounded}`} maxLength={120} />
+                        </div>
+                      ) : (
+                        <div>
+                          <label className={labelClass}>Merge into</label>
+                          <select value={targetWorkspaceId} onChange={(event) => setTargetWorkspaceId(event.target.value)} className={`mt-1 w-full border px-3 py-2 text-sm outline-none ${colors.input} ${colors.font} ${colors.rounded}`}>
+                            {workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}
+                          </select>
+                          <p className={`mt-1 text-[11px] ${colors.font} ${colors.muted}`}>Existing drops and members are unchanged. Imported drops receive fresh IDs.</p>
+                        </div>
+                      )}
+                    </>
                   )}
                 </>
               )}
@@ -330,11 +359,11 @@ export function WorkspaceArchiveModal({
           </button>
           {mode === 'export' ? (
             <button type="button" onClick={handleExport} disabled={busy || !!completeMessage} className={`${buttonClass} ${colors.primary}`}>
-              {busy ? 'Exporting…' : 'Export workspace'}
+              {busy ? 'Exporting…' : (isPersonal ? 'Export personal drops' : 'Export workspace')}
             </button>
           ) : inspection ? (
             <button type="button" onClick={handleImport} disabled={busy || !!completeMessage} className={`${buttonClass} ${colors.primary}`}>
-              {busy ? 'Importing…' : 'Import backup'}
+              {busy ? 'Importing…' : (isPersonal ? 'Import personal drops' : 'Import backup')}
             </button>
           ) : null}
         </div>
