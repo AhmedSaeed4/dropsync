@@ -133,6 +133,31 @@ const PROSE: Record<string, SectionProse> = {
           can still read locked drops; the lock protects editing and deletion, not visibility.
         </p>
       ),
+      'personal-backup': (
+        <div className="space-y-3">
+          <p className={BODY}>
+            You can save your personal drops to a password-protected{' '}
+            <code>.dropsync</code> file and restore them later — on this device or any
+            other. Export from the Export button in the drop area, and import from the
+            gear next to Personal in the workspace switcher.
+          </p>
+          <p className={BODY}>
+            A backup includes your active text drops, files, drawings, categories, a
+            display-name snapshot, reminders, locked drops, and password-category drops.
+            It does not include expired drops, call drops, chat, share links, or encryption
+            keys. Choose a password when you export — the file is encrypted with it, and
+            DropSync cannot recover it if you forget it. Keep the file somewhere safe.
+          </p>
+          <p className={BODY}>
+            On import, restored drops receive new IDs and keep their remaining expiry time
+            (up to 24 hours). Importing the same backup again is allowed, but you are
+            warned first that it will create duplicates. Files 10 MB and larger ride in the
+            backup without the extra per-file encryption layer, matching how they are stored
+            in the live app (protected over HTTPS in transit). Workspace backups work the
+            same way — see Workspace backup under Workspaces &amp; members.
+          </p>
+        </div>
+      ),
     },
   },
 
@@ -216,11 +241,14 @@ const PROSE: Record<string, SectionProse> = {
           files, drawings, categories, display-name snapshots, reminders, locked drops, and
           password-category drops. It excludes chat, calls, expired drops, share links, invite
           codes, and encryption keys. The original workspace is never changed by export. Keep the
-          password safe: DropSync cannot recover it. Restored drops receive new IDs and imported
-          locked drops are owned by the importer, so their edit authority follows the importer.
+          password safe: DropSync cannot recover it. Restored drops receive new IDs and keep their
+          remaining expiry time (capped at 24 hours); importing the same backup again is allowed,
+          but you are warned first that it will create duplicates. Imported locked drops are owned
+          by the importer, so their edit authority follows the importer.
           Large files remain raw binary, matching the live app&apos;s existing 10 MB+ storage behavior.
           The owner-only button is a convenience gate, not a cryptographic boundary: workspace
-          members already have access to the shared workspace key and current drops.
+          members already have access to the shared workspace key and current drops. Your personal
+          drops can be backed up the same way — see Personal backup under Drops.
         </p>
       ),
       'leave-or-be-removed': (

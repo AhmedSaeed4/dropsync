@@ -14,11 +14,23 @@ A secure, temporary file-sharing and collaboration app. Drop files, text, drawin
 
 **AI assistant** — Chat with an AI agent over your drops (search, create, delete, stats, previews). Password-category drops are kept out of its reach.
 
+**Backup & restore** — Password-protected `.dropsync` backups of your personal or workspace drops (files, drawings, categories, reminders, locked & password-category drops), restorable on any device with new IDs and preserved expiry
+
 **Sharing** — Public view-only share links with auto-expiry, video player, and download
 
 **Everyday UX** — Two layouts (Classic + Editorial) · Three themes (Light/Dark/Minimal) · 30-second delete undo · Bulk select/move/copy/delete · Saved paths scratchpad · FCM push notifications · Email verification
 
 ---
+
+### Backup & Restore
+
+- **Personal** — Export your personal drops to a password-protected `.dropsync` file from the drop-area toolbar; import from the gear next to Personal in the workspace switcher
+- **Workspace** — Owners can export a workspace backup from the drop-list toolbar and import it from Workspace options (into a new or existing workspace). The owner-only button is a convenience gate: members already hold the shared workspace key
+- **What's inside** — Active text drops, files, drawings, categories, display-name snapshots, reminders, locked drops, and password-category drops
+- **What's not** — Expired drops, call drops, chat, share links, invite codes, and encryption keys
+- **Password** — The archive is encrypted with a password you choose (8+ characters); DropSync cannot recover it if you forget it
+- **On restore** — Drops get new IDs, keep their remaining expiry (capped at 24h), and re-importing is allowed with a duplicate warning
+- **Large files** — 10 MB+ files ride in the backup without the extra per-file encryption layer, matching the live app (HTTPS-protected in transit)
 
 ### Drops
 
@@ -115,6 +127,7 @@ A secure, temporary file-sharing and collaboration app. Drop files, text, drawin
 | Call participants | 4 |
 | Call time | 30 min/day/person (trusted exempt), UTC |
 | Voice transcription | 20 clips / rolling 24h (trusted unlimited), 2 MB per clip |
+| Archive password | 8+ characters, user-chosen; cannot be recovered by DropSync |
 | Group chat history | latest 200 messages |
 | Message editing | own messages, ≤ 24h old, ≤ 10 edits |
 
