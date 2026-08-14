@@ -18,7 +18,7 @@ export type Section = {
   items?: { label?: string; text: string }[];
 };
 
-export const LAST_UPDATED = "July 18, 2026";
+export const LAST_UPDATED = "August 14, 2026";
 
 export const sections: Section[] = [
   {
@@ -84,6 +84,7 @@ export const sections: Section[] = [
       "Files larger than 10 MB are stored without content encryption (they are still transmitted over HTTPS). This is a deliberate limit so that large uploads work reliably.",
       "Important — this is not “end-to-end” or “zero-knowledge” encryption. To enable features like the AI assistant and access to your drops from any device you sign in on, the encryption keys are generated in your browser and also stored with your account. Because we hold those keys, we are able to decrypt your content when needed to operate the service, run the AI assistant, and provide support. Do not store anything in DropSync expecting that no one but you could ever read it.",
       "Encryption keys are generated locally with the Web Crypto API and held in IndexedDB on your device, with a backup stored with your account so you can reach your data from other devices.",
+      "If you export a backup, the .dropsync file is downloaded to your device and encrypted with a password only you know. DropSync does not store your backup files on its servers and has no access to their passwords.",
       "Drops in the “password” category are excluded from the AI assistant: it cannot read, search, list, or change them. It may report a count of how many exist, but never their contents. No security measure is perfect; see “Your rights” for how to delete your data.",
     ],
   },

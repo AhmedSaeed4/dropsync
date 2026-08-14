@@ -53,6 +53,7 @@ export const docsSections: DocsSection[] = [
       { anchor: 'expiry', title: 'Expiry & auto-destroy' },
       { anchor: 'forever-storage', title: '“Forever” storage' },
       { anchor: 'locked-drops', title: 'Locked drops' },
+      { anchor: 'personal-backup', title: 'Personal backup' },
     ],
   },
   {

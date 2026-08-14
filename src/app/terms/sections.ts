@@ -18,7 +18,7 @@ export type Section = {
   items?: { label?: string; text: string }[];
 };
 
-export const LAST_UPDATED = "July 17, 2026";
+export const LAST_UPDATED = "August 14, 2026";
 
 export const sections: Section[] = [
   {
@@ -87,6 +87,7 @@ export const sections: Section[] = [
       { label: "Forever drops.", text: "Drops set to “forever” are kept until you (or the workspace owner) delete them." },
       { label: "Share links are bearer secrets.", text: "Anyone who has a share link can open that shared content. You are responsible for who you give links to and for what you choose to share." },
       { label: "No guaranteed retention.", text: "We do not guarantee that the service will be uninterrupted or error-free, and we are not liable for the loss of content beyond the controls we provide. Keep your own copies of anything important." },
+      { label: "Backups.", text: "If you export a .dropsync backup, the file is encrypted with a password you choose, and that password is known only to you — DropSync cannot recover or reset it. You are responsible for keeping the file and the password safe. We are not responsible for lost backups, or for archives that are corrupted, damaged, or can no longer be opened." },
     ],
   },
   {
