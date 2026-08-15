@@ -1,6 +1,5 @@
 import {
   collection,
-  addDoc,
   query,
   orderBy,
   limit,
@@ -109,21 +108,26 @@ export async function saveMessage(
   convId: string,
   role: 'user' | 'assistant',
   content: string,
+  onId?: (id: string) => void,
 ): Promise<string | null> {
   try {
-    const docRef = await addDoc(
-      collection(db, CHATS_COLLECTION, userId, 'conversations', convId, 'messages'),
-      {
-        role,
-        content,
-        createdAt: serverTimestamp(),
-      },
-    );
+    // Pre-create the doc ref so the id is knowable BEFORE the write: onId fires
+    // synchronously, ahead of any await — callers use it to set UI handoff state (which
+    // saved message the streaming bubble becomes) before Firestore's latency-compensated
+    // onSnapshot echo renders the saved twin. With addDoc, the echo could beat the
+    // awaited id and briefly paint a duplicate.
+    const ref = doc(collection(db, CHATS_COLLECTION, userId, 'conversations', convId, 'messages'));
+    onId?.(ref.id);
+    await setDoc(ref, {
+      role,
+      content,
+      createdAt: serverTimestamp(),
+    });
     // Update conversation's updatedAt
     await updateDoc(doc(db, CHATS_COLLECTION, userId, 'conversations', convId), {
       updatedAt: serverTimestamp(),
     });
-    return docRef.id;
+    return ref.id;
   } catch (error) {
     console.error('Error saving chat message:', error);
     return null;

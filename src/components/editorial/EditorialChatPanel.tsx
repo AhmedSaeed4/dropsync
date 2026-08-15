@@ -20,6 +20,8 @@ import {
   ChatMessage,
 } from '@/lib/chat';
 import { subscribeToGroupMessages, sendGroupMessage, editGroupMessage, deleteGroupMessage, clearGroupChat, getSeenBy } from '@/lib/groupChat';
+import { streamAgentChat, AgentRateLimitError, AgentTransientError } from '@/lib/agentActivity';
+import { useSmoothStream } from '@/hooks/useSmoothStream';
 import { useInPanelMarkRead } from '@/hooks/useInPanelMarkRead';
 import { useMentionEditor } from '@/hooks/useMentionEditor';
 import { useVoiceTranscribe } from '@/hooks/useVoiceTranscribe';
@@ -57,6 +59,20 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  // Live "what the agent is doing" label from /chat/stream activity events, shown (with the
+  // shimmer treatment) beside the loader while loading. null = nothing to show yet.
+  const [activity, setActivity] = useState<string | null>(null);
+  // Streaming reply handoff: the id of the assistant message we just saved. The streaming
+  // bubble stays mounted until THIS message renders from Firestore (derived in render, so
+  // the bubble-hide and message-show land in the same commit — no gap, no duplicate).
+  const [savedMsgId, setSavedMsgId] = useState<string | null>(null);
+  // Smooth typing-like reveal of the streamed answer text.
+  const smooth = useSmoothStream();
+  // Ids of messages that arrived via a streaming handoff — a ref Set, deliberately never
+  // cleared: the mounted row's entrance-suppression class must never flip (a class flip
+  // re-applies the CSS animation and would "replay" the settled message). Fresh panel
+  // mounts re-animate history normally.
+  const handoffIdsRef = useRef<Set<string>>(new Set());
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [showSidebar, setShowSidebar] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -140,15 +156,54 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   const aiTextareaRef = useRef<HTMLTextAreaElement>(null);
   const unsubRef = useRef<(() => void) | null>(null);
   const aiReplyEpochRef = useRef(0);
+  // Active assistant request's abort controller — aborted by the Stop button, panel close,
+  // and unmount. NOT by conversation switch: a late reply still lands in its own
+  // conversation via saveMessage(convId), matching pre-streaming behavior.
+  const aiAbortRef = useRef<AbortController | null>(null);
   // Scroll-to-message + flash-highlight for quote-reply jumps (shared with ChatPanel).
   const { setMessageRef, jumpToMessage, flashId } = useMessageScroll(scrollRef);
   const isOwner = !!userId && ownerId === userId;
   const activeConv = conversations.find(c => c.id === activeConvId) || null;
 
+  // Streaming-reply visibility (derived in render so bubble-hide + message-show share a commit):
+  // the loader/label row shows while working with no text yet; once text streams, it collapses
+  // (CSS fade) and the streaming bubble takes over. The saved twin (hidden at render below
+  // while the reveal is still running) swaps in only when the reveal is COMPLETE — one
+  // atomic commit, identical text, identical slot: no duplicate, no mid-type removal.
+  const savedMsgVisible = !!savedMsgId && messages.some((m) => m.id === savedMsgId);
+  const handoffComplete = savedMsgVisible && smooth.isDone;
+  const showLoaderRow = loading && !smooth.hasText;
+  const showStreamBubble = smooth.hasText && !handoffComplete;
+
+  // Once the twin has taken over, clear the stream state — drops the collapsed loader
+  // wrapper (and its space-y gap) while the now-real message stays exactly where it is.
+  useEffect(() => {
+    if (handoffComplete) smooth.reset();
+    // smooth.reset is stable
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handoffComplete]);
+
+  // Safety net: ONLY if the saved twin never renders (offline hiccup). Once it has rendered
+  // this never fires — savedMsgId must never flip back on success, or state keyed to it
+  // flickers on the settled message.
+  useEffect(() => {
+    if (!savedMsgId) return;
+    if (messages.some((m) => m.id === savedMsgId)) return;
+    const timer = setTimeout(() => {
+      setSavedMsgId(null);
+      smooth.reset();
+    }, 5000);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedMsgId, messages]);
+
   // Invalidate AI preview side effects before the panel closes, including any close animation or
-  // parent update that happens before React unmounts this component.
+  // parent update that happens before React unmounts this component. Aborting also cancels
+  // the backend run (Stop-button semantics).
   useEffect(() => () => {
     aiReplyEpochRef.current += 1;
+    aiAbortRef.current?.abort();
+    aiAbortRef.current = null;
   }, []);
 
   // Delayed animations for staggered entrance
@@ -198,10 +253,14 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
 
   // Auto-scroll on new messages
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    const el = scrollRef.current;
+    if (!el) return;
+    // Follow the stream only when already pinned near the bottom — a reader scrolled up
+    // during a long reveal isn't yanked down on every reveal tick.
+    if (el.scrollHeight - el.scrollTop - el.clientHeight <= 120) {
+      el.scrollTop = el.scrollHeight;
     }
-  }, [messages, loading]);
+  }, [messages, loading, smooth.revealed]);
 
   // Scroll to bottom when chat panel mounts (user opens chat)
   useEffect(() => {
@@ -399,6 +458,8 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
     setActiveConvId(null);
     setMessages([]);
     setShowSidebar(false);
+    setSavedMsgId(null);
+    smooth.reset();
   };
 
   const handleSwitchConv = (convId: string) => {
@@ -412,6 +473,8 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
     setMessages([]);
     setMessagesLoading(true);
     setActiveConvId(convId);
+    setSavedMsgId(null);
+    smooth.reset();
   };
 
   // Close sidebar when messages finish loading after switching
@@ -441,8 +504,13 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
     if (!text || loading || !userId) return;
 
     const requestEpoch = ++aiReplyEpochRef.current;
+    const controller = new AbortController();
+    aiAbortRef.current = controller;
     setInput('');
     setLoading(true);
+    setActivity(null);
+    setSavedMsgId(null);
+    smooth.reset();
 
     let convId = activeConvId;
     if (!convId) {
@@ -460,49 +528,92 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
 
     try {
       const idToken = await currentUser.getIdToken();
-      const res = await fetch(`${AGENT_URL}/chat`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${idToken}`,
+      // Streaming request: activity events drive the shimmer label beside the loader; the
+      // terminal event carries the same {response, previewDropId, previewWorkspaceId} the
+      // old single JSON body did (with a legacy /chat fallback for deploy-order gaps).
+      const data = await streamAgentChat({
+        url: AGENT_URL,
+        token: idToken,
+        message: text,
+        history: messages.map((m) => ({ role: m.role, content: m.content })),
+        signal: controller.signal,
+        onActivity: (label) => {
+          // Epoch + abort gate so a late event never paints into a different conversation.
+          if (aiReplyEpochRef.current === requestEpoch && !controller.signal.aborted) {
+            setActivity(label);
+          }
         },
-        body: JSON.stringify({
-          message: text,
-          history: messages.map((m) => ({ role: m.role, content: m.content })),
-        }),
+        onDelta: (chunk) => {
+          if (aiReplyEpochRef.current === requestEpoch && !controller.signal.aborted) {
+            smooth.append(chunk);
+          }
+        },
+        onDeltaReset: () => {
+          if (aiReplyEpochRef.current === requestEpoch) smooth.reset();
+        },
       });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: 'Request failed' }));
-        if (res.status === 429) {
-          // Rate-limit (per-user quota): show a transient toast, not a saved error turn.
-          // Returning here skips the catch's saveMessage(...'Error: ...'), so the limit
-          // string isn't persisted or replayed to the model as history on later sends.
-          showSystemNotice(
-            err.detail || "You've reached the agent message limit. Please try again shortly.",
-            8000,
-          );
-          return;
-        }
-        throw new Error(err.detail || `Error ${res.status}`);
-      }
 
       // Successful send: clear any lingering rate-limit notice (in case the reset countdown hasn't fired yet).
       if (noticeTimer.current) clearTimeout(noticeTimer.current);
       setNoticeLeaving(false);
       setSystemNotice(null);
-      const data = await res.json();
-      let response = data.response;
 
       if (data.previewDropId && onPreviewDrop && aiReplyEpochRef.current === requestEpoch) {
-        onPreviewDrop(data.previewDropId, data.previewWorkspaceId);
+        onPreviewDrop(data.previewDropId, data.previewWorkspaceId ?? null);
       }
 
-      await saveMessage(userId, convId, 'assistant', response);
+      // The final answer is authoritative — top up the reveal buffer, save, then hold the
+      // streaming bubble until the saved message itself renders from Firestore. onId fires
+      // BEFORE the write lands, so the handoff state is set before Firestore's echo can
+      // render the saved twin — the duplicate race is dead.
+      smooth.setFull(data.response);
+      const savedId = await saveMessage(userId, convId, 'assistant', data.response, (id) => {
+        handoffIdsRef.current.add(id);
+        if (aiReplyEpochRef.current === requestEpoch) setSavedMsgId(id);
+      });
+      if (aiReplyEpochRef.current === requestEpoch) {
+        if (!savedId) {
+          setSavedMsgId(null);
+          setTimeout(() => smooth.reset(), 1500); // save failed — don't yank the text instantly
+        }
+      } else {
+        smooth.reset(); // user switched away — the reply stays saved in its own conversation
+      }
     } catch (e: any) {
-      await saveMessage(userId, convId, 'assistant', `Error: ${e.message || 'Something went wrong'}`);
+      if (controller.signal.aborted || e?.name === 'AbortError') {
+        // Canceled (Stop button / panel close / unmount): silent — no error turn saved.
+        // The user turn stays; the assistant just never answers it.
+        smooth.reset();
+        setSavedMsgId(null);
+        return;
+      }
+      if (e instanceof AgentRateLimitError || e instanceof AgentTransientError) {
+        // Rate limit / AI-service-busy — whether DropSync's own quota (pre-stream 429) or
+        // the Gemini provider side (mid-stream): a transient toast, not a saved error
+        // turn, so the message isn't persisted or replayed to the model as history later.
+        showSystemNotice(e.message, 8000);
+        smooth.reset();
+        setSavedMsgId(null);
+        return;
+      }
+      const errorText = `Error: ${e.message || 'Something went wrong'}`;
+      smooth.setFull(errorText);
+      const savedId = await saveMessage(userId, convId, 'assistant', errorText, (id) => {
+        handoffIdsRef.current.add(id);
+        if (aiReplyEpochRef.current === requestEpoch) setSavedMsgId(id);
+      });
+      if (aiReplyEpochRef.current === requestEpoch) {
+        if (!savedId) {
+          setSavedMsgId(null);
+          setTimeout(() => smooth.reset(), 1500);
+        }
+      } else {
+        smooth.reset();
+      }
     } finally {
+      if (aiAbortRef.current === controller) aiAbortRef.current = null;
       setLoading(false);
+      setActivity(null);
       requestAnimationFrame(() => aiTextareaRef.current?.focus());
     }
   };
@@ -811,6 +922,8 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
           <button
             onClick={() => {
               aiReplyEpochRef.current += 1;
+              aiAbortRef.current?.abort();
+              aiAbortRef.current = null;
               onClose();
             }}
             className={`w-7 h-7 flex items-center justify-center rounded-md ${tc.text} opacity-50 hover:opacity-100 hover:bg-black/5 transition-all`}
@@ -900,11 +1013,20 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
           )}
 
           {/* Messages with fadeInUp animation */}
-          {!showSidebar && messages.map((msg, idx) => (
+          {!showSidebar && messages.map((msg, idx) => {
+            // While the streaming bubble still owns this text (reveal unfinished), skip the
+            // saved twin's row — state keeps it (it IS the history), render hides it, so the
+            // two never paint at once.
+            if (msg.id === savedMsgId && smooth.hasText && !smooth.isDone) return null;
+            // Handoff twins mount WITHOUT the entrance animation — the streaming bubble
+            // just showed this exact text in this exact spot. Keyed off a ref Set (which
+            // never flips) so a mounted row's class can never change and replay the anim.
+            const isHandoffTwin = handoffIdsRef.current.has(msg.id);
+            return (
             <div
               key={msg.id}
-              className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-fade-in-up`}
-              style={{ animationDelay: `${Math.min(idx, 10) * 30}ms` }}
+              className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} ${isHandoffTwin ? '' : 'animate-fade-in-up'} ${msg.id === savedMsgId ? 'settle-fade' : ''}`}
+              style={isHandoffTwin ? undefined : { animationDelay: `${Math.min(idx, 10) * 30}ms` }}
             >
               <div
                 className={`relative max-w-[85%] px-3.5 py-2.5 text-sm leading-relaxed overflow-x-auto group ${
@@ -946,24 +1068,58 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
                 )}
               </div>
             </div>
-          ))}
+            );
+          })}
 
-          {/* Loading indicator */}
-          {loading && (
-            <div className="flex justify-start px-4 py-3">
-              <div className="w-3.5 h-3.5 rounded-full bg-[#1a1a1a]" style={{
-                animation: 'l1-chat 2s infinite cubic-bezier(0.3,1,0,1)',
-                ['--bg-mid' as string]: theme === 'dark' ? '#ffffff' : '#555555',
-                ['--bg-end' as string]: theme === 'dark' ? '#cccccc' : '#333333',
-              }} />
-              <style>{`
-                @keyframes l1-chat {
-                  0%   { border-radius: 50%; clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); }
-                  33%  { border-radius: 0; clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); background: var(--bg-mid); }
-                  66%  { border-radius: 0; clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%); background: var(--bg-end); }
-                  100% { border-radius: 50%; clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); }
-                }
-              `}</style>
+          {/* Loader + activity label — fades and collapses out when streamed text starts or
+              the request ends (height on the grid wrapper, opacity on the inner element). */}
+          {(showLoaderRow || smooth.hasText) && (
+            <div className={`grid transition-[grid-template-rows] duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] ${showLoaderRow ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
+              <div className={`min-h-0 overflow-hidden transition-opacity duration-300 ${showLoaderRow ? 'opacity-100' : 'opacity-0'}`}>
+                <div className="flex justify-start px-4 py-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-3.5 h-3.5 rounded-full bg-[#1a1a1a] shrink-0" style={{
+                      animation: 'l1-chat 2s infinite cubic-bezier(0.3,1,0,1)',
+                      ['--bg-mid' as string]: theme === 'dark' ? '#ffffff' : '#555555',
+                      ['--bg-end' as string]: theme === 'dark' ? '#cccccc' : '#333333',
+                    }} />
+                    {activity && (
+                      <span
+                        className="shimmer-text text-[13px] font-medium"
+                        style={{
+                          ['--shimmer-ink' as string]: theme === 'dark' ? '#ffffff' : '#1A1A1A',
+                          ['--shimmer-ink-light' as string]: theme === 'dark' ? '#8a8a8a' : '#9a9a9a',
+                        }}
+                      >
+                        {activity}
+                      </span>
+                    )}
+                  </div>
+                  <style>{`
+                    @keyframes l1-chat {
+                      0%   { border-radius: 50%; clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); }
+                      33%  { border-radius: 0; clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); background: var(--bg-mid); }
+                      66%  { border-radius: 0; clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%); background: var(--bg-end); }
+                      100% { border-radius: 50%; clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); }
+                    }
+                  `}</style>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Streaming assistant reply — identical wrapper classes to a saved assistant
+              message, so the Firestore handoff (bubble out, saved message in) is seamless. */}
+          {showStreamBubble && (
+            <div className="flex justify-start animate-fade-in-up">
+              <div
+                className={`relative max-w-[85%] px-3.5 py-2.5 text-sm leading-relaxed overflow-x-auto opacity-80 bg-[#f5f5f5] ${theme === 'dark' ? 'bg-white/10 text-white' : 'text-[#1a1a1a]'} rounded-lg border ${tc.border}`}
+                style={{ borderBottomLeftRadius: '3px' }}
+              >
+                <div className={`break-words [&_p]:mb-1 [&_p:last-child]:mb-0 [&_pre]:overflow-x-auto [&_pre]:max-w-full [&_code]:break-all ${tc.fontClass}`}>
+                  <ReactMarkdown remarkPlugins={[remarkBreaks]}>{smooth.revealed}</ReactMarkdown>
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -1397,13 +1553,22 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
           </button>
           <button
             onPointerDown={(e) => e.preventDefault()}
-            onClick={chatMode === 'group' ? handleGroupSend : handleSend}
-            disabled={chatMode === 'group' ? (groupSending || !groupInput.trim()) : (loading || !input.trim())}
+            // AI mode while loading: the send button acts as the Stop control (standard chat
+            // pattern — square icon, clickable even with an empty input). Group mode unchanged.
+            onClick={chatMode === 'group' ? handleGroupSend : loading ? () => { aiAbortRef.current?.abort(); } : handleSend}
+            disabled={chatMode === 'group' ? (groupSending || !groupInput.trim()) : (!loading && !input.trim())}
+            aria-label={chatMode === 'ai' && loading ? 'Stop' : 'Send message'}
             className="w-10 h-10 shrink-0 flex items-center justify-center bg-[#1a1a1a] text-white rounded-lg hover:bg-[#333] disabled:opacity-30 transition-colors"
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
-            </svg>
+            {chatMode === 'ai' && loading ? (
+              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="6" y="6" width="12" height="12" rx="2" />
+              </svg>
+            ) : (
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
+              </svg>
+            )}
           </button>
         </div>
       </div>
