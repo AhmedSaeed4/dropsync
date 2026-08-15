@@ -423,6 +423,68 @@ html {
   animation: shimmer 1.5s ease-in-out infinite;
 }
 
+/* AI-assistant activity label (chat panels) — replicates the reference LoadingState text
+   effect exactly: transparent letters, a 200%-wide gradient with the DIM ink as the base
+   and a FULL-ink peak band sweeping through the middle (35% → 50% → 65% stops; edge stops
+   clamp like the reference), 1.4s linear sweep. The two ink tones are set inline per theme
+   by the chat panels through --shimmer-ink (peak / full ink) and --shimmer-ink-light (dim
+   base) — same pattern as the loader blob's --bg-mid / --bg-end custom properties. */
+@keyframes shimmer-text {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.shimmer-text {
+  background-image: linear-gradient(
+    90deg,
+    var(--shimmer-ink-light) 35%,
+    var(--shimmer-ink) 50%,
+    var(--shimmer-ink-light) 65%
+  );
+  background-size: 200% 100%;
+  background-repeat: repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer-text 2.2s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shimmer-text {
+    animation: none;
+    background-image: none;
+    color: var(--shimmer-ink);
+  }
+}
+
+/* Streaming-reply settle: while the answer streams, its bubble sits slightly translucent
+   ("in progress"); when the reveal completes, the saved message mounts at the same
+   translucency and gently brightens into place — the fade-in of the finished reply.
+   Mount-time one-shot: the class is present only in the handoff commit and is never
+   re-applied to a mounted row (removal after the animation ends is a no-op). */
+@keyframes settle-in {
+  from {
+    opacity: 0.75;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.settle-fade {
+  animation: settle-in 600ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settle-fade {
+    animation: none;
+  }
+}
+
 @keyframes editorial-fade-in-up {
   from {
     opacity: 0;
