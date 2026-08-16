@@ -132,6 +132,19 @@ const MIN_LABEL_MS = 400;
  * falling back to today's silent stop — bounded so a slow network can never hang it. */
 const CANCEL_SUMMARY_MAX_WAIT_MS = 2500;
 
+/** Connect-phase labels, split into two PAIRS: a send uses exactly one pair
+ * (first phrase instantly, ONE swap to the second if the connect is slow), and
+ * which pair alternates per send — 1st message → pair 1, 2nd → pair 2, 3rd →
+ * pair 1, … Variety lives between messages; calm lives within one. */
+const CONNECT_LABEL_PAIRS = [
+  ['Hang tight…', 'Just a moment…'],
+  ['Getting things ready…', 'Almost there…'],
+];
+/** Which pair the NEXT send uses (module-level so the alternation is stable
+ * across panel remounts and layout switches within a browser session). */
+let connectPairToggle = 0;
+const CONNECT_ROTATE_MS = 1500;
+
 /** Sleep that ABORTS: the abort event rejects the promise (a mere early resolve
  * would let the caller continue into another attach attempt). */
 function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -174,8 +187,20 @@ export async function streamAgentChat({
   let lastLabelAt = 0;
   let pendingTimer: ReturnType<typeof setTimeout> | null = null;
   let finished = false;
+  // Connect-label state (started just before the START POST below). Any label
+  // OUTSIDE the current pair reaching applyLabel — the first real backend
+  // activity or 'Reconnecting…' — cancels the pending swap, so a connect label
+  // can never overwrite a live status.
+  let connectTimer: ReturnType<typeof setTimeout> | null = null;
+  let connectLabelSet: Set<string> | null = null;
+  const stopConnectRotation = () => {
+    if (connectTimer) clearTimeout(connectTimer);
+    connectTimer = null;
+    connectLabelSet = null;
+  };
   const applyLabel = (label: string) => {
     if (finished) return;
+    if (connectLabelSet && !connectLabelSet.has(label)) stopConnectRotation();
     if (pendingTimer) clearTimeout(pendingTimer);
     const wait = lastLabelAt === 0 ? 0 : Math.max(0, lastLabelAt + MIN_LABEL_MS - performance.now());
     if (wait === 0) {
@@ -230,6 +255,22 @@ export async function streamAgentChat({
     return res.summary;
   };
 
+  // Fill the dead window between SEND and the first backend activity event (the
+  // START round-trip plus the backend opening its tool connection): without this
+  // the loader row shows the dot alone for the first few seconds. This send's
+  // PAIR alternates per send (see CONNECT_LABEL_PAIRS); its first phrase lands
+  // instantly and ONE swap to the second fires if the connect is still opening
+  // after ~1.5s — never more than one swap per message. The first real label
+  // through applyLabel cancels the swap; the finally below clears the timer.
+  const pair = CONNECT_LABEL_PAIRS[connectPairToggle % CONNECT_LABEL_PAIRS.length];
+  connectPairToggle += 1;
+  connectLabelSet = new Set(pair);
+  applyLabel(pair[0]);
+  connectTimer = setTimeout(() => {
+    connectTimer = null;
+    applyLabel(pair[1]);
+  }, CONNECT_ROTATE_MS);
+
   try {
     try {
       // Per-SEND idempotency key: a START lost to a network hiccup retries with
@@ -282,6 +323,7 @@ export async function streamAgentChat({
   } finally {
     finished = true;
     if (pendingTimer) clearTimeout(pendingTimer);
+    stopConnectRotation();
     signal?.removeEventListener('abort', fireCancel);
   }
 }
