@@ -20,7 +20,7 @@ import {
   ChatMessage,
 } from '@/lib/chat';
 import { subscribeToGroupMessages, sendGroupMessage, editGroupMessage, deleteGroupMessage, clearGroupChat, getSeenBy } from '@/lib/groupChat';
-import { streamAgentChat, AgentRateLimitError, AgentTransientError } from '@/lib/agentActivity';
+import { streamAgentChat, AgentStoppedError, AgentRateLimitError, AgentTransientError } from '@/lib/agentActivity';
 import { useSmoothStream } from '@/hooks/useSmoothStream';
 import { useInPanelMarkRead } from '@/hooks/useInPanelMarkRead';
 import { useMentionEditor } from '@/hooks/useMentionEditor';
@@ -557,9 +557,25 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
         smooth.reset(); // user switched away — the reply stays saved in its own conversation
       }
     } catch (e: any) {
+      if (e instanceof AgentStoppedError) {
+        // Stop-memory: the user stopped the assistant and the backend reported what
+        // had already been done. Save it as a NORMAL assistant turn (no prefix, no
+        // error styling) so it renders like any reply and reaches the model as
+        // history on the next send. The smooth-stream bubble is dropped on purpose:
+        // the partial streamed text was thinking-out-loud, and the saved summary
+        // renders via the normal Firestore echo. No onId handoff — this is not the
+        // success path. Saves even after close/unmount (epoch already moved): the
+        // write lands in the right conversation; state updates above are inert
+        // when the epoch guard fails, matching the existing late-save behavior.
+        smooth.reset();
+        setSavedMsgId(null);
+        await saveMessage(userId, convId, 'assistant', e.summary);
+        return;
+      }
       if (controller.signal.aborted || e?.name === 'AbortError') {
         // Canceled (Stop button / panel close / unmount): silent — no error turn saved.
-        // The user turn stays; the assistant just never answers it.
+        // The user turn stays; the assistant just never answers it. Stop-memory
+        // saves are handled by the AgentStoppedError branch above.
         smooth.reset();
         setSavedMsgId(null);
         return;

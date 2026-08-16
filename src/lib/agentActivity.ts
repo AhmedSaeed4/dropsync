@@ -10,7 +10,9 @@
  *      state, shows "Reconnecting…", and re-attaches (with backoff, inside a ~90s
  *      budget) — replaying from 0 means the finished answer is never lost,
  *   3. POST /chat/runs/{run_id}/cancel genuinely stops a run (Stop button / panel
- *      close / unmount, driven by the AbortSignal — saves model quota).
+ *      close / unmount, driven by the AbortSignal — saves model quota). The cancel
+ *      response may carry a `summary` of what the run had already done; on an abort
+ *      it is surfaced as AgentStoppedError so the panel can save a stop-memory turn.
  * The per-send client_request_id makes START retries idempotent: the same message
  * can never start two runs (no double-create on flaky networks).
  *
@@ -47,6 +49,23 @@ export class AgentTransientError extends Error {
     super(message);
     this.name = 'AgentTransientError';
     this.kind = kind;
+  }
+}
+
+/**
+ * Thrown when the user stopped the assistant (Stop button / panel close / unmount)
+ * AND the backend reported what the run had already accomplished. Its message is
+ * the backend's stop-memory summary — panels save it as a NORMAL assistant turn so
+ * the next request's history tells the model the previous run was stopped and what
+ * had actually been done. Only the client whose cancel genuinely stopped the run
+ * ever receives a summary, so only that client saves (single writer).
+ */
+export class AgentStoppedError extends Error {
+  readonly summary: string;
+  constructor(summary: string) {
+    super(summary);
+    this.name = 'AgentStoppedError';
+    this.summary = summary;
   }
 }
 
@@ -109,6 +128,10 @@ export interface StreamAgentChatOptions {
 /** Min time a label stays visible before the next swap (anti-flash for quick tool runs). */
 const MIN_LABEL_MS = 400;
 
+/** How long an abort waits for the cancel response's stop-memory summary before
+ * falling back to today's silent stop — bounded so a slow network can never hang it. */
+const CANCEL_SUMMARY_MAX_WAIT_MS = 2500;
+
 /** Sleep that ABORTS: the abort event rejects the promise (a mere early resolve
  * would let the caller continue into another attach attempt). */
 function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -170,17 +193,42 @@ export async function streamAgentChat({
   // Best-effort GENUINE cancel on Stop / panel close / unmount: kill the backend
   // run so no model quota burns after the user walked away. keepalive lets the
   // fetch outlive the panel; NO signal is passed — the signal is already
-  // aborted, which would cancel this fetch before it leaves.
+  // aborted, which would cancel this fetch before it leaves. The promise is
+  // RETAINED so an abort-path AbortError can be upgraded to AgentStoppedError
+  // with the backend's stop-memory summary before the panels see it.
   let currentRunId: string | null = null;
-  const onAbort = () => {
-    if (!currentRunId) return;
-    fetch(`${url}/chat/runs/${currentRunId}/cancel`, {
+  let cancelFetch: Promise<{ status?: string; summary?: string | null } | null> | null = null;
+  const fireCancel = () => {
+    if (!currentRunId || cancelFetch) return;
+    cancelFetch = fetch(`${url}/chat/runs/${currentRunId}/cancel`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
       keepalive: true,
-    }).catch(() => {});
+    })
+      .then(async (res) => {
+        if (!res.ok) return null; // run evicted / backend restarted / auth hiccup
+        try {
+          return (await res.json()) as { status?: string; summary?: string | null };
+        } catch {
+          return null;
+        }
+      })
+      .catch(() => null);
   };
-  signal?.addEventListener('abort', onAbort, { once: true });
+  signal?.addEventListener('abort', fireCancel, { once: true });
+
+  // Stop-memory: after an abort we wait briefly for the cancel response; a
+  // missing/failed/summary-less response degrades to exactly today's silent
+  // AbortError. Bounded so a slow network can never hang the stop.
+  const stopSummaryIfAny = async (): Promise<string | null> => {
+    if (!cancelFetch) return null;
+    const timeout = new Promise<null>((resolve) =>
+      setTimeout(() => resolve(null), CANCEL_SUMMARY_MAX_WAIT_MS),
+    );
+    const res = await Promise.race([cancelFetch, timeout]);
+    if (!res || typeof res.summary !== 'string' || !res.summary.trim()) return null;
+    return res.summary;
+  };
 
   try {
     try {
@@ -189,7 +237,31 @@ export async function streamAgentChat({
       const clientRequestId = crypto.randomUUID();
       const runId = await startRun(url, token, message, history, clientRequestId, signal);
       currentRunId = runId;
-      return await attachWithReconnect(url, token, runId, signal, applyLabel, onDelta, onDeltaReset);
+      // Instant-Stop closure: if the user aborted BEFORE the START response
+      // arrived (the {once} listener fired into a null currentRunId and so
+      // cancelled nothing — while the backend created the run anyway, because a
+      // fully-sent POST can't be unsent), or even before this call registered
+      // the listener at all, this is the first moment the run id is knowable.
+      // Fire the cancel NOW; the attach below then rejects instantly (aborted
+      // signal) and the wrapper turns the cancel response into a stop-memory
+      // turn — so an instant Stop cancels for real instead of orphaning a
+      // server-side run that keeps mutating the user's drops.
+      if (signal?.aborted) fireCancel();
+      try {
+        return await attachWithReconnect(url, token, runId, signal, applyLabel, onDelta, onDeltaReset);
+      } catch (e) {
+        // OUR abort (Stop button / panel close / unmount): the attach loop surfaces
+        // it as AbortError. Before going silent, ask the cancel we just fired what
+        // the run had done — a summary becomes AgentStoppedError (panels save a
+        // normal turn); anything else rethrows today's silent AbortError. The
+        // `signal?.aborted` gate is load-bearing: a cancelled terminal frame that
+        // arrived WITHOUT our abort (cross-tab) keeps its silent AbortError.
+        if (signal?.aborted && e instanceof Error && e.name === 'AbortError') {
+          const summary = await stopSummaryIfAny();
+          if (summary) throw new AgentStoppedError(summary);
+        }
+        throw e;
+      }
     } catch (e) {
       if (e instanceof RunEndpointUnavailableError) {
         // Backend without /chat/runs (deploy-order gap) — the pre-reconnect
@@ -210,7 +282,7 @@ export async function streamAgentChat({
   } finally {
     finished = true;
     if (pendingTimer) clearTimeout(pendingTimer);
-    signal?.removeEventListener('abort', onAbort);
+    signal?.removeEventListener('abort', fireCancel);
   }
 }
 
@@ -399,7 +471,14 @@ async function streamOneShot({
 
 /** Start (or idempotently resume) a run. Only NETWORK failures retry — and
  * they're safe to retry because the idempotency key returns the same run; HTTP
- * verdicts (429 quota, 503 busy, 404 old backend) are final. */
+ * verdicts (429 quota, 503 busy, 404 old backend) are final.
+ *
+ * The START POST is deliberately NOT tied to the AbortSignal: the run exists
+ * server-side the instant the POST lands, so an instant-Stop client MUST still
+ * receive the run id (the caller then fires the cancel it owes). Aborting the
+ * POST instead would orphan a live server-side run that keeps working. The
+ * retry sleeps between attempts stay abortable, so a dead-network retry loop
+ * still stops immediately. */
 async function startRun(
   url: string,
   token: string,
@@ -414,7 +493,8 @@ async function startRun(
   for (const delay of [0, 500, 1000, 2000]) {
     if (delay) await abortableSleep(delay, signal);
     try {
-      const res = await fetch(`${url}/chat/runs`, { method: 'POST', headers, body, signal });
+      // No signal here on purpose — see the docstring above.
+      const res = await fetch(`${url}/chat/runs`, { method: 'POST', headers, body });
       if (res.status === 404) throw new RunEndpointUnavailableError();
       if (!res.ok) throw await httpError(res);
       const data = (await res.json()) as { run_id: string };
