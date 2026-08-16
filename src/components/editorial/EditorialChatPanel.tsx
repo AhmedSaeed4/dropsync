@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
+import { ThinkingOrb } from 'thinking-orbs';
 import { auth } from '@/lib/firebase';
 import { getLenis, lockScroll, unlockScroll } from '../SmoothScrollProvider';
 import { useTypingStatus, formatTypingText } from '@/hooks/useTypingStatus';
@@ -1045,11 +1046,14 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
               className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} ${isHandoffTwin ? '' : 'animate-fade-in-up'} ${msg.id === savedMsgId ? 'settle-fade' : ''}`}
               style={isHandoffTwin ? undefined : { animationDelay: `${Math.min(idx, 10) * 30}ms` }}
             >
+              {/* Agent box made INVISIBLE on purpose (container kept): agent replies render with ink
+                  color only — no bg/border. User bubbles keep theirs. Revert = restore the bg/border
+                  classes: `bg-[#f5f5f5] ${…'bg-white/10 text-white'…} rounded-lg border ${tc.border}`. */}
               <div
                 className={`relative max-w-[85%] px-3.5 py-2.5 text-sm leading-relaxed overflow-x-auto group ${
                   msg.role === 'user'
                     ? 'bg-[#1a1a1a] text-[#FFFEF5] rounded-lg'
-                    : `bg-[#f5f5f5] ${theme === 'dark' ? 'bg-white/10 text-white' : 'text-[#1a1a1a]'} rounded-lg border ${tc.border}`
+                    : `${theme === 'dark' ? 'text-white' : 'text-[#1a1a1a]'} rounded-lg`
                 }`}
                 style={msg.role === 'user' ? { borderBottomRightRadius: '3px' } : { borderBottomLeftRadius: '3px' }}
               >
@@ -1095,11 +1099,17 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
               <div className={`min-h-0 overflow-hidden transition-opacity duration-300 ${showLoaderRow ? 'opacity-100' : 'opacity-0'}`}>
                 <div className="flex justify-start px-4 py-3">
                   <div className="flex items-center gap-3">
+                    {/* ORIGINAL logo dot (l1-chat morph-square) — INTENTIONALLY HIDDEN, not deleted.
+                        The owner-approved ThinkingOrb below replaced it (2026-08-17). To revert to
+                        the original: re-enable this div, remove the ThinkingOrb line + its import
+                        (the @keyframes l1-chat style block further below is still live).
                     <div className="w-3.5 h-3.5 rounded-full bg-[#1a1a1a] shrink-0" style={{
                       animation: 'l1-chat 2s infinite cubic-bezier(0.3,1,0,1)',
                       ['--bg-mid' as string]: theme === 'dark' ? '#ffffff' : '#555555',
                       ['--bg-end' as string]: theme === 'dark' ? '#cccccc' : '#333333',
                     }} />
+                    */}
+                    <ThinkingOrb state="listening" size={20} speed={0.70} style={{ width: 24, height: 24 }} />
                     {activity && (
                       <span
                         className="shimmer-text text-[13px] font-medium"
@@ -1129,8 +1139,9 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
               message, so the Firestore handoff (bubble out, saved message in) is seamless. */}
           {showStreamBubble && (
             <div className="flex justify-start animate-fade-in-up">
+              {/* Streaming twin of the invisible agent box above (ink only, no bg/border). */}
               <div
-                className={`relative max-w-[85%] px-3.5 py-2.5 text-sm leading-relaxed overflow-x-auto opacity-80 bg-[#f5f5f5] ${theme === 'dark' ? 'bg-white/10 text-white' : 'text-[#1a1a1a]'} rounded-lg border ${tc.border}`}
+                className={`relative max-w-[85%] px-3.5 py-2.5 text-sm leading-relaxed overflow-x-auto opacity-80 ${theme === 'dark' ? 'text-white' : 'text-[#1a1a1a]'} rounded-lg`}
                 style={{ borderBottomLeftRadius: '3px' }}
               >
                 <div className={`break-words [&_p]:mb-1 [&_p:last-child]:mb-0 [&_pre]:overflow-x-auto [&_pre]:max-w-full [&_code]:break-all ${tc.fontClass}`}>

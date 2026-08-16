@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
+import { ThinkingOrb } from 'thinking-orbs';
 import { auth } from '@/lib/firebase';
 import { getLenis, lockScroll, unlockScroll } from './SmoothScrollProvider';
 import { useTypingStatus, formatTypingText } from '@/hooks/useTypingStatus';
@@ -1042,7 +1043,9 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
         <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3 min-h-0">
           {messages.length === 0 && showWelcome && (
             <div className="flex justify-start animate-fade-in-welcome">
-              <div className={`max-w-[90%] px-3 py-2 text-xs leading-relaxed ${s.assistantBubble} ${s.roundedClass}`}>
+              {/* Agent box made INVISIBLE on purpose (container kept): ink only, no bg/border.
+                  Revert = swap the ink class back to s.assistantBubble. */}
+              <div className={`max-w-[90%] px-3 py-2 text-xs leading-relaxed ${theme === 'dark' ? 'text-white' : 'text-[#1A1A1A]'} ${s.roundedClass}`}>
                 <ReactMarkdown>{WELCOME}</ReactMarkdown>
               </div>
             </div>
@@ -1058,9 +1061,11 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
               className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} ${animateMessages ? 'animate-fade-in-msg' : ''} ${msg.id === savedMsgId ? 'settle-fade' : ''}`}
               style={animateMessages ? { animationDelay: `${idx * 50}ms` } : {}}
             >
+              {/* Agent box made INVISIBLE on purpose (container kept): agent replies render with ink
+                  color only — no bg/border. User bubbles keep s.userBubble. Revert = s.assistantBubble. */}
               <div
                 className={`relative max-w-[90%] px-3 py-2 text-xs leading-relaxed overflow-x-auto group ${
-                  msg.role === 'user' ? s.userBubble : s.assistantBubble
+                  msg.role === 'user' ? s.userBubble : theme === 'dark' ? 'text-white' : 'text-[#1A1A1A]'
                 } ${s.roundedClass}`}
               >
                 {msg.role === 'assistant' && (
@@ -1105,12 +1110,18 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
               <div className={`min-h-0 overflow-hidden transition-opacity duration-300 ${showLoaderRow ? 'opacity-100' : 'opacity-0'}`}>
                 <div className="flex justify-start px-3 py-2">
                   <div className="flex items-center gap-3">
+                    {/* ORIGINAL logo dot (l1-chat morph-square) — INTENTIONALLY HIDDEN, not deleted.
+                        The owner-approved ThinkingOrb below replaced it (2026-08-17). To revert to
+                        the original: re-enable this div, remove the ThinkingOrb line + its import
+                        (the @keyframes l1-chat style block further below is still live).
                     <div className="w-3.5 h-3.5 rounded-full shrink-0" style={{
                       backgroundColor: theme === 'dark' ? '#ffffff' : '#1a1a1a',
                       animation: 'l1-chat 2s infinite cubic-bezier(0.3,1,0,1)',
                       ['--bg-mid' as string]: theme === 'dark' ? '#cccccc' : '#555555',
                       ['--bg-end' as string]: theme === 'dark' ? '#888888' : '#333333',
                     }} />
+                    */}
+                    <ThinkingOrb state="listening" size={20} speed={0.70} style={{ width: 24, height: 24 }} />
                     {activity && (
                       <span
                         className="shimmer-text text-[13px] font-medium"
@@ -1140,7 +1151,8 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
               message, so the Firestore handoff (bubble out, saved message in) is seamless. */}
           {showStreamBubble && (
             <div className="flex justify-start animate-fade-in-up">
-              <div className={`relative max-w-[90%] px-3 py-2 text-xs leading-relaxed overflow-x-auto opacity-80 ${s.assistantBubble} ${s.roundedClass}`}>
+              {/* Streaming twin of the invisible agent box above (ink only, no bg/border). */}
+              <div className={`relative max-w-[90%] px-3 py-2 text-xs leading-relaxed overflow-x-auto opacity-80 ${theme === 'dark' ? 'text-white' : 'text-[#1A1A1A]'} ${s.roundedClass}`}>
                 <div className="break-words [&_p]:mb-1 [&_p:last-child]:mb-0 [&_pre]:overflow-x-auto [&_pre]:max-w-full [&_code]:break-all">
                   <ReactMarkdown remarkPlugins={[remarkBreaks]}>{smooth.revealed}</ReactMarkdown>
                 </div>
