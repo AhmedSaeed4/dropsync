@@ -57,7 +57,12 @@ interface BackfillCheckpoint {
   scopeIndex: number;
   completedDropIds: string[];
   cursorByScope: Record<string, string | null>;
-  labelWriteAttempts: Record<string, number>;
+  // Consecutive incomplete attempts per drop for ANY reason (slow/unreachable
+  // title service, cancelled fetch, throttling, rejected label write). After 3
+  // the drop is skipped so the run always converges. labelWriteAttempts is the
+  // legacy write-only counter from older checkpoints; counts are migrated.
+  labelIncompleteAttempts: Record<string, number>;
+  labelWriteAttempts?: Record<string, number>;
   processed: number;
   labeled: number;
   skipped: number;
@@ -183,7 +188,7 @@ export async function runYoutubeBackfill(options: {
         scopeIndex: 0,
         completedDropIds: [],
         cursorByScope: {},
-        labelWriteAttempts: {},
+        labelIncompleteAttempts: {},
         processed: 0,
         labeled: 0,
         skipped: 0,
@@ -191,7 +196,7 @@ export async function runYoutubeBackfill(options: {
         errors: 0,
       };
   checkpoint.cursorByScope = checkpoint.cursorByScope || {};
-  checkpoint.labelWriteAttempts = checkpoint.labelWriteAttempts || {};
+  checkpoint.labelIncompleteAttempts = checkpoint.labelIncompleteAttempts || checkpoint.labelWriteAttempts || {};
   const completedDropIds = new Set(checkpoint.completedDropIds);
   // A retry starts a fresh error/unresolved accounting window. Drops that were
   // not completed remain outside completedDropIds and are retried explicitly.
@@ -336,28 +341,27 @@ export async function runYoutubeBackfill(options: {
         signal,
       });
       if (result.status === 'incomplete') {
-        if (result.writeFailed) {
-          const attempts = (checkpoint.labelWriteAttempts[document.id] || 0) + 1;
-          checkpoint.labelWriteAttempts[document.id] = attempts;
-          if (attempts >= 2) {
-            // A locked/unauthorized or otherwise permanently failing label
-            // write must not trap the cursor forever. Skip only this new
-            // metadata operation; the original drop remains untouched.
-            completedDropIds.add(document.id);
-            checkpoint.cursorByScope[scope.id] = document.id;
-            delete checkpoint.labelWriteAttempts[document.id];
-            checkpoint.processed += 1;
-            checkpoint.skipped += 1;
-            newProcessed += 1;
-            checkpoint.completedDropIds = [...completedDropIds];
-            writeCheckpoint(checkpoint);
-            if (result.helperRequested) await sleep(5000);
-            continue;
-          }
+        const attempts = (checkpoint.labelIncompleteAttempts[document.id] || 0) + 1;
+        checkpoint.labelIncompleteAttempts[document.id] = attempts;
+        if (attempts >= 3) {
+          // Three strikes: a drop that stays incomplete for ANY reason (slow
+          // or unreachable title service, cancelled fetch, throttling, a
+          // rejected label write) must not trap the cursor forever. Skip only
+          // this new metadata operation; the original drop remains untouched.
+          completedDropIds.add(document.id);
+          checkpoint.cursorByScope[scope.id] = document.id;
+          delete checkpoint.labelIncompleteAttempts[document.id];
+          checkpoint.processed += 1;
+          checkpoint.skipped += 1;
+          newProcessed += 1;
+          checkpoint.completedDropIds = [...completedDropIds];
+          writeCheckpoint(checkpoint);
+          if (result.helperRequested) await sleep(5000);
+          continue;
         }
 
-        // Leave the cursor on the previous document so a retryable helper
-        // failure or the first failed write is retried by Resume.
+        // Leave the cursor on the previous document so this drop is retried by
+        // Resume, up to the three-strike limit above.
         checkpoint.scopeIndex = scopeIndex;
         checkpoint.unresolved += Math.max(1, result.unresolved);
         writeCheckpoint(checkpoint);
@@ -376,7 +380,7 @@ export async function runYoutubeBackfill(options: {
         return { completed: false, processed: checkpoint.processed, labeled: checkpoint.labeled, skipped: checkpoint.skipped, unresolved: checkpoint.unresolved, errors: checkpoint.errors };
       }
 
-      delete checkpoint.labelWriteAttempts[document.id];
+      delete checkpoint.labelIncompleteAttempts[document.id];
       const idsInSource = extractYouTubeVideoIds(`${source.name}\n${source.content}`);
       videoIdsConsidered += Math.min(50, idsInSource.length);
       completedDropIds.add(document.id);
