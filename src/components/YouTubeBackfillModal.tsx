@@ -145,7 +145,9 @@ export function YouTubeBackfillModal({
           )}
           {result && !result.completed && !running && (
             <p className={`border border-amber-500/30 bg-amber-500/10 p-3 text-xs ${isDark ? 'text-amber-200' : 'text-amber-700'}`}>
-              This run paused before every title was resolved. The button remains available so the unresolved videos have a recovery path.
+              This run paused before every title was resolved.
+              {result.unresolved > 0 && ' Some titles could not be fetched right now — the title service or YouTube was slow to answer.'}
+              {' '}Press Resume to retry; after a few tries those drops are skipped so the rest can finish.
             </p>
           )}
         </div>

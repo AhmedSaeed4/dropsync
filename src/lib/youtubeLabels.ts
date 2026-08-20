@@ -12,6 +12,12 @@ import type { Drop } from '@/types';
 export const YOUTUBE_BACKFILL_STATE_EVENT = 'dropsync-youtube-backfill-state';
 export const MAX_YOUTUBE_LABEL_IDS_PER_DROP = 50;
 export const MAX_YOUTUBE_RESOLVE_IDS_PER_REQUEST = 10;
+// Must comfortably exceed the helper endpoint's worst-case legitimate answer time
+// (cache reads plus paced fresh fetches inside its 12s budget plus one in-flight
+// attempt). 15s was too tight: when YouTube hangs, the endpoint legitimately
+// answers slowly, and aborting at 15s turned one slow video into a permanently
+// stuck backfill (production incident, fixed 2026-08-21).
+export const YOUTUBE_RESOLVE_TIMEOUT_MS = 35000;
 
 const AGENT_URL = process.env.NEXT_PUBLIC_AGENT_URL || 'http://localhost:8000';
 const YOUTUBE_HOSTS = new Set([
@@ -299,7 +305,7 @@ async function resolveYouTubeVideoIds(
   }
   const token = await currentUser.getIdToken();
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 15000);
+  const timeout = window.setTimeout(() => controller.abort(), YOUTUBE_RESOLVE_TIMEOUT_MS);
   const abort = () => controller.abort();
   signal?.addEventListener('abort', abort, { once: true });
   try {
