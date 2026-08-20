@@ -46,7 +46,8 @@ import {
 import { decryptPersonalDropForArchive, deleteFromR2, getExpirationDate, uploadBinaryFileToR2, uploadToR2 } from './drops';
 import { generateAESKey, encryptData } from './crypto';
 import { encryptDEKForUser, getUserKeys } from './keys';
-import type { Category, Drop, ExpirationOption } from '@/types';
+import type { Category, Drop, ExpirationOption, YouTubeVideoLabel } from '@/types';
+import { isPasswordCategories, normalizeYoutubeLabels } from './youtubeLabels';
 
 export const PERSONAL_ARCHIVE_SCHEMA = 'dropsync.personal' as const;
 export const PERSONAL_ARCHIVE_SCHEMA_VERSION = 1;
@@ -70,6 +71,7 @@ export interface PersonalArchiveDrop {
   name: string;
   content?: string;
   categories: string[];
+  youtubeVideoLabels?: YouTubeVideoLabel[];
   pinned: boolean;
   locked: boolean;
   isDrawing: boolean;
@@ -235,6 +237,9 @@ function sourceDropToManifest(
     name: drop.name,
     content,
     categories: getDropCategories(drop),
+    youtubeVideoLabels: drop.type === 'text' && !isPasswordCategories(getDropCategories(drop))
+      ? normalizeYoutubeLabels(drop.youtubeVideoLabels)
+      : undefined,
     pinned: !!drop.pinned,
     locked: !!drop.locked,
     isDrawing: !!drop.isDrawing,
@@ -317,6 +322,15 @@ function validatePersonalManifestBody(raw: unknown): void {
     }
     if (drop.categories.some((category) => typeof category !== 'string')) {
       throw new Error(`The categories are invalid for "${drop.name}".`);
+    }
+    if (drop.youtubeVideoLabels !== undefined) {
+      if (drop.type !== 'text' || isPasswordCategories(drop.categories) || !Array.isArray(drop.youtubeVideoLabels)) {
+        throw new Error(`The YouTube labels are invalid for "${drop.name}".`);
+      }
+      const labels = normalizeYoutubeLabels(drop.youtubeVideoLabels);
+      if (labels.length !== drop.youtubeVideoLabels.length || labels.length > 50) {
+        throw new Error(`The YouTube labels are invalid for "${drop.name}".`);
+      }
     }
     if (drop.content != null && typeof drop.content !== 'string') {
       throw new Error(`The text content is invalid for "${drop.name}".`);
@@ -823,6 +837,10 @@ export async function importPersonalArchive(
         reminderDismissedBy: null,
         importedFromArchiveId: loaded.manifest.archiveId,
       };
+      const importedLabels = normalizeYoutubeLabels(archiveDrop.youtubeVideoLabels);
+      if (archiveDrop.type === 'text' && !isPasswordCategories(categories) && importedLabels.length > 0) {
+        docData.youtubeVideoLabels = importedLabels;
+      }
 
       if (archiveDrop.isDrawing) docData.isDrawing = true;
 

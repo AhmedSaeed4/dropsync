@@ -148,6 +148,8 @@ interface EditorialLayoutProps {
   onImportWorkspace?: () => void;
   onExportPersonal?: () => void;
   onOpenPersonalOptions?: () => void;
+  youtubeBackfillVisible: boolean;
+  onOpenYoutubeBackfill: () => void;
   onStartCall: (callDropId: string, stream: MediaStream | null, callInfo?: { created?: boolean; callState?: 'live' | 'pending'; attemptToken?: string | null; livekitRoomName?: string; callHostUid?: string; creatorName?: string; callParticipantUids?: string[] }) => void | Promise<void>;
   onJoinCall: (drop: Drop) => void;
   onMinimizeCall: () => void;
@@ -191,6 +193,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
     editDrop, handleEditDrop, handleEditSubmit, onEditClose, handlePreviewInvalidate, editPreparing,
     hoverable, activeCallDrop, callMinimized, callState, reopenCallDropId, callCanStart, callAccessLoading, callAccessError, onRefreshCallAccess,
     onExportWorkspace, onImportWorkspace, onExportPersonal, onOpenPersonalOptions,
+    youtubeBackfillVisible, onOpenYoutubeBackfill,
     onStartCall, onJoinCall, onMinimizeCall, onLeaveCall,
   } = props;
 
@@ -380,6 +383,22 @@ export function EditorialLayout(props: EditorialLayoutProps) {
                 callAccessError={callAccessError}
                 onRefreshCallAccess={onRefreshCallAccess}
               />
+
+            {youtubeBackfillVisible && (
+              <section className={`border ${tc.border} ${tc.cardBg} rounded-lg p-5`}>
+                <p className={`text-xs ${tc.fontClass} ${tc.muted}`}>Saved video labels</p>
+                <p className={`mt-2 text-sm leading-relaxed ${tc.fontClass} ${tc.muted}`}>
+                  Add searchable titles and channel names to saved YouTube links. Existing drop content is not changed.
+                </p>
+                <button
+                  type="button"
+                  onClick={onOpenYoutubeBackfill}
+                  className={`mt-4 w-full rounded-lg px-4 py-2.5 text-sm ${tc.fontClass} bg-[#1a1a1a] text-white transition-colors hover:bg-[#333]`}
+                >
+                  Find titles for my saved videos
+                </button>
+              </section>
+            )}
 
             <EditorialStatusPanel
               dropsCount={drops.length}
