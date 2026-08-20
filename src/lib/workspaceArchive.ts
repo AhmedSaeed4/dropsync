@@ -66,7 +66,8 @@ import {
   uploadToR2,
 } from './drops';
 import { deleteWorkspace } from './workspaces';
-import { Drop, Workspace, Category, ExpirationOption } from '@/types';
+import { Drop, Workspace, Category, ExpirationOption, YouTubeVideoLabel } from '@/types';
+import { isPasswordCategories, normalizeYoutubeLabels } from './youtubeLabels';
 import type { MemberInfo } from './workspaces';
 
 // Keep the shipped workspace constants as public aliases. The underlying envelope/ZIP values are
@@ -169,6 +170,7 @@ export interface WorkspaceArchiveDrop {
   name: string;
   content?: string;
   categories: string[];
+  youtubeVideoLabels?: YouTubeVideoLabel[];
   pinned: boolean;
   locked: boolean;
   isDrawing: boolean;
@@ -262,6 +264,9 @@ function sourceDropToManifest(
     name: drop.name,
     content,
     categories: getDropCategories(drop),
+    youtubeVideoLabels: drop.type === 'text' && !isPasswordCategories(getDropCategories(drop))
+      ? normalizeYoutubeLabels(drop.youtubeVideoLabels)
+      : undefined,
     pinned: !!drop.pinned,
     locked: !!drop.locked,
     isDrawing: !!drop.isDrawing,
@@ -331,6 +336,15 @@ function validateManifestBody(manifest: WorkspaceArchiveManifest): void {
     }
     if (drop.isDrawing && !drop.payloads?.image) {
       throw new Error(`The drawing payload is missing for "${drop.name}".`);
+    }
+    if (drop.youtubeVideoLabels !== undefined) {
+      if (drop.type !== 'text' || drop.isDrawing || isPasswordCategories(drop.categories) || !Array.isArray(drop.youtubeVideoLabels)) {
+        throw new Error(`The YouTube labels are invalid for "${drop.name}".`);
+      }
+      const labels = normalizeYoutubeLabels(drop.youtubeVideoLabels);
+      if (labels.length !== drop.youtubeVideoLabels.length || labels.length > 50) {
+        throw new Error(`The YouTube labels are invalid for "${drop.name}".`);
+      }
     }
     parseDate(drop.createdAt, 'createdAt');
     parseDate(drop.expiresAt, 'expiresAt');
@@ -842,6 +856,10 @@ export async function importWorkspaceArchive(options: WorkspaceArchiveImportOpti
         reminderDismissedBy: archiveDrop.reminderDismissedBy,
         importedFromArchiveId: loaded.manifest.archiveId,
       };
+      const importedLabels = normalizeYoutubeLabels(archiveDrop.youtubeVideoLabels);
+      if (archiveDrop.type === 'text' && !archiveDrop.isDrawing && !isPasswordCategories(categories) && importedLabels.length > 0) {
+        docData.youtubeVideoLabels = importedLabels;
+      }
 
       if (archiveDrop.creatorName) docData.creatorName = archiveDrop.creatorName;
       if (archiveDrop.isDrawing) docData.isDrawing = true;

@@ -15,6 +15,7 @@ import { LiveCallMinimizedPill } from '@/components/call/LiveCallMinimizedPill';
 import { ClassicLayout } from '@/components/layouts/ClassicLayout';
 import { EditorialLayout } from '@/components/editorial/EditorialLayout';
 import { EditorialAuthModal } from '@/components/editorial/EditorialAuthModal';
+import { YouTubeBackfillModal } from '@/components/YouTubeBackfillModal';
 import { EditorialVerifyEmailModal } from '@/components/editorial/EditorialVerifyEmailModal';
 import { getEditorialThemeColors } from '@/components/editorial/editorialTheme';
 import { AuthModal } from '@/components/AuthModal';
@@ -29,6 +30,12 @@ import { Drop, Workspace, ExpirationOption } from '@/types';
 import { initializeUserKeys, hasUserKeys, getUserKeys, ensurePublicKeyPublished } from '@/lib/keys';
 import { ensureProfilePublished } from '@/lib/profiles';
 import { decryptDrop, updateTextDrop, updateDropMetadata, moveDrop, getExpirationDate } from '@/lib/drops';
+import {
+  YOUTUBE_BACKFILL_STATE_EVENT,
+  isPasswordCategories,
+  isYoutubeBackfillButtonVisible,
+  normalizeYoutubeLabels,
+} from '@/lib/youtubeLabels';
 import { getWorkspaceMembers, MemberInfo } from '@/lib/workspaces';
 import { getLastRead, initReadState, markWorkspaceChatRead, clearWorkspaceMentions } from '@/lib/groupChat';
 import {
@@ -223,6 +230,9 @@ export default function Home() {
   const [archiveMode, setArchiveMode] = useState<'export' | 'import' | null>(null);
   const [archiveScope, setArchiveScope] = useState<'workspace' | 'personal'>('workspace');
   const [personalOptionsOpen, setPersonalOptionsOpen] = useState(false);
+  const [showYoutubeBackfill, setShowYoutubeBackfill] = useState(false);
+  const [youtubeBackfillVisible, setYoutubeBackfillVisible] = useState(true);
+  const [youtubeBackfillVisibilityReady, setYoutubeBackfillVisibilityReady] = useState(false);
   const [archiveNotice, setArchiveNotice] = useState<string | null>(null);
   const [pendingArchiveWorkspaceId, setPendingArchiveWorkspaceId] = useState<string | null>(null);
   const [showChat, setShowChat] = useState(false);
@@ -255,6 +265,25 @@ export default function Home() {
   // Guards the /?chat=<id> deep link so it runs once, not after the user has navigated.
   const deepLinkHandledRef = useRef(false);
   const [resolvedWorkspaceMembers, setResolvedWorkspaceMembers] = useState<MemberInfo[]>([]);
+
+  // Backfill button visibility is a local recovery flag only. It deliberately
+  // performs no Firestore read or drop scan; a save-time failure dispatches the
+  // event from youtubeLabels.ts and makes the button visible again.
+  const youtubeUserId = user?.uid;
+  useEffect(() => {
+    if (!youtubeUserId) {
+      setYoutubeBackfillVisible(false);
+      setYoutubeBackfillVisibilityReady(true);
+      return;
+    }
+    const syncYoutubeBackfillVisibility = () => {
+      setYoutubeBackfillVisible(isYoutubeBackfillButtonVisible(youtubeUserId));
+    };
+    syncYoutubeBackfillVisibility();
+    setYoutubeBackfillVisibilityReady(true);
+    window.addEventListener(YOUTUBE_BACKFILL_STATE_EVENT, syncYoutubeBackfillVisibility);
+    return () => window.removeEventListener(YOUTUBE_BACKFILL_STATE_EVENT, syncYoutubeBackfillVisibility);
+  }, [youtubeUserId]);
 
   // A newly restored workspace is not present in the listener snapshot until Firestore emits it.
   // Wait for that emission before switching, otherwise useWorkspaces correctly treats the new ID as
@@ -609,6 +638,10 @@ export default function Home() {
         reminderSetByUid: data.reminderSetByUid || null,
         reminderDismissedBy: data.reminderDismissedBy || null,
         fileFormat: data.fileFormat ?? drop.fileFormat,
+        youtubeVideoLabels: isPasswordCategories([
+          ...(Array.isArray(data.categories) ? data.categories : []),
+          ...(typeof data.category === 'string' ? [data.category] : []),
+        ]) ? [] : normalizeYoutubeLabels(data.youtubeVideoLabels),
       };
     } catch (error) {
       console.warn('Could not refresh drop metadata:', error);
@@ -2565,6 +2598,8 @@ export default function Home() {
     onImportWorkspace: canManageWorkspaceArchive ? () => openWorkspaceArchive('import') : undefined,
     onExportPersonal: user && !currentWorkspace ? () => openPersonalArchive('export') : undefined,
     onOpenPersonalOptions: user ? openPersonalOptions : undefined,
+    youtubeBackfillVisible: youtubeBackfillVisibilityReady && youtubeBackfillVisible,
+    onOpenYoutubeBackfill: () => setShowYoutubeBackfill(true),
     showSettingsModal, setShowSettingsModal,
     showAuthModal, setShowAuthModal,
     showVerifyModal, setShowVerifyModal,
@@ -2619,6 +2654,15 @@ export default function Home() {
           ? <EditorialLayout {...layoutProps} onSortModeChange={handleEditorialSortModeChange} />
           : <ClassicLayout {...layoutProps} />}
       </div>
+      {showYoutubeBackfill && user && (
+        <YouTubeBackfillModal
+          userId={user.uid}
+          workspaces={workspaces}
+          theme={theme}
+          variant={layoutMode === 'editorial' ? 'editorial' : 'classic'}
+          onClose={() => setShowYoutubeBackfill(false)}
+        />
+      )}
       {personalOptionsOpen && (
         <WorkspaceOptionsModal
           scope="personal"

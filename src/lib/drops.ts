@@ -2,6 +2,7 @@ import {
   collection,
   addDoc,
   deleteDoc,
+  deleteField,
   doc,
   query,
   where,
@@ -26,6 +27,16 @@ import {
   hasWorkspaceKey
 } from './keys';
 import { ensureCategoriesForTarget, type CategoryNameMap } from './categories';
+import {
+  createYouTubeLabelGuard,
+  isPasswordCategories,
+  labelDropBestEffort,
+  markYoutubeBackfillNeeded,
+  normalizeYoutubeLabels,
+  sourceFromDrop,
+  type YouTubeLabelGuard,
+  type YouTubeLabelSource,
+} from './youtubeLabels';
 
 const DROPS_COLLECTION = 'drops';
 const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB limit
@@ -250,6 +261,10 @@ export function createDropListener(
           reminderDismissedBy: data.reminderDismissedBy || null,
           fileFormat: data.fileFormat,
           importedFromArchiveId: data.importedFromArchiveId || undefined,
+          youtubeVideoLabels: isPasswordCategories([
+            ...(Array.isArray(data.categories) ? data.categories : []),
+            ...(typeof data.category === 'string' ? [data.category] : []),
+          ]) ? [] : normalizeYoutubeLabels(data.youtubeVideoLabels),
           callHostUid: data.callHostUid || undefined,
           callStartedAt: data.callStartedAt?.toDate() || null,
            callParticipantUids: data.callParticipantUids || undefined,
@@ -437,6 +452,46 @@ export async function createTextDrop(
       }
       throw writeError;
     }
+
+    const savedCategories = categories && categories.length > 0
+      ? categories
+      : (category ? [category] : []);
+    const labelSource = sourceFromDrop(
+      {
+        id: docRef.id,
+        userId,
+        type: 'text',
+        name,
+        content,
+        createdAt: now,
+        expiresAt,
+        workspaceId,
+        categories: savedCategories,
+        isDrawing: !!isDrawing,
+      },
+      content,
+    );
+    const labelGuard = createYouTubeLabelGuard({
+      type: 'text',
+      name,
+      categories: savedCategories,
+      workspaceId,
+      isDrawing: !!isDrawing,
+      encrypted,
+      content: encrypted ? undefined : encryptedContent,
+      iv,
+      encryptedDEK,
+    });
+    void labelDropBestEffort({
+      userId,
+      dropId: docRef.id,
+      source: labelSource,
+      guard: labelGuard,
+    }).catch(() => {
+      // The primary save already succeeded. Make sure an unexpected failure also
+      // restores the local recovery button without reading Firestore.
+      markYoutubeBackfillNeeded(userId);
+    });
 
     return {
       id: docRef.id,
@@ -775,8 +830,19 @@ export async function updateTextDrop(
     }
 
     const contentChanged = updates.content !== undefined;
+    const sourceChanged = contentChanged
+      || updates.name !== undefined
+      || updates.categories !== undefined
+      || updates.category !== undefined;
     const imageChanged = !!updates.imageFile;
     const imageRemoved = !!updates.imageRemoved && !updates.imageFile;
+
+    // Labels describe the current text/name. Clear only this feature-owned field
+    // as part of the normal source edit; the best-effort resolver below will add
+    // the new labels without touching any existing payload field.
+    if (sourceChanged) {
+      updateData.youtubeVideoLabels = deleteField();
+    }
 
     // PATH 1: Content changed → new DEK → re-encrypt content + handle image with same DEK
     if (contentChanged) {
@@ -939,6 +1005,51 @@ export async function updateTextDrop(
     }
     // PATH 3: Only metadata changed (name, category, expiration) → no re-encryption
 
+    let labelSource: YouTubeLabelSource | null = null;
+    let labelGuard: YouTubeLabelGuard | null = null;
+    if (sourceChanged && drop.type === 'text') {
+      const currentCategories = drop.categories || (drop.category ? [drop.category] : []);
+      const nextCategories = updates.categories !== undefined
+        ? updates.categories
+        : updates.category !== undefined
+          ? (updates.category ? [updates.category] : [])
+          : currentCategories;
+      const persistedEncrypted = drop.encrypted === true
+        || !!drop.iv
+        || !!drop.encryptedDEK
+        || !!drop.encryptedDEKs;
+      const nextEncrypted = contentChanged ? true : persistedEncrypted;
+      const nextIv = typeof updateData.iv === 'string' ? updateData.iv : drop.iv;
+      const nextEncryptedDEK = typeof updateData.encryptedDEK === 'string'
+        ? updateData.encryptedDEK
+        : drop.encryptedDEK;
+      const nextContent = nextEncrypted
+        ? undefined
+        : contentChanged
+          ? updates.content
+          : drop.content;
+      const nextName = updates.name !== undefined ? updates.name : drop.name;
+      labelSource = {
+        type: 'text',
+        name: nextName,
+        content: updates.content !== undefined ? updates.content : (drop.content || ''),
+        categories: nextCategories,
+        workspaceId: drop.workspaceId,
+        isDrawing: !!drop.isDrawing,
+      };
+      labelGuard = createYouTubeLabelGuard({
+        type: 'text',
+        name: nextName,
+        categories: nextCategories,
+        workspaceId: drop.workspaceId,
+        isDrawing: !!drop.isDrawing,
+        encrypted: nextEncrypted,
+        content: nextContent,
+        iv: nextIv,
+        encryptedDEK: nextEncryptedDEK,
+      });
+    }
+
     // Write to Firestore FIRST — if this fails, old R2 objects are untouched
     try {
       await updateDoc(docRef, updateData);
@@ -966,6 +1077,20 @@ export async function updateTextDrop(
     // helper never throws, so this can't change the return value or fail the edit above.
     if (expiresAt !== undefined) {
       await syncSharesExpiryForDrop(drop.id, expiresAt);
+    }
+
+    if (labelSource && labelGuard) {
+      void labelDropBestEffort({
+        userId: currentUserId,
+        dropId: drop.id,
+        source: labelSource,
+        guard: labelGuard,
+        existingLabels: drop.youtubeVideoLabels,
+      }).catch(() => {
+        // The primary edit succeeded; restore the local recovery button without
+        // reading Firestore if the final defensive boundary is reached.
+        markYoutubeBackfillNeeded(currentUserId);
+      });
     }
 
     return true;
@@ -1766,6 +1891,11 @@ export async function copyDrop(
       resolvedNames = [];
     }
     docData.categories = resolvedNames;
+
+    const copiedLabels = normalizeYoutubeLabels(drop.youtubeVideoLabels);
+    if (drop.type === 'text' && !isPasswordCategories(resolvedNames) && copiedLabels.length > 0) {
+      docData.youtubeVideoLabels = copiedLabels;
+    }
 
     // Step 5: Create the copy with a single addDoc. The original doc + all its R2 objects
     // are never mutated or deleted.

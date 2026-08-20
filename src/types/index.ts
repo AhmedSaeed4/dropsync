@@ -18,6 +18,12 @@ export interface Workspace {
   createdAt: Date;
 }
 
+export interface YouTubeVideoLabel {
+  videoId: string;
+  title: string;
+  channel: string | null;
+}
+
 export interface Drop {
   id: string;
   userId: string;
@@ -70,6 +76,9 @@ export interface Drop {
   // Optional provenance marker written by workspace archive import. It is used only to warn about
   // importing the same archive into the same target twice; it carries no encryption authority.
   importedFromArchiveId?: string;
+  // Search-only metadata derived from YouTube links in the current text/name. It is optional so
+  // legacy drops remain valid; the content itself stays in the existing encrypted field.
+  youtubeVideoLabels?: YouTubeVideoLabel[];
   // ---- Call-drop-only fields (type === 'call'). A call drop carries NO content/fileUrl/
   // encrypted/pinned/locked/reminderAt/categories (those stay undefined). callHostUid is DISPLAY
   // ONLY (the host name reuses creatorName). callStartedAt (serverTimestamp) drives the "LIVE · Xm"
