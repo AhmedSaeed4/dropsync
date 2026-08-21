@@ -10,6 +10,7 @@ import { CategoryFilter } from './CategoryFilter';
 import { deleteDrop, moveDrop, copyDrop, pinDrop, unpinDrop, isReminderGlowingForViewer } from '@/lib/drops';
 import { usePendingDeletions, requestDelete, undo, dismiss } from '@/lib/pendingDeletions';
 import { ensureCategoriesForTarget } from '@/lib/categories';
+import { dropMatchesSearchQuery } from '@/lib/youtubeLabels';
 import { MoveDropModal } from '@/components/MoveDropModal';
 import { MemberInfo } from '@/lib/workspaces';
 
@@ -177,7 +178,7 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
   const filteredDrops = useMemo(() => {
     return visibleDrops.filter(drop => {
       // Search filter
-      if (searchQuery && !drop.name.toLowerCase().includes(searchQuery.toLowerCase())) {
+      if (searchQuery && !dropMatchesSearchQuery(drop, searchQuery)) {
         return false;
       }
 
