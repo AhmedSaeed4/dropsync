@@ -16,12 +16,14 @@ import { db } from './firebase';
 import { decryptDrop } from './drops';
 import type { Drop, Workspace } from '@/types';
 import {
+  MAX_YOUTUBE_LABEL_IDS_PER_DROP,
   createYouTubeLabelGuard,
   extractYouTubeVideoIds,
   labelDropBestEffort,
   markYoutubeBackfillComplete,
   normalizeYoutubeLabels,
   sourceFromDrop,
+  writeSharedBackfillCompletion,
   type YouTubeLabelingResult,
 } from './youtubeLabels';
 
@@ -380,6 +382,31 @@ export async function runYoutubeBackfill(options: {
       const decrypted = await decryptDrop(labelDrop, userId);
       const content = decrypted.content || '';
       const source = sourceFromDrop({ ...decrypted, name: rawDrop.name, categories }, content);
+
+      // Already-done skip: when this drop's existing labels already cover every
+      // video ID the resolver would extract, calling the helper again can only
+      // redo finished work (each call burns server pacing budget plus a 5s
+      // sleep). IDs come from the SAME extraction the labeling path uses and
+      // are compared against the FULL result — never sliced or capped. More
+      // than MAX_YOUTUBE_LABEL_IDS_PER_DROP keeps today's exact path
+      // (labelDropBestEffort already treats >50 as incomplete), and zero-ID
+      // drops keep theirs so fully-removed links still prune stale labels.
+      // Partial or missing coverage falls through and processes normally
+      // (this preserves retrying strike-skipped drops).
+      const pendingVideoIds = extractYouTubeVideoIds(`${source.name}\n${source.content}`);
+      if (pendingVideoIds.length >= 1 && pendingVideoIds.length <= MAX_YOUTUBE_LABEL_IDS_PER_DROP) {
+        const labeledVideoIds = new Set(
+          normalizeYoutubeLabels(data.youtubeVideoLabels).map((label) => label.videoId),
+        );
+        if (pendingVideoIds.every((videoId) => labeledVideoIds.has(videoId))) {
+          completedDropIds.add(document.id);
+          checkpoint.cursorByScope[scope.id] = document.id;
+          checkpoint.processed += 1;
+          newProcessed += 1;
+          continue;
+        }
+      }
+
       const guard = createYouTubeLabelGuard({
         type: 'text',
         name: rawDrop.name,
@@ -570,6 +597,10 @@ export async function runYoutubeBackfill(options: {
   // strike-skipped drops do not re-show the backfill button.
   clearCheckpoint(userId);
   markYoutubeBackfillComplete(userId);
+  // Account-wide finish note (best-effort): lets every other device of this
+  // account hide the button too. A failed write never disturbs the run or its
+  // result — the local flag above is already set regardless.
+  void writeSharedBackfillCompletion(userId);
   emit(onProgress, {
     phase: 'complete',
     scopeName: 'Finished',

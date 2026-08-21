@@ -3,7 +3,10 @@
 import {
   deleteField,
   doc,
+  getDoc,
   runTransaction,
+  serverTimestamp,
+  updateDoc,
   type DocumentData,
 } from 'firebase/firestore';
 import { auth, db } from './firebase';
@@ -18,6 +21,10 @@ export const MAX_YOUTUBE_RESOLVE_IDS_PER_REQUEST = 10;
 // answers slowly, and aborting at 15s turned one slow video into a permanently
 // stuck backfill (production incident, fixed 2026-08-21).
 export const YOUTUBE_RESOLVE_TIMEOUT_MS = 35000;
+// Hard bound on the one-time read of the account-wide backfill flag. A hanging
+// Firestore read must never leave the button visibility undetermined: after
+// this long the shared flag is treated as 'unknown' (fail-safe → visible).
+export const YOUTUBE_BACKFILL_SHARED_READ_TIMEOUT_MS = 5000;
 
 const AGENT_URL = process.env.NEXT_PUBLIC_AGENT_URL || 'http://localhost:8000';
 const YOUTUBE_HOSTS = new Set([
@@ -85,16 +92,34 @@ function emitStateChange(): void {
   }
 }
 
+// Three-state answer for the account-wide backfill flag: true (finished),
+// false (not finished), 'unknown' (not loaded yet / read failed / timed out).
+// 'unknown' is always treated as NOT finished — wrongly showing the button is
+// acceptable; wrongly hiding it is not.
+export type SharedBackfillCompletion = boolean | 'unknown';
+
 /**
- * Visibility is deliberately local-only. This function must never read a drop,
- * query Firestore, or contact the backend.
+ * The ONE visibility decision-maker. Every input — local note changes (the
+ * YOUTUBE_BACKFILL_STATE_EVENT), the shared account-wide answer arriving, a
+ * read failing or timing out — must be re-evaluated through this single
+ * function; no code path may set the button hidden directly. It reads only the
+ * local notes; the shared flag arrives as a parameter (this function never
+ * touches Firestore or the backend).
+ *
+ * 1. A local unfinished note exists → SHOW. Always wins, even if both notes
+ *    exist and the shared flag says finished (a save-time failure replants it).
+ * 2. Otherwise, a local finished note OR shared=true → HIDE.
+ * 3. Otherwise — including shared='unknown' → SHOW.
  */
-export function isYoutubeBackfillButtonVisible(uid: string): boolean {
+export function evaluateYoutubeBackfillVisibility(
+  uid: string,
+  sharedCompletion: SharedBackfillCompletion,
+): boolean {
   if (typeof window === 'undefined') return true;
   try {
-    const needed = window.localStorage.getItem(stateKey(uid, 'needed')) === '1';
+    if (window.localStorage.getItem(stateKey(uid, 'needed')) === '1') return true;
     const completed = window.localStorage.getItem(stateKey(uid, 'completed')) === '1';
-    return needed || !completed;
+    return !(completed || sharedCompletion === true);
   } catch {
     // If local storage is unavailable, leave the recovery button visible.
     return true;
@@ -120,6 +145,64 @@ export function markYoutubeBackfillComplete(uid: string): void {
     // Keeping the button visible is the safe fallback.
   }
   emitStateChange();
+}
+
+/**
+ * Account-wide finish note: users/{uid}.youtubeBackfillCompletedAt, written
+ * once when a backfill run genuinely completes. Best-effort — a failed write
+ * never disturbs the run or its result; the device-local flag is set
+ * regardless. The existing users/{uid} rule already permits self-updates of
+ * any field except tier, so no rules change is needed.
+ */
+export async function writeSharedBackfillCompletion(uid: string): Promise<void> {
+  if (typeof window === 'undefined') return;
+  try {
+    await updateDoc(doc(db, 'users', uid), { youtubeBackfillCompletedAt: serverTimestamp() });
+  } catch {
+    // Other devices keep seeing the button until they run their own backfill.
+  }
+}
+
+/**
+ * Single bounded read of the account-wide finish note after sign-in (no
+ * continuous listener). Reports exactly one of:
+ *  - the real answer (true/false),
+ *  - 'unknown' when the read failed,
+ *  - 'unknown' when no answer arrived within the hard ~5s timeout (a hanging
+ *    read must never leave the button stuck undetermined).
+ *
+ * onResult may fire MORE than once: if the real answer arrives after the
+ * timeout already reported 'unknown', it is still delivered — never discarded
+ * silently — so the caller can re-run its single decision function (whose
+ * rule 1 protects an unfinished note planted while waiting). Returns a cancel
+ * function for effect cleanup.
+ */
+export function readSharedBackfillCompletion(
+  uid: string,
+  onResult: (completion: SharedBackfillCompletion) => void,
+): () => void {
+  if (typeof window === 'undefined') {
+    onResult('unknown');
+    return () => {};
+  }
+  let cancelled = false;
+  const deliver = (completion: SharedBackfillCompletion) => {
+    if (!cancelled) onResult(completion);
+  };
+  const timer = window.setTimeout(() => deliver('unknown'), YOUTUBE_BACKFILL_SHARED_READ_TIMEOUT_MS);
+  getDoc(doc(db, 'users', uid))
+    .then((snapshot) => {
+      window.clearTimeout(timer);
+      deliver(snapshot.exists() && !!snapshot.data().youtubeBackfillCompletedAt);
+    })
+    .catch(() => {
+      window.clearTimeout(timer);
+      deliver('unknown');
+    });
+  return () => {
+    cancelled = true;
+    window.clearTimeout(timer);
+  };
 }
 
 function normalizeCategories(value: unknown, legacyValue?: unknown): string[] {

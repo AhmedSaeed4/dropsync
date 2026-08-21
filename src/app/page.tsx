@@ -32,9 +32,11 @@ import { ensureProfilePublished } from '@/lib/profiles';
 import { decryptDrop, updateTextDrop, updateDropMetadata, moveDrop, getExpirationDate } from '@/lib/drops';
 import {
   YOUTUBE_BACKFILL_STATE_EVENT,
+  evaluateYoutubeBackfillVisibility,
   isPasswordCategories,
-  isYoutubeBackfillButtonVisible,
   normalizeYoutubeLabels,
+  readSharedBackfillCompletion,
+  type SharedBackfillCompletion,
 } from '@/lib/youtubeLabels';
 import { getWorkspaceMembers, MemberInfo } from '@/lib/workspaces';
 import { getLastRead, initReadState, markWorkspaceChatRead, clearWorkspaceMentions } from '@/lib/groupChat';
@@ -266,9 +268,12 @@ export default function Home() {
   const deepLinkHandledRef = useRef(false);
   const [resolvedWorkspaceMembers, setResolvedWorkspaceMembers] = useState<MemberInfo[]>([]);
 
-  // Backfill button visibility is a local recovery flag only. It deliberately
-  // performs no Firestore read or drop scan; a save-time failure dispatches the
-  // event from youtubeLabels.ts and makes the button visible again.
+  // Backfill button visibility = local recovery notes + ONE bounded read of the
+  // account-wide finish flag (users/{uid}.youtubeBackfillCompletedAt). Every
+  // input — local note changes (YOUTUBE_BACKFILL_STATE_EVENT), the shared
+  // answer arriving, a failed or timed-out read — re-evaluates through the
+  // single decision function below; nothing ever sets hidden directly (so a
+  // slow "finished" answer cannot stomp a freshly planted unfinished note).
   const youtubeUserId = user?.uid;
   useEffect(() => {
     if (!youtubeUserId) {
@@ -276,13 +281,25 @@ export default function Home() {
       setYoutubeBackfillVisibilityReady(true);
       return;
     }
-    const syncYoutubeBackfillVisibility = () => {
-      setYoutubeBackfillVisible(isYoutubeBackfillButtonVisible(youtubeUserId));
+    let sharedCompletion: SharedBackfillCompletion = 'unknown';
+    const evaluateYoutubeBackfill = () => {
+      setYoutubeBackfillVisible(evaluateYoutubeBackfillVisibility(youtubeUserId, sharedCompletion));
     };
-    syncYoutubeBackfillVisibility();
-    setYoutubeBackfillVisibilityReady(true);
-    window.addEventListener(YOUTUBE_BACKFILL_STATE_EVENT, syncYoutubeBackfillVisibility);
-    return () => window.removeEventListener(YOUTUBE_BACKFILL_STATE_EVENT, syncYoutubeBackfillVisibility);
+    // Undetermined until the shared read answers (or fails / times out at ~5s).
+    setYoutubeBackfillVisibilityReady(false);
+    evaluateYoutubeBackfill();
+    const stopSharedRead = readSharedBackfillCompletion(youtubeUserId, (answer) => {
+      sharedCompletion = answer;
+      // The real answer, a read failure, or the timeout: all three make the
+      // visibility decidable right now.
+      setYoutubeBackfillVisibilityReady(true);
+      evaluateYoutubeBackfill();
+    });
+    window.addEventListener(YOUTUBE_BACKFILL_STATE_EVENT, evaluateYoutubeBackfill);
+    return () => {
+      stopSharedRead();
+      window.removeEventListener(YOUTUBE_BACKFILL_STATE_EVENT, evaluateYoutubeBackfill);
+    };
   }, [youtubeUserId]);
 
   // A newly restored workspace is not present in the listener snapshot until Firestore emits it.
