@@ -31,6 +31,7 @@ export function YouTubeBackfillModal({
   const [result, setResult] = useState<YoutubeBackfillResult | null>(null);
   const [running, setRunning] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const skipWaitRef = useRef<AbortController | null>(null);
   const isEditorial = variant === 'editorial';
   const isDark = theme === 'dark';
   const isMinimal = theme === 'minimal';
@@ -63,7 +64,9 @@ export function YouTubeBackfillModal({
   const start = async () => {
     if (running) return;
     const controller = new AbortController();
+    const skipController = new AbortController();
     abortRef.current = controller;
+    skipWaitRef.current = skipController;
     setRunning(true);
     setResult(null);
     setProgress(null);
@@ -72,11 +75,13 @@ export function YouTubeBackfillModal({
         userId,
         workspaces,
         signal: controller.signal,
+        skipWaitSignal: skipController.signal,
         onProgress: setProgress,
       });
       setResult(backfillResult);
     } finally {
       if (abortRef.current === controller) abortRef.current = null;
+      if (skipWaitRef.current === skipController) skipWaitRef.current = null;
       setRunning(false);
     }
   };
@@ -84,9 +89,14 @@ export function YouTubeBackfillModal({
   const close = () => {
     if (running) {
       abortRef.current?.abort();
+      skipWaitRef.current?.abort();
       return;
     }
     onClose();
+  };
+
+  const retryNow = () => {
+    skipWaitRef.current?.abort();
   };
 
   const percent = progress && progress.processed > 0
@@ -120,7 +130,13 @@ export function YouTubeBackfillModal({
           {progress && (
             <div className={`border ${colors.border} p-3 ${isEditorial || isMinimal ? 'rounded-lg' : ''}`}>
               <div className={`flex justify-between text-[11px] ${colors.muted}`}>
-                <span>{progress.phase === 'paused' ? 'Paused — resume when ready' : progress.scopeName}</span>
+                <span>
+                  {progress.phase === 'paused'
+                    ? 'Paused — resume when ready'
+                    : progress.phase === 'waiting'
+                      ? `Waiting ${progress.waitSecondsRemaining ?? 0}s — next try ${(progress.retryAttempt ?? 1) + 1} of 3`
+                      : progress.scopeName}
+                </span>
                 <span>{progress.processed} processed</span>
               </div>
               <div className={`mt-2 h-1 ${colors.track} ${isEditorial || isMinimal ? 'rounded-full' : ''}`}>
@@ -135,12 +151,26 @@ export function YouTubeBackfillModal({
                 <span>Waiting: {progress.unresolved}</span>
                 <span>Errors: {progress.errors}</span>
               </div>
+              {progress.phase === 'waiting' && (
+                <div className="mt-2 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={retryNow}
+                    className={`px-3 py-1 text-[10px] ${colors.secondary} ${isEditorial || isMinimal ? 'rounded-lg' : ''}`}
+                  >
+                    Retry now
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
           {result?.completed && (
             <p className={`border border-green-500/30 bg-green-500/10 p-3 text-xs text-green-700 ${isDark ? 'text-green-200' : ''}`}>
               Finished. {result.labeled} drop{result.labeled === 1 ? '' : 's'} received searchable video labels.
+              {result.strikeSkipped
+                ? ` ${result.strikeSkipped} drop${result.strikeSkipped === 1 ? '' : 's'} could not be labeled and ${result.strikeSkipped === 1 ? 'was' : 'were'} skipped.`
+                : ''}
             </p>
           )}
           {result && !result.completed && !running && (
