@@ -64,6 +64,9 @@ export interface YouTubeLabelingResult {
   unresolved: number;
   helperRequested?: boolean;
   writeFailed?: boolean;
+  // Server-provided throttle hint (seconds) from the request that made the
+  // drop incomplete; the backfill uses it to pace the auto-retry wait.
+  retryAfterSeconds?: number | null;
 }
 
 interface YouTubeResolveResponse {
@@ -380,6 +383,7 @@ export async function labelDropBestEffort(input: {
   let unresolvedCount = 0;
   let unavailableCount = 0;
   let helperRequested = false;
+  let retryAfterSeconds: number | null = null;
   const groups = chunks(ids, MAX_YOUTUBE_RESOLVE_IDS_PER_REQUEST);
   for (const [groupIndex, group] of groups.entries()) {
     if (input.signal?.aborted) {
@@ -389,6 +393,9 @@ export async function labelDropBestEffort(input: {
     helperRequested = true;
     try {
       const response = await resolveYouTubeVideoIds(input.userId, group, input.signal);
+      if (typeof response.retryAfterSeconds === 'number' && response.retryAfterSeconds > 0) {
+        retryAfterSeconds = response.retryAfterSeconds;
+      }
       for (const rawLabel of response.labels || []) {
         const label = normalizeLabel(rawLabel);
         if (label && group.includes(label.videoId)) labelsById.set(label.videoId, label);
@@ -429,6 +436,7 @@ export async function labelDropBestEffort(input: {
     unresolved: unresolvedCount + unavailableCount + (writeFailed ? 1 : 0),
     helperRequested,
     writeFailed,
+    retryAfterSeconds: incomplete ? retryAfterSeconds : null,
   };
 }
 
