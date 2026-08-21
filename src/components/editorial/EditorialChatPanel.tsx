@@ -92,7 +92,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   const [noticeLeaving, setNoticeLeaving] = useState(false);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const [menuMsg, setMenuMsg] = useState<{ msg: GroupChatMessage; x: number; y: number; panelRight: number } | null>(null);
+  const [menuMsg, setMenuMsg] = useState<{ msg: GroupChatMessage; x: number; y: number; panelRight: number; anchor: HTMLElement } | null>(null);
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
   // Inline message editor — editingMsgId === msg.id swaps that bubble's text node for a textarea.
   const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
@@ -727,9 +727,10 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   const openMenuFromButton = (e: React.MouseEvent, msg: GroupChatMessage) => {
     e.preventDefault();
     e.stopPropagation();
-    const r = e.currentTarget.getBoundingClientRect();
+    const btn = e.currentTarget as HTMLElement;
+    const r = btn.getBoundingClientRect();
     const panelRight = panelRef.current?.getBoundingClientRect().right ?? window.innerWidth;
-    setMenuMsg({ msg, x: r.left, y: r.bottom, panelRight });
+    setMenuMsg({ msg, x: r.left, y: r.bottom, panelRight, anchor: btn });
   };
 
   const handleCopyMessage = async (msg: GroupChatMessage) => {
@@ -1368,6 +1369,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
               x={menuMsg.x}
               y={menuMsg.y}
               rightBound={menuMsg.panelRight}
+              anchor={menuMsg.anchor}
               isOwnMessage={menuMsg.msg.senderId === userId}
               canEdit={
                 !!userId &&

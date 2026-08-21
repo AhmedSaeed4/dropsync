@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { getEditorialThemeColors } from './editorial/editorialTheme';
 import type { MemberInfo } from '@/lib/workspaces';
@@ -13,6 +13,10 @@ interface MessageContextMenuProps {
   // the panel passes this in to align the menu's right edge to the panel's right edge; falls back to
   // the viewport width when not provided.
   rightBound?: number;
+  // Live link to the three-dots button that opened the menu. While provided, the menu tracks the
+  // button through viewport reshuffles (mobile keyboard collapse, window resize, rotation) and
+  // re-anchors below it; auto-closes if the button leaves the DOM.
+  anchor?: HTMLElement | null;
   isOwnMessage: boolean;
   onCopy: () => void;
   onDelete: () => void;
@@ -37,6 +41,7 @@ export function MessageContextMenu({
   x,
   y,
   rightBound,
+  anchor,
   isOwnMessage,
   onCopy,
   onDelete,
@@ -60,36 +65,54 @@ export function MessageContextMenu({
   // naturally on each reopen because the menu unmounts when menuMsg → null in the panel.
   const [view, setView] = useState<'actions' | 'seen'>('actions');
 
-  // Position the menu ONCE on open (deps [x, y]) so its corner never moves when Seen is tapped → no
-  // jump. The taller/wider roster is handled WITHOUT repositioning: horizontally we reserve the
-  // roster width up front (224 = w-56, wider than the actions list, so it is the binding constraint);
-  // vertically the roster body is capped to the on-screen space below the menu top (dynamic
-  // rosterMaxH in renderSeenList) and scrolls internally. No ResizeObserver, no size-watcher.
-  useLayoutEffect(() => {
-    if (!menuRef.current) return;
-    const rect = menuRef.current.getBoundingClientRect();
+  const placeAt = useCallback((baseX: number, baseY: number) => {
+    const menuEl = menuRef.current;
+    if (!menuEl) return;
+    const rect = menuEl.getBoundingClientRect();
     // Horizontal: reserve the roster width (224 = w-56) so the menu already fits the WIDER seen view
-    // at open and never has to re-flip when Seen is tapped. The right bound is the CHAT PANEL's right
-    // edge (rightBound, passed in — the menu is a portal with no DOM link to the panel), falling back
-    // to the viewport; the 8px inset keeps a breathing margin so the menu aligns to but isn't flush
-    // with the panel's right edge. left = x; shift left only if the roster width would run past it.
+    // at open and never has to re-flip when Seen is tapped. Right bound = chat panel edge (or viewport),
+    // minus an 8px breathing margin.
     const ROSTER_W = 224;
     const boundRight = (rightBound ?? window.innerWidth) - 8;
-    let newX = x;
-    if (newX + ROSTER_W > boundRight) {
-      newX = boundRight - ROSTER_W;
-    }
-    // Vertical: prefer below the button; flip up only if the small actions menu itself wouldn't fit.
-    let newY = y;
-    if (newY + rect.height > window.innerHeight) {
-      newY = y - rect.height;
-    }
+    let newX = baseX;
+    if (newX + ROSTER_W > boundRight) newX = boundRight - ROSTER_W;
+    // Vertical: prefer below the button; flip up only if the actions menu wouldn't fit below.
+    let newY = baseY;
+    if (newY + rect.height > window.innerHeight) newY = baseY - rect.height;
     setAdjustedPos({
       x: Math.max(8, newX),
       y: Math.max(8, newY),
     });
     setReady(true);
-  }, [x, y, rightBound]);
+  }, [rightBound]);
+
+  // Initial placement — unchanged behavior (once per open / x-y change) so a Seen tap never jumps.
+  useLayoutEffect(() => {
+    placeAt(x, y);
+  }, [x, y, placeAt]);
+
+  // Follow the anchor through viewport reshuffles while open. Mobile keyboards collapse via
+  // visualViewport resize/scroll events; desktop window resizes and device rotation surface as
+  // window resize. Every event re-reads the button's CURRENT rect and re-places the menu with the
+  // same flip/clamp math. A gone anchor (message deleted, panel switched) closes the menu instead
+  // of leaving it floating over stale space.
+  useEffect(() => {
+    if (!anchor) return;
+    const reposition = () => {
+      if (!anchor.isConnected) { onClose(); return; }
+      const r = anchor.getBoundingClientRect();
+      placeAt(r.left, r.bottom);
+    };
+    const vv = window.visualViewport;
+    vv?.addEventListener('resize', reposition);
+    vv?.addEventListener('scroll', reposition);
+    window.addEventListener('resize', reposition);
+    return () => {
+      vv?.removeEventListener('resize', reposition);
+      vv?.removeEventListener('scroll', reposition);
+      window.removeEventListener('resize', reposition);
+    };
+  }, [anchor, onClose, placeAt]);
 
   // Close on Escape or click outside
   useEffect(() => {
@@ -247,7 +270,7 @@ export function MessageContextMenu({
         className={`fixed z-[201] ${tc!.cardBg} border ${tc!.border} ${tc!.roundedClass} shadow-lg py-1 ${view === 'seen' ? 'w-56' : 'min-w-[140px]'}`}
         onClick={stopEvent}
         onContextMenu={stopEvent}
-        style={{ left: `${adjustedPos.x}px`, top: `${adjustedPos.y}px`, visibility: ready ? 'visible' : 'hidden' }}
+        style={{ left: `${adjustedPos.x}px`, top: `${adjustedPos.y}px`, visibility: ready ? 'visible' : 'hidden', transition: 'top 120ms ease-out, left 120ms ease-out' }}
       >
         {view === 'actions' && (
           <>
@@ -336,7 +359,7 @@ export function MessageContextMenu({
         }`}
         onClick={stopEvent}
         onContextMenu={stopEvent}
-        style={{ left: `${adjustedPos.x}px`, top: `${adjustedPos.y}px`, visibility: ready ? 'visible' : 'hidden' }}
+        style={{ left: `${adjustedPos.x}px`, top: `${adjustedPos.y}px`, visibility: ready ? 'visible' : 'hidden', transition: 'top 120ms ease-out, left 120ms ease-out' }}
       >
         {view === 'actions' && (
           <>
