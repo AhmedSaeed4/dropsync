@@ -12,6 +12,7 @@ import { Toast } from '@/components/Toast';
 import { deleteDrop, moveDrop, copyDrop, pinDrop, unpinDrop, isReminderFiredShared, isReminderGlowingForViewer } from '@/lib/drops';
 import { usePendingDeletions, requestDelete, undo, dismiss } from '@/lib/pendingDeletions';
 import { ensureCategoriesForTarget } from '@/lib/categories';
+import { dropMatchesSearchQuery } from '@/lib/youtubeLabels';
 import { EditorialMoveDropModal } from './EditorialMoveDropModal';
 import { getEditorialThemeColors } from './editorialTheme';
 import { MemberInfo } from '@/lib/workspaces';
@@ -557,7 +558,7 @@ export function EditorialDropList({
   const filteredDrops = useMemo(() => {
     const now = new Date();
     const filtered = visibleDrops.filter(drop => {
-      if (searchQuery && !drop.name.toLowerCase().includes(searchQuery.toLowerCase())) {
+      if (searchQuery && !dropMatchesSearchQuery(drop, searchQuery)) {
         return false;
       }
       if (mentionFilter && drop.userId !== mentionFilter.uid) {

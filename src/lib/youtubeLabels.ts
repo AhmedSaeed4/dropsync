@@ -261,6 +261,33 @@ export function normalizeYoutubeLabels(value: unknown): YouTubeVideoLabel[] {
   return result;
 }
 
+/**
+ * Search-box matcher shared by BOTH list layouts (classic + editorial) so they
+ * can never drift. Two modes:
+ * - plain query  → case-insensitive substring match on the drop NAME
+ *   (byte-for-byte today's behavior, including no trimming);
+ * - '#'-prefixed → searches saved YouTube label TITLES and CHANNEL names
+ *   instead (name ignored). Requires length > 1, so a bare '#' falls through
+ *   to plain name matching for the literal '#' character.
+ * Labels were normalized at load time (drops.ts), so no re-normalization
+ * happens on this per-keystroke hot path.
+ */
+export function dropMatchesSearchQuery(
+  drop: Pick<Drop, 'name' | 'youtubeVideoLabels'>,
+  rawQuery: string,
+): boolean {
+  const query = rawQuery.toLowerCase();
+  if (!query) return true;
+  if (query.startsWith('#') && query.length > 1) {
+    const term = query.slice(1);
+    return (drop.youtubeVideoLabels ?? []).some(label =>
+      label.title.toLowerCase().includes(term) ||
+      (!!label.channel && label.channel.toLowerCase().includes(term))
+    );
+  }
+  return drop.name.toLowerCase().includes(query);
+}
+
 export function getYouTubeVideoId(value: string): string | null {
   const text = (value || '').trim();
   if (VIDEO_ID_RE.test(text)) return text;
