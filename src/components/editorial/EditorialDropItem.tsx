@@ -473,7 +473,7 @@ export const EditorialDropItem = memo(function EditorialDropItem({
       onClick={() => selectionMode ? onSelect(drop.id) : onPreview(drop)}
       {...contextMenuProps}
       className={`relative select-none ${tc.cardBg} ${tc.roundedClass} border ${tc.border} transition-all cursor-pointer group overflow-hidden ${
-        selected ? `${tc.activePillBg} ${tc.activePillText}` : tc.hoverBorder
+        tc.hoverBorder
       }`}
     >
       {/* Pinned indicator */}
@@ -571,7 +571,7 @@ export const EditorialDropItem = memo(function EditorialDropItem({
             <h3
               className={`text-sm ${font} font-medium tracking-tight line-clamp-2 ${
                 reminderGlow && !selected ? 'animate-text-rgb' : ''
-              } ${selected ? tc.activePillText : tc.text}`}
+              } ${tc.text}`}
               title={drop.name}
             >
               {drop.name}
@@ -590,7 +590,7 @@ export const EditorialDropItem = memo(function EditorialDropItem({
               </span>
             )}
           </div>
-          <div className={`flex flex-wrap items-center gap-x-2 gap-y-1 mt-1 text-xs ${font} ${selected ? tc.inactivePillText : tc.muted}`}>
+          <div className={`flex flex-wrap items-center gap-x-2 gap-y-1 mt-1 text-xs ${font} ${tc.muted}`}>
             {drop.type === 'file' && drop.fileSize && (
               <span>{formatFileSize(drop.fileSize).toLowerCase()}</span>
             )}
@@ -598,25 +598,25 @@ export const EditorialDropItem = memo(function EditorialDropItem({
               contentReady ? (
                 <span>{`${displayContent.length} chars`}</span>
               ) : (
-                <span className={selected ? tc.inactivePillText : tc.muted}>decrypting…</span>
+                <span className={tc.muted}>decrypting…</span>
               )
             )}
             {/* Encryption indicator */}
             {drop.encrypted ? (
-              <span className={`flex items-center gap-1 ${selected ? tc.inactivePillText : tc.muted}`}>
+              <span className={`flex items-center gap-1 ${tc.muted}`}>
                 <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
                   <path d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                 </svg>
                 Encrypted
               </span>
             ) : null}
-            <span className={selected ? tc.inactivePillText : tc.muted}>
+            <span className={tc.muted}>
               {getTimeRemaining(drop.expiresAt)}
             </span>
           </div>
           {/* Text preview - single line truncated */}
           {!selectionMode && drop.type === 'text' && displayContent && !thumbnailSrc && (
-            <p className={`text-xs mt-1 ${font} ${selected ? tc.inactivePillText : tc.muted} leading-relaxed line-clamp-1`}>
+            <p className={`text-xs mt-1 ${font} ${tc.muted} leading-relaxed line-clamp-1`}>
               <DropMentionContent
                 content={displayContent}
                 allDrops={allDrops}
@@ -755,7 +755,7 @@ export const EditorialDropItem = memo(function EditorialDropItem({
       {/* Text preview with thumbnail - shown below the row for thumbnail variant */}
       {!selectionMode && drop.type === 'text' && displayContent && thumbnailSrc && (
         <div className={`px-3 pb-3 pt-0`}>
-          <p className={`text-xs ${font} ${selected ? tc.inactivePillText : tc.muted} leading-relaxed line-clamp-2`}>
+          <p className={`text-xs ${font} ${tc.muted} leading-relaxed line-clamp-2`}>
             <DropMentionContent
               content={displayContent}
               allDrops={allDrops}
