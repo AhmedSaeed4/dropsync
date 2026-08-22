@@ -12,6 +12,7 @@ export interface EditorialThemeColors {
   btnHoverText: string;
   activePillBg: string;
   activePillText: string;
+  activePillCountText: string;
   inactivePillBg: string;
   inactivePillText: string;
   inactivePillHoverBg: string;
@@ -40,6 +41,7 @@ export function getEditorialThemeColors(theme: Theme): EditorialThemeColors {
       btnHoverText: 'hover:text-[#0D0D0D]',
       activePillBg: 'bg-white',
       activePillText: 'text-[#0D0D0D]',
+      activePillCountText: 'text-[#0D0D0D]/55',
       inactivePillBg: 'bg-transparent',
       inactivePillText: 'text-white/60',
       inactivePillHoverBg: 'hover:bg-white/10',
@@ -68,6 +70,7 @@ export function getEditorialThemeColors(theme: Theme): EditorialThemeColors {
       btnHoverText: 'hover:text-white',
       activePillBg: 'bg-[#1a1a1a]',
       activePillText: 'text-white',
+      activePillCountText: 'text-white/70',
       inactivePillBg: 'bg-transparent',
       inactivePillText: 'text-[#4a4a4a]',
       inactivePillHoverBg: 'hover:bg-[#1a1a1a]/10',
@@ -96,6 +99,7 @@ export function getEditorialThemeColors(theme: Theme): EditorialThemeColors {
     btnHoverText: 'hover:text-white',
     activePillBg: 'bg-[#1a1a1a]',
     activePillText: 'text-white',
+    activePillCountText: 'text-white/70',
     inactivePillBg: 'bg-transparent',
     inactivePillText: 'text-[#666]',
     inactivePillHoverBg: 'hover:bg-[#1a1a1a]/10',
