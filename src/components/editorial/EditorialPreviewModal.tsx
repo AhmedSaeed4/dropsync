@@ -352,13 +352,13 @@ export function EditorialPreviewModal({ drop, onClose, onBack, canBack, theme = 
                     >
                       {fullscreenIcon}
                     </button>
-                    <pre className={`text-sm ${tc.fontClass} ${tc.text} whitespace-pre-wrap break-all ${isFullscreen ? 'h-full overflow-y-auto' : ''}`}>
+                    <pre className={`text-sm ${tc.fontClass} ${tc.text} leading-relaxed whitespace-pre-wrap break-all ${isFullscreen ? 'h-full overflow-y-auto' : ''}`}>
                       <DropMentionContent
                         content={drop.content}
                         allDrops={allDrops}
                         onPreview={onPreview}
-                        foundClassName={`inline-flex items-center mx-0.5 px-1.5 py-0.5 align-middle rounded text-[13px] ${tc.fontClass} ${tc.activePillBg} ${tc.activePillText} hover:opacity-80`}
-                        deletedClassName={`inline-flex items-center mx-0.5 px-1.5 py-0.5 align-middle rounded text-[13px] ${tc.fontClass} ${tc.inactivePillBg} ${tc.muted} line-through cursor-not-allowed`}
+                        foundClassName={`inline-flex items-center mx-0.5 my-0.5 px-1.5 py-0.5 align-middle rounded text-[13px] ${tc.fontClass} ${tc.activePillBg} ${tc.activePillText} hover:opacity-80`}
+                        deletedClassName={`inline-flex items-center mx-0.5 my-0.5 px-1.5 py-0.5 align-middle rounded text-[13px] ${tc.fontClass} ${tc.inactivePillBg} ${tc.muted} line-through cursor-not-allowed`}
                       />
                     </pre>
                   </div>
