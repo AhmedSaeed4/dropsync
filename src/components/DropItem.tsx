@@ -303,7 +303,7 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
   const tc = getThemeColors();
 
   // Inline mention-chip class strings — the shared DropMentionContent does the parse+render.
-  const chipBase = `inline-flex items-center mx-0.5 px-1.5 py-0.5 align-middle text-[11px] ${isMinimal ? 'rounded-full font-sans' : 'font-mono'}`;
+  const chipBase = `inline-flex items-center mx-0.5 my-0.5 px-1.5 py-0.5 align-middle text-[11px] ${isMinimal ? 'rounded-full font-sans' : 'font-mono'}`;
   const mentionFoundClass = `${chipBase} ${tc.selectedBg} text-white hover:opacity-80`;
   const mentionDeletedClass = `${chipBase} bg-[#1A1A1A]/10 ${tc.textMuted} line-through cursor-not-allowed`;
 
@@ -565,7 +565,7 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
       {/* Text Preview */}
       {!selectionMode && drop.type === 'text' && displayContent && (
         <div className={`border-t ${tc.borderColor} px-4 py-3 ${tc.textPreviewBg} overflow-hidden`}>
-          <p className={`${isMinimal ? 'text-sm font-sans tracking-wide' : 'text-xs font-mono'} ${tc.textPreviewColor} line-clamp-3 break-all`}>
+          <p className={`${isMinimal ? 'text-sm font-sans tracking-wide' : 'text-xs font-mono'} ${tc.textPreviewColor} leading-relaxed line-clamp-3 break-all`}>
             <DropMentionContent
               content={displayContent}
               allDrops={allDrops}

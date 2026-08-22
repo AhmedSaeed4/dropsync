@@ -153,7 +153,7 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
 
   // contentEditable mention editor — renders #[Name](id) tokens as inline chips while typing,
   // but keeps `content` as the plain token string (encrypt/save round-trip unchanged).
-  const mentionChipBase = `inline-flex items-center mx-0.5 px-1.5 py-0.5 align-middle text-[13px] ${isMinimal ? 'rounded-full font-sans' : 'font-mono'}`;
+  const mentionChipBase = `inline-flex items-center mx-0.5 my-0.5 px-1.5 py-0.5 align-middle text-[13px] ${isMinimal ? 'rounded-full font-sans' : 'font-mono'}`;
   const mentionFoundClass = `${mentionChipBase} ${isMinimal ? 'bg-[#1A1A1A]' : 'bg-[#FF5A47]'} text-white`;
   const mentionDeletedClass = `${mentionChipBase} bg-[#1A1A1A]/10 ${isMinimal ? 'text-[#1A1A1A]/50' : isDark ? 'text-white/50' : 'text-[#1A1A1A]/50'} line-through cursor-not-allowed`;
   const mention = useMentionEditor({
@@ -963,7 +963,7 @@ export function TextModal({ onSubmit, onClose, theme = 'light', customCategories
                    onBlur={mention.handleBlur}
                    role="textbox"
                    aria-multiline="true"
-                   className={`w-full border ${tc.borderColor} ${tc.inputBg} ${tc.textColor} px-4 py-3 text-sm ${isMinimal ? 'font-sans' : 'font-mono'} focus:outline-none focus:ring-2 focus:ring-[#1A1A1A] focus:border-transparent transition-colors duration-300 ${tc.roundedClass} ${isFullscreen ? 'h-full min-h-0' : 'min-h-[160px] max-h-[320px]'} overflow-y-auto whitespace-pre-wrap break-words`}
+                   className={`w-full border ${tc.borderColor} ${tc.inputBg} ${tc.textColor} px-4 py-3 text-sm ${isMinimal ? 'font-sans' : 'font-mono'} focus:outline-none focus:ring-2 focus:ring-[#1A1A1A] focus:border-transparent transition-colors duration-300 ${tc.roundedClass} ${isFullscreen ? 'h-full min-h-0' : 'min-h-[160px] max-h-[320px]'} overflow-y-auto whitespace-pre-wrap break-words leading-relaxed`}
                  />
                </div>
              </div>

@@ -204,7 +204,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
 
   // contentEditable mention editor — renders #[Name](id) tokens as inline chips while typing,
   // but keeps `content` as the plain token string (encrypt/save round-trip unchanged).
-  const mentionChipBase = `inline-flex items-center mx-0.5 px-1.5 py-0.5 align-middle rounded text-[13px] ${tc.fontClass}`;
+  const mentionChipBase = `inline-flex items-center mx-0.5 my-0.5 px-1.5 py-0.5 align-middle rounded text-[13px] ${tc.fontClass}`;
   const mention = useMentionEditor({
     content,
     setContent,
@@ -921,7 +921,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
                      onBlur={mention.handleBlur}
                      role="textbox"
                      aria-multiline="true"
-                     className={`w-full border ${tc.border} ${tc.bg} ${tc.text} px-4 py-3 text-sm rounded-lg focus:outline-none focus:border-[#1a1a1a] transition-colors ${tc.fontClass} ${isFullscreen ? 'h-full min-h-0' : 'min-h-[140px] max-h-[300px]'} overflow-y-auto whitespace-pre-wrap break-words`}
+                     className={`w-full border ${tc.border} ${tc.bg} ${tc.text} px-4 py-3 text-sm rounded-lg focus:outline-none focus:border-[#1a1a1a] transition-colors ${tc.fontClass} ${isFullscreen ? 'h-full min-h-0' : 'min-h-[140px] max-h-[300px]'} overflow-y-auto whitespace-pre-wrap break-words leading-relaxed`}
                    />
                  </div>
                </div>

@@ -213,7 +213,7 @@ export const EditorialDropItem = memo(function EditorialDropItem({
   const font = tc.fontClass;
 
   // Inline mention-chip class strings — the shared DropMentionContent does the parse+render.
-  const chipBase = `inline-flex items-center mx-0.5 px-1.5 py-0.5 align-middle rounded text-[11px] ${font}`;
+  const chipBase = `inline-flex items-center mx-0.5 my-0.5 px-1.5 py-0.5 align-middle rounded text-[11px] ${font}`;
   const mentionFoundClass = `${chipBase} ${tc.activePillBg} ${tc.activePillText} hover:opacity-80`;
   const mentionDeletedClass = `${chipBase} ${tc.inactivePillBg} ${tc.muted} line-through cursor-not-allowed`;
 
@@ -616,7 +616,7 @@ export const EditorialDropItem = memo(function EditorialDropItem({
           </div>
           {/* Text preview - single line truncated */}
           {!selectionMode && drop.type === 'text' && displayContent && !thumbnailSrc && (
-            <p className={`text-xs mt-1 ${font} ${selected ? tc.inactivePillText : tc.muted} line-clamp-1`}>
+            <p className={`text-xs mt-1 ${font} ${selected ? tc.inactivePillText : tc.muted} leading-relaxed line-clamp-1`}>
               <DropMentionContent
                 content={displayContent}
                 allDrops={allDrops}
@@ -755,7 +755,7 @@ export const EditorialDropItem = memo(function EditorialDropItem({
       {/* Text preview with thumbnail - shown below the row for thumbnail variant */}
       {!selectionMode && drop.type === 'text' && displayContent && thumbnailSrc && (
         <div className={`px-3 pb-3 pt-0`}>
-          <p className={`text-xs ${font} ${selected ? tc.inactivePillText : tc.muted} line-clamp-2`}>
+          <p className={`text-xs ${font} ${selected ? tc.inactivePillText : tc.muted} leading-relaxed line-clamp-2`}>
             <DropMentionContent
               content={displayContent}
               allDrops={allDrops}

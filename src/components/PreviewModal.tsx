@@ -374,13 +374,13 @@ export function PreviewModal({ drop, onClose, onBack, canBack, theme = 'light', 
                     >
                       {fullscreenIcon}
                     </button>
-                    <pre className={`${isMinimal ? 'text-sm font-sans' : 'text-sm font-mono'} ${tc.textColor} whitespace-pre-wrap break-all ${isFullscreen ? 'h-full overflow-y-auto' : ''}`}>
+                    <pre className={`${isMinimal ? 'text-sm font-sans' : 'text-sm font-mono'} ${tc.textColor} leading-relaxed whitespace-pre-wrap break-all ${isFullscreen ? 'h-full overflow-y-auto' : ''}`}>
                       <DropMentionContent
                         content={drop.content}
                         allDrops={allDrops}
                         onPreview={onPreview}
-                        foundClassName={`inline-flex items-center mx-0.5 px-1.5 py-0.5 align-middle text-[13px] ${isMinimal ? 'rounded-full font-sans' : 'font-mono'} ${isMinimal ? 'bg-[#1A1A1A]' : 'bg-[#FF5A47]'} text-white hover:opacity-80`}
-                        deletedClassName={`inline-flex items-center mx-0.5 px-1.5 py-0.5 align-middle text-[13px] ${isMinimal ? 'rounded-full font-sans' : 'font-mono'} bg-[#1A1A1A]/10 ${tc.textMuted2} line-through cursor-not-allowed`}
+                        foundClassName={`inline-flex items-center mx-0.5 my-0.5 px-1.5 py-0.5 align-middle text-[13px] ${isMinimal ? 'rounded-full font-sans' : 'font-mono'} ${isMinimal ? 'bg-[#1A1A1A]' : 'bg-[#FF5A47]'} text-white hover:opacity-80`}
+                        deletedClassName={`inline-flex items-center mx-0.5 my-0.5 px-1.5 py-0.5 align-middle text-[13px] ${isMinimal ? 'rounded-full font-sans' : 'font-mono'} bg-[#1A1A1A]/10 ${tc.textMuted2} line-through cursor-not-allowed`}
                       />
                     </pre>
                   </div>
