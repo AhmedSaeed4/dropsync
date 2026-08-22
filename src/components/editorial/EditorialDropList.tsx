@@ -183,6 +183,28 @@ export function EditorialDropList({
 }: EditorialDropListProps) {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  // Two-tap bulk-delete guard (owner-approved): first click arms, second click deletes.
+  // Auto-disarms after 3s, on outside click, on Cancel, or when the selection empties.
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
+  const bulkDeleteRef = useRef<HTMLButtonElement>(null);
+
+  // Auto-disarm after 3s; also when selection empties.
+  useEffect(() => {
+    if (!confirmBulkDelete) return;
+    const t = setTimeout(() => setConfirmBulkDelete(false), 3000);
+    return () => clearTimeout(t);
+  }, [confirmBulkDelete]);
+
+  // Outside click disarms; clicks on the confirm button itself are ignored.
+  useEffect(() => {
+    if (!confirmBulkDelete) return;
+    const onDocPointerDown = (e: PointerEvent) => {
+      if (bulkDeleteRef.current && e.target instanceof Node && bulkDeleteRef.current.contains(e.target)) return;
+      setConfirmBulkDelete(false);
+    };
+    document.addEventListener('pointerdown', onDocPointerDown);
+    return () => document.removeEventListener('pointerdown', onDocPointerDown);
+  }, [confirmBulkDelete]);
   const [deleting, setDeleting] = useState(false);
   // Single-drop delete-with-undo state lives in the shared module store (PR #168) so it survives a
   // classic<->editorial layout switch / client-side nav mid-30s-window. `pending` is the request-
@@ -227,26 +249,36 @@ export function EditorialDropList({
     setMentionDropdownOpen(true);
   };
 
-  // Stable (deps-free) via the functional updater so React.memo on the drop
-  // items holds — otherwise a fresh toggleSelect ref each render busts memo.
+  // Mirrors DropList.toggleSelect so both themes behave identically. Deps include
+  // selectedIds so the disarm-on-empty guard reads the live set; selection only
+  // changes in selection mode, so drag-frame memo stability is unaffected.
   const toggleSelect = useCallback((id: string) => {
-    setSelectedIds(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
-  }, []);
+    const next = new Set(selectedIds);
+    if (next.has(id)) {
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
+    setSelectedIds(next);
+    if (next.size === 0) setConfirmBulkDelete(false);
+  }, [selectedIds]);
 
   const selectAll = () => {
     if (selectedIds.size === filteredDrops.length) {
       setSelectedIds(new Set());
+      setConfirmBulkDelete(false);
     } else {
       setSelectedIds(new Set(filteredDrops.map(d => d.id)));
     }
+  };
+
+  const handleBulkDeleteClick = () => {
+    if (!confirmBulkDelete) {
+      setConfirmBulkDelete(true);
+      return;
+    }
+    setConfirmBulkDelete(false);
+    handleBulkDelete();
   };
 
   const handleBulkDelete = async () => {
@@ -261,11 +293,13 @@ export function EditorialDropList({
     setSelectionMode(false);
     onDelete();
     setDeleting(false);
+    setConfirmBulkDelete(false);
   };
 
   const cancelSelection = () => {
     setSelectedIds(new Set());
     setSelectionMode(false);
+    setConfirmBulkDelete(false);
   };
 
   // Single-drop delete-with-undo handlers — thin wrappers over the shared store (PR #168). The
@@ -682,7 +716,7 @@ export function EditorialDropList({
         >
           <span>{item.label}</span>
           {!loading && item.count !== undefined && (
-            <span className={`text-[10px] ${isActive ? tc.inactivePillText : tc.muted}`}>{item.count}</span>
+            <span className={`text-[10px] ${isActive ? tc.activePillCountText : tc.muted}`}>{item.count}</span>
           )}
         </button>
       );
@@ -696,7 +730,7 @@ export function EditorialDropList({
           className={`flex items-center gap-1.5 px-3 py-1.5 text-xs ${font} ${tc.roundedClass} transition-colors ${stateCls}`}
         >
           <span>Uncategorized</span>
-          <span className={`text-[10px] ${isActive ? tc.inactivePillText : tc.muted}`}>{item.count}</span>
+          <span className={`text-[10px] ${isActive ? tc.activePillCountText : tc.muted}`}>{item.count}</span>
         </button>
       );
     }
@@ -710,7 +744,7 @@ export function EditorialDropList({
           className={`flex items-center gap-1.5 px-3 py-1.5 text-xs ${font} ${tc.roundedClass} transition-colors ${stateCls} ${showDelete ? 'pr-1' : ''}`}
         >
           <span>{item.cat.name}</span>
-          <span className={`text-[10px] ${isActive ? tc.inactivePillText : tc.muted}`}>{item.count}</span>
+          <span className={`text-[10px] ${isActive ? tc.activePillCountText : tc.muted}`}>{item.count}</span>
         </button>
 
         {item.count === 0 && confirmDeleteCategory !== item.cat.id && (
@@ -1007,11 +1041,12 @@ export function EditorialDropList({
                       Move {selectedIds.size}
                     </button>
                     <button
-                      onClick={handleBulkDelete}
+                      ref={bulkDeleteRef}
+                      onClick={handleBulkDeleteClick}
                       disabled={deleting}
                       className={`text-xs ${font} px-3 py-1.5 ${tc.roundedClass} bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-50 flex items-center gap-1`}
                     >
-                      {deleting ? 'Deleting...' : `Delete ${selectedIds.size}`}
+                      {deleting ? 'Deleting...' : confirmBulkDelete ? `Confirm delete ${selectedIds.size}` : `Delete ${selectedIds.size}`}
                     </button>
                   </>
                 )}

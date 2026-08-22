@@ -41,6 +41,28 @@ interface DropListProps {
 export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspaces = [], theme = 'light', currentUserId, categories = [], onDeleteCategory, currentWorkspace, workspaceMembers, allDrops = [], onJoinCall, isReopenCallId, hoverable = false, onExportWorkspace, onExportPersonal }: DropListProps) {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  // Two-tap bulk-delete guard (owner-approved): first click arms, second click deletes.
+  // Auto-disarms after 3s, on outside click, on Cancel, or when the selection empties.
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
+  const bulkDeleteRef = useRef<HTMLButtonElement>(null);
+
+  // Auto-disarm after 3s; also when selection empties.
+  useEffect(() => {
+    if (!confirmBulkDelete) return;
+    const t = setTimeout(() => setConfirmBulkDelete(false), 3000);
+    return () => clearTimeout(t);
+  }, [confirmBulkDelete]);
+
+  // Outside click disarms; clicks on the confirm button itself are ignored.
+  useEffect(() => {
+    if (!confirmBulkDelete) return;
+    const onDocPointerDown = (e: PointerEvent) => {
+      if (bulkDeleteRef.current && e.target instanceof Node && bulkDeleteRef.current.contains(e.target)) return;
+      setConfirmBulkDelete(false);
+    };
+    document.addEventListener('pointerdown', onDocPointerDown);
+    return () => document.removeEventListener('pointerdown', onDocPointerDown);
+  }, [confirmBulkDelete]);
   const [deleting, setDeleting] = useState(false);
   // Single-drop delete-with-undo state lives in the shared module store (PR #168) so it survives a
   // classic<->editorial layout switch / client-side nav mid-30s-window. `pending` is the request-
@@ -91,14 +113,25 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
       newSelected.add(id);
     }
     setSelectedIds(newSelected);
+    if (newSelected.size === 0) setConfirmBulkDelete(false);
   };
 
   const selectAll = () => {
     if (selectedIds.size === filteredDrops.length) {
       setSelectedIds(new Set());
+      setConfirmBulkDelete(false);
     } else {
       setSelectedIds(new Set(filteredDrops.map(d => d.id)));
     }
+  };
+
+  const handleBulkDeleteClick = () => {
+    if (!confirmBulkDelete) {
+      setConfirmBulkDelete(true);
+      return;
+    }
+    setConfirmBulkDelete(false);
+    handleBulkDelete();
   };
 
   const handleBulkDelete = async () => {
@@ -113,11 +146,13 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
     setSelectionMode(false);
     onDelete();
     setDeleting(false);
+    setConfirmBulkDelete(false);
   };
 
   const cancelSelection = () => {
     setSelectedIds(new Set());
     setSelectionMode(false);
+    setConfirmBulkDelete(false);
   };
 
   // Single-drop delete-with-undo handlers — thin wrappers over the shared store (PR #168). The
@@ -465,12 +500,17 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
                     {isMinimal ? `Move ${selectedIds.size}` : `MOVE_${selectedIds.size}`}
                   </button>
                   <button
-                    onClick={handleBulkDelete}
+                    ref={bulkDeleteRef}
+                    onClick={handleBulkDeleteClick}
                     disabled={deleting}
                     className={`${tc.fontClass} ${isMinimal ? 'text-[#FF5A47] hover:text-[#1A1A1A]' : 'text-[#FF5A47] hover:text-white'} transition-colors disabled:opacity-50 flex items-center gap-2`}
                   >
                     {!isMinimal && <span className="w-2 h-2 bg-[#FF5A47]" />}
-                    {deleting ? (isMinimal ? 'Deleting...' : 'DELETING...') : (isMinimal ? `Delete ${selectedIds.size}` : `DELETE_${selectedIds.size}`)}
+                    {deleting
+                      ? (isMinimal ? 'Deleting...' : 'DELETING...')
+                      : confirmBulkDelete
+                        ? (isMinimal ? `Confirm delete ${selectedIds.size}` : `CONFIRM_DELETE_${selectedIds.size}`)
+                        : (isMinimal ? `Delete ${selectedIds.size}` : `DELETE_${selectedIds.size}`)}
                   </button>
                 </>
               )}
