@@ -25,6 +25,12 @@ interface EditorialSettingsModalProps {
   onToggleNotifications?: () => void;
   footerEnabled?: boolean;
   onToggleFooterEnabled?: () => void;
+  wordAnimEnabled?: boolean;
+  onToggleWordAnim?: () => void;
+  wordAnimStyle?: string;
+  onWordAnimStyleChange?: (s: string) => void;
+  wordAnimHold?: number;
+  onWordAnimHoldChange?: (ms: number) => void;
 }
 
 type Step = 'main' | 'delete-preview' | 'delete-confirm' | 'deleting' | 'deleted';
@@ -45,6 +51,12 @@ export function EditorialSettingsModal({
   onToggleNotifications,
   footerEnabled = true,
   onToggleFooterEnabled,
+  wordAnimEnabled,
+  onToggleWordAnim,
+  wordAnimStyle,
+  onWordAnimStyleChange,
+  wordAnimHold,
+  onWordAnimHoldChange,
 }: EditorialSettingsModalProps) {
   useBodyScrollLock();
   useModalBackClose(true, onClose);
@@ -53,6 +65,8 @@ export function EditorialSettingsModal({
   const [success, setSuccess] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'general' | 'appearance'>('general');
   const [step, setStep] = useState<Step>('main');
+  const [styleOpen, setStyleOpen] = useState(false);
+  const [holdOpen, setHoldOpen] = useState(false);
 
   // Profile name state
   const [profileName, setProfileName] = useState(user.displayName || '');
@@ -464,6 +478,110 @@ export function EditorialSettingsModal({
                   >
                     <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${notifEnabled ? 'translate-x-5' : ''}`} />
                   </button>
+                </div>
+              </div>
+
+              {/* Word Animation */}
+              <div>
+                <h3 className={`${tc.fontClass} ${tc.text} font-medium text-sm mb-3`}>
+                  Status Words
+                </h3>
+                <div className="space-y-2">
+                  <div className={`flex items-center justify-between p-3 rounded-lg border ${tc.border} ${tc.bg}`}>
+                    <div className="flex-1 pr-3">
+                      <p className={`${tc.fontClass} text-sm ${tc.text}`}>Animated status word</p>
+                      <p className={`text-xs mt-1 ${tc.muted} ${tc.fontClass}`}>
+                        Cycle creative words in the status line
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={!!wordAnimEnabled}
+                      onClick={onToggleWordAnim}
+                      className={`relative shrink-0 w-11 h-6 rounded-full transition-colors ${
+                        wordAnimEnabled ? 'bg-emerald-500' : 'bg-gray-400'
+                      }`}
+                    >
+                      <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${wordAnimEnabled ? 'translate-x-5' : ''}`} />
+                    </button>
+                  </div>
+                  {wordAnimEnabled && onWordAnimStyleChange && onWordAnimHoldChange && (
+                    <>
+                    <div className={`flex items-center justify-between p-3 rounded-lg border ${tc.border} ${tc.bg}`}>
+                      <div className="flex-1 pr-3">
+                        <p className={`${tc.fontClass} text-sm ${tc.text}`}>Animation style</p>
+                      </div>
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() => setStyleOpen(!styleOpen)}
+                          className={`flex items-center gap-2 border ${tc.border} ${tc.bg} rounded-md px-3 py-1.5 text-sm ${tc.fontClass} ${tc.text} hover:border-[#1a1a1a] transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)]`}
+                        >
+                          {(wordAnimStyle || 'cascade').charAt(0).toUpperCase() +
+                            (wordAnimStyle || 'cascade').slice(1)}
+                          <span className="text-xs opacity-60">&#9662;</span>
+                        </button>
+                        {styleOpen && (
+                          <>
+                            <div className="fixed inset-0 z-40" onClick={() => setStyleOpen(false)} />
+                            <div className={`absolute top-full right-0 mt-1 w-40 border ${tc.border} ${tc.bg} rounded-lg shadow-lg z-50 overflow-hidden`}>
+                              {[['smooth', 'Smooth'], ['slide', 'Slide'], ['melt', 'Melt'], ['cascade', 'Cascade'], ['ripple', 'Ripple'], ['flip', 'Flip'], ['glitch', 'Glitch'], ['combo', 'Combo']].map(([v, label]) => (
+                                <button
+                                  key={v}
+                                  type="button"
+                                  onClick={() => { onWordAnimStyleChange(v); setStyleOpen(false); }}
+                                  className={(wordAnimStyle || 'cascade') === v
+                                    ? `w-full px-3 py-2 text-left text-sm ${tc.fontClass} transition-colors ${theme === 'dark' ? 'bg-white/10 text-white' : `${tc.activePillBg} ${tc.activePillText}`}`
+                                    : `w-full px-3 py-2 text-left text-sm ${tc.fontClass} ${tc.text} hover:bg-[#1a1a1a]/5 transition-colors`}
+                                >
+                                  {label}
+                                </button>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <div className={`flex items-center justify-between p-3 rounded-lg border ${tc.border} ${tc.bg}`}>
+                      <div className="flex-1 pr-3">
+                        <p className={`${tc.fontClass} text-sm ${tc.text}`}>Word hold</p>
+                        <p className={`text-xs mt-1 ${tc.muted} ${tc.fontClass}`}>
+                          Time each word stays before morphing
+                        </p>
+                      </div>
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() => setHoldOpen(!holdOpen)}
+                          className={`flex items-center gap-2 border ${tc.border} ${tc.bg} rounded-md px-3 py-1.5 text-sm ${tc.fontClass} ${tc.text} hover:border-[#1a1a1a] transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)]`}
+                        >
+                          {(wordAnimHold || 35000) === 5000 ? '5 seconds' : (wordAnimHold || 35000) === 15000 ? '15 seconds' : '35 seconds'}
+                          <span className="text-xs opacity-60">&#9662;</span>
+                        </button>
+                        {holdOpen && (
+                          <>
+                            <div className="fixed inset-0 z-40" onClick={() => setHoldOpen(false)} />
+                            <div className={`absolute top-full right-0 mt-1 w-40 border ${tc.border} ${tc.bg} rounded-lg shadow-lg z-50 overflow-hidden`}>
+                              {[['5000', '5 seconds'], ['15000', '15 seconds'], ['35000', '35 seconds']].map(([v, label]) => (
+                                <button
+                                  key={v}
+                                  type="button"
+                                  onClick={() => { onWordAnimHoldChange(Number(v)); setHoldOpen(false); }}
+                                  className={(wordAnimHold || 35000) === Number(v)
+                                    ? `w-full px-3 py-2 text-left text-sm ${tc.fontClass} transition-colors ${theme === 'dark' ? 'bg-white/10 text-white' : `${tc.activePillBg} ${tc.activePillText}`}`
+                                    : `w-full px-3 py-2 text-left text-sm ${tc.fontClass} ${tc.text} hover:bg-[#1a1a1a]/5 transition-colors`}
+                                >
+                                  {label}
+                                </button>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    </>
+                  )}
                 </div>
               </div>
 
