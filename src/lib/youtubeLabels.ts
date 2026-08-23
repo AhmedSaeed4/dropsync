@@ -405,6 +405,52 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function resolveYouTubeVideoIdsDataApi(
+  videoIds: string[],
+  signal?: AbortSignal,
+): Promise<YouTubeResolveResponse | null> {
+  const apiKey = process.env.NEXT_PUBLIC_YOUTUBE_API_KEY;
+  if (!apiKey) return null;
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), YOUTUBE_RESOLVE_TIMEOUT_MS);
+  const abort = () => controller.abort();
+  signal?.addEventListener('abort', abort, { once: true });
+  try {
+    const response = await fetch(
+      `https://www.googleapis.com/youtube/v3/videos?part=snippet&id=${videoIds.join(',')}&key=${apiKey}`,
+      { signal: controller.signal },
+    );
+    if (!response.ok) return null;
+    const payload = await response.json().catch(() => null) as {
+      items?: Array<{ id?: unknown; snippet?: { title?: unknown; channelTitle?: unknown } }>;
+    } | null;
+    if (!payload || !Array.isArray(payload.items)) return null;
+    const labels: Array<Partial<YouTubeVideoLabel> & { source?: string }> = [];
+    for (const item of payload.items) {
+      const videoId = typeof item?.id === 'string' ? item.id : '';
+      const title = typeof item?.snippet?.title === 'string' ? item.snippet.title.trim().slice(0, 500) : '';
+      const channelValue = item?.snippet?.channelTitle;
+      const channel = typeof channelValue === 'string' && channelValue.trim()
+        ? channelValue.trim().slice(0, 200)
+        : null;
+      if (!videoId || !title) continue;
+      labels.push({ videoId, title, channel });
+    }
+    const foundIds = new Set(labels.map((label) => label.videoId));
+    return {
+      labels,
+      unresolved: videoIds
+        .filter((videoId) => !foundIds.has(videoId))
+        .map((videoId) => ({ videoId, reason: 'unavailable' })),
+    };
+  } catch {
+    return null;
+  } finally {
+    window.clearTimeout(timeout);
+    signal?.removeEventListener('abort', abort);
+  }
+}
+
 async function resolveYouTubeVideoIds(
   userId: string,
   videoIds: string[],
@@ -422,6 +468,8 @@ async function resolveYouTubeVideoIds(
   const abort = () => controller.abort();
   signal?.addEventListener('abort', abort, { once: true });
   try {
+    const direct = await resolveYouTubeVideoIdsDataApi(videoIds, signal);
+    if (direct) return direct;
     const response = await fetch(`${AGENT_URL}/youtube/resolve-labels`, {
       method: 'POST',
       headers: {
