@@ -203,6 +203,33 @@ export function EditorialLayout(props: EditorialLayoutProps) {
   // Move drop state
   const [moveDrops, setMoveDrops] = useState<Drop[] | null>(null);
   const [moveLoading, setMoveLoading] = useState(false);
+  const [wordAnimEnabled, setWordAnimEnabled] = useState(true);
+  const [wordAnimStyle, setWordAnimStyle] = useState('cascade');
+  const [wordAnimHold, setWordAnimHold] = useState(35000);
+
+  useEffect(() => {
+    try {
+      const e = localStorage.getItem('dropsync_word_anim_enabled');
+      if (e === 'false') setWordAnimEnabled(false);
+      const s = localStorage.getItem('dropsync_word_anim_style');
+      if (s) setWordAnimStyle(s);
+      const h = Number(localStorage.getItem('dropsync_word_anim_hold'));
+      if (h === 5000 || h === 15000 || h === 35000) setWordAnimHold(h);
+    } catch {}
+  }, []);
+
+  const updateWordAnimEnabled = (v: boolean) => {
+    setWordAnimEnabled(v);
+    try { localStorage.setItem('dropsync_word_anim_enabled', String(v)); } catch {}
+  };
+  const updateWordAnimStyle = (s: string) => {
+    setWordAnimStyle(s);
+    try { localStorage.setItem('dropsync_word_anim_style', s); } catch {}
+  };
+  const updateWordAnimHold = (ms: number) => {
+    setWordAnimHold(ms);
+    try { localStorage.setItem('dropsync_word_anim_hold', String(ms)); } catch {}
+  };
   // Preview-return memory: the drop the preview was showing when the move modal opened from the
   // preview. Re-opens the preview when the modal closes without a successful MOVE (or after a
   // successful COPY). Null for the bulk flow (EditorialDropList owns that modal) and cleared on a
@@ -405,6 +432,9 @@ export function EditorialLayout(props: EditorialLayoutProps) {
               encryptionInitializing={encryptionInitializing}
               theme={theme}
               showChat={showChat}
+              animEnabled={wordAnimEnabled}
+              animStyle={wordAnimStyle}
+              animHold={wordAnimHold}
             />
             <EditorialThemeSelector
               theme={theme}
@@ -695,6 +725,12 @@ export function EditorialLayout(props: EditorialLayoutProps) {
           onToggleNotifications={onToggleNotifications}
           footerEnabled={footerEnabled}
           onToggleFooterEnabled={onToggleFooterEnabled}
+          wordAnimEnabled={wordAnimEnabled}
+          onToggleWordAnim={() => updateWordAnimEnabled(!wordAnimEnabled)}
+          wordAnimStyle={wordAnimStyle}
+          onWordAnimStyleChange={updateWordAnimStyle}
+          wordAnimHold={wordAnimHold}
+          onWordAnimHoldChange={updateWordAnimHold}
         />
       )}
     </div>
