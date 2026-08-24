@@ -1670,6 +1670,9 @@ export default function Home() {
     setArchiveNotice([
       'Workspace backup exported. The original workspace was not changed.',
       result.skippedExpiredCount ? `${result.skippedExpiredCount} expired drop${result.skippedExpiredCount === 1 ? '' : 's'} skipped.` : '',
+      result.uneditableDrawingNames.length > 0
+        ? `${result.uneditableDrawingNames.length} drawing${result.uneditableDrawingNames.length === 1 ? '' : 's'} included without editable data (${result.uneditableDrawingNames.map((name) => `"${name}"`).join(', ')}).`
+        : '',
     ].filter(Boolean).join(' '));
   }, [categories, currentWorkspace, drops, resolvedWorkspaceMembers, user]);
 
@@ -1741,6 +1744,9 @@ export default function Home() {
       'Personal backup exported. Your personal drops were not changed.',
       result.skippedExpiredCount ? `${result.skippedExpiredCount} expired drop${result.skippedExpiredCount === 1 ? '' : 's'} skipped.` : '',
       skippedSummary,
+      result.uneditableDrawingNames.length > 0
+        ? `${result.uneditableDrawingNames.length} drawing${result.uneditableDrawingNames.length === 1 ? '' : 's'} included without editable data (${result.uneditableDrawingNames.map((name) => `"${name}"`).join(', ')}).`
+        : '',
     ].filter(Boolean).join(' '));
   }, [categories, currentWorkspace, drops, user]);
 

@@ -264,7 +264,7 @@ function sourceDropToManifest(
     name: drop.name,
     content,
     categories: getDropCategories(drop),
-    youtubeVideoLabels: drop.type === 'text' && !isPasswordCategories(getDropCategories(drop))
+    youtubeVideoLabels: drop.type === 'text' && !drop.isDrawing && !isPasswordCategories(getDropCategories(drop))
       ? normalizeYoutubeLabels(drop.youtubeVideoLabels)
       : undefined,
     pinned: !!drop.pinned,
@@ -337,7 +337,7 @@ function validateManifestBody(manifest: WorkspaceArchiveManifest): void {
     if (drop.isDrawing && !drop.payloads?.image) {
       throw new Error(`The drawing payload is missing for "${drop.name}".`);
     }
-    if (drop.youtubeVideoLabels !== undefined) {
+    if (drop.youtubeVideoLabels !== undefined && drop.youtubeVideoLabels.length > 0) {
       if (drop.type !== 'text' || drop.isDrawing || isPasswordCategories(drop.categories) || !Array.isArray(drop.youtubeVideoLabels)) {
         throw new Error(`The YouTube labels are invalid for "${drop.name}".`);
       }
@@ -397,7 +397,7 @@ export async function inspectWorkspaceArchive(
   }
 }
 
-export async function exportWorkspaceArchive(options: WorkspaceArchiveExportOptions): Promise<{ fileName: string; estimatedBytes: number; skippedExpiredCount: number }> {
+export async function exportWorkspaceArchive(options: WorkspaceArchiveExportOptions): Promise<{ fileName: string; estimatedBytes: number; skippedExpiredCount: number; uneditableDrawingNames: string[] }> {
   const { workspace, drops, categories, members, userId, password, signal, onProgress } = options;
   assertPassword(password);
   throwIfAborted(signal);
@@ -420,6 +420,7 @@ export async function exportWorkspaceArchive(options: WorkspaceArchiveExportOpti
   }
 
   const archiveDrops: WorkspaceArchiveDrop[] = [];
+  const uneditableDrawingNames: string[] = [];
   let estimatedBytes = 0;
   for (let index = 0; index < eligibleDrops.length; index++) {
     throwIfAborted(signal);
@@ -453,7 +454,7 @@ export async function exportWorkspaceArchive(options: WorkspaceArchiveExportOpti
         try {
           drawingScene = await extractDrawingScene(imageBytes);
         } catch {
-          throw new Error(`The Excalidraw scene could not be extracted for "${drop.name}".`);
+          uneditableDrawingNames.push(drop.name);
         }
       }
     }
@@ -602,7 +603,7 @@ export async function exportWorkspaceArchive(options: WorkspaceArchiveExportOpti
     await zipStream.close(undefined, { zip64: true });
     await pipePromise;
     await sink.finish();
-    return { fileName, estimatedBytes: estimatedArchiveBytes, skippedExpiredCount };
+    return { fileName, estimatedBytes: estimatedArchiveBytes, skippedExpiredCount, uneditableDrawingNames };
   } catch (error) {
     await sink.abort(error);
     await pipePromise.catch(() => {});
