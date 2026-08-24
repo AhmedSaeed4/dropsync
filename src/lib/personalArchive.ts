@@ -140,6 +140,7 @@ export interface PersonalArchiveExportResult {
   estimatedBytes: number;
   skippedExpiredCount: number;
   skippedDrops: PersonalArchiveSkippedDrop[];
+  uneditableDrawingNames: string[];
 }
 
 export interface PersonalArchiveImportOptions {
@@ -237,7 +238,7 @@ function sourceDropToManifest(
     name: drop.name,
     content,
     categories: getDropCategories(drop),
-    youtubeVideoLabels: drop.type === 'text' && !isPasswordCategories(getDropCategories(drop))
+    youtubeVideoLabels: drop.type === 'text' && !drop.isDrawing && !isPasswordCategories(getDropCategories(drop))
       ? normalizeYoutubeLabels(drop.youtubeVideoLabels)
       : undefined,
     pinned: !!drop.pinned,
@@ -514,6 +515,7 @@ export async function exportPersonalArchive(
   const archiveDrops: PersonalArchiveDrop[] = [];
   const preparedDrops = new Map<string, PreparedPersonalDrop>();
   const skippedDrops: PersonalArchiveSkippedDrop[] = [];
+  const uneditableDrawingNames: string[] = [];
   let skippedExpiredCount = 0;
   let estimatedBytes = 0;
 
@@ -568,7 +570,7 @@ export async function exportPersonalArchive(
           try {
             drawingScene = await extractDrawingScene(prepared.imageBytes);
           } catch {
-            throw new Error('The Excalidraw scene could not be extracted.');
+            uneditableDrawingNames.push(drop.name);
           }
         }
       }
@@ -713,7 +715,7 @@ export async function exportPersonalArchive(
     await zipStream.close(undefined, { zip64: true });
     await pipePromise;
     await sink.finish();
-    return { fileName, estimatedBytes: estimatedArchiveBytes, skippedExpiredCount, skippedDrops };
+    return { fileName, estimatedBytes: estimatedArchiveBytes, skippedExpiredCount, skippedDrops, uneditableDrawingNames };
   } catch (error) {
     await sink.abort(error);
     await pipePromise.catch(() => {});

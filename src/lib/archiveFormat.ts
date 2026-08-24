@@ -567,7 +567,7 @@ export async function readEncryptedDataUri(
 
 export async function extractDrawingScene(bytes: Uint8Array): Promise<unknown> {
   const { loadFromBlob: loadSceneFromBlob } = await import('@excalidraw/excalidraw');
-  const scene = await loadSceneFromBlob(new Blob([bytes as BlobPart]), null, null);
+  const scene = await loadSceneFromBlob(new Blob([bytes as BlobPart], { type: 'image/png' }), null, null);
   const serializable = {
     elements: scene.elements,
     appState: scene.appState,
