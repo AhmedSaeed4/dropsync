@@ -27,6 +27,15 @@ import { moveDrop, copyDrop } from '@/lib/drops';
 import { ensureCategoriesForTarget } from '@/lib/categories';
 import { LiveCallModal } from '../call/LiveCallModal';
 import type { CallMeshState } from '@/hooks/useLiveKitCall';
+import dynamic from 'next/dynamic';
+import { useIsPhone } from '@/hooks/useIsPhone';
+
+// Mobile shell (≤767px only) — lazy so desktop users never download it. ssr:false is safe:
+// the server render and first client render both take the desktop path (hook default false).
+const EditorialMobileShell = dynamic(
+  () => import('./mobile/EditorialMobileShell').then(m => m.EditorialMobileShell),
+  { ssr: false }
+);
 
 type Theme = 'light' | 'dark' | 'minimal';
 type LayoutMode = 'classic' | 'editorial';
@@ -241,6 +250,11 @@ export function EditorialLayout(props: EditorialLayoutProps) {
   const isMobile = useIsMobile();
   useModalBackClose(!!showChat, () => setShowChat(false), isMobile);
 
+  // Phone gate for the mobile redesign (decision #2: ≤767px). A NEW hook — useIsMobile above
+  // is the 1023px stacked-chat behavior and stays exactly as it is. Desktop/tablet JSX below
+  // is untouched; this early return is the only mobile-specific code in this file.
+  const isPhone = useIsPhone();
+
   // Re-open the preview with the drop the user was viewing before Move. An already-decrypted drop
   // renders instantly (no skeleton, no re-decrypt); a drop that was still decrypting when Move was
   // clicked runs the normal open flow (skeleton → decrypt → content).
@@ -349,6 +363,52 @@ export function EditorialLayout(props: EditorialLayoutProps) {
       handleOpenRootDrop(found);
     }
   };
+
+  // Phones render the dedicated mobile shell. Everything ≥768px falls through to the
+  // original tree below, byte-identical (decision #27 acceptance gate). Nothing merges
+  // to main until the whole mobile redesign is complete and owner-approved.
+  if (isPhone) {
+    return (
+      <EditorialMobileShell
+        theme={theme}
+        setTheme={setTheme}
+        encryptionInitializing={encryptionInitializing}
+        showChat={showChat}
+        setShowChat={setShowChat}
+        onToggleChat={onToggleChat}
+        unreadCount={unreadCount}
+        chatMode={chatMode}
+        setChatMode={setChatMode}
+        user={user}
+        showSettingsModal={showSettingsModal}
+        setShowSettingsModal={setShowSettingsModal}
+        onOpenSettings={() => { retractFooterIfUp(); setShowSettingsModal(true); }}
+        onSettingsClosedOrDismissed={() => { setShowSettingsModal(false); signOutUser(); }}
+        onResetPassword={resetPassword}
+        onReauthenticate={reauthenticateUser}
+        onNameUpdate={updateDisplayName}
+        onLayoutChange={setLayoutMode}
+        layoutMode={layoutMode}
+        notifPermission={notifPermission}
+        notifMuted={notifMuted}
+        onToggleNotifications={onToggleNotifications}
+        footerEnabled={footerEnabled}
+        onToggleFooterEnabled={onToggleFooterEnabled}
+        wordAnimEnabled={wordAnimEnabled}
+        onToggleWordAnim={() => updateWordAnimEnabled(!wordAnimEnabled)}
+        wordAnimStyle={wordAnimStyle}
+        onWordAnimStyleChange={updateWordAnimStyle}
+        wordAnimHold={wordAnimHold}
+        onWordAnimHoldChange={updateWordAnimHold}
+        currentWorkspaceId={currentWorkspaceId}
+        currentWorkspace={currentWorkspace}
+        workspaceMembers={resolvedWorkspaceMembers}
+        presenceMap={presenceMap}
+        drops={drops}
+        onPreviewDrop={handlePreviewDrop}
+      />
+    );
+  }
 
   return (
     <div className={`relative flex h-[100dvh] flex-col overflow-x-hidden ${tc.bg} transition-colors duration-500`}>
