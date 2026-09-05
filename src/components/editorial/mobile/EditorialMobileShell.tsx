@@ -188,6 +188,10 @@ export function EditorialMobileShell({
 
   useEffect(() => {
     setDropsSelecting(false);
+    // D16 rider: the tab views stay mounted now, so leaving Drops no longer unmounts its
+    // selection away — cancel it explicitly on any tab change (R3: a tab switch is outside
+    // the selection flow). The view's own signal effect does the clearing.
+    setDeselectSignal((n) => n + 1);
   }, [activeTab]);
 
   // OWNER REQUEST #3: header controls (chat / settings / theme) live here, above the Drops
@@ -292,9 +296,12 @@ export function EditorialMobileShell({
         }}
       />
 
-      {/* Active view panel — Drops is real (Order 2); Create/Search wait for their orders */}
+      {/* Active view panel — D16: all three views stay MOUNTED; the inactive one is hidden
+          (display:none), so Drops keeps its scroll position, loaded images, category filter,
+          and decryption across tab switches instead of rebuilding from zero. Order 3's real
+          Create view will inherit this keep-mounted behavior. */}
       <main className="flex-1 min-h-0">
-        {activeTab === 'drops' && (
+        <div className={activeTab === 'drops' ? 'h-full' : 'hidden'}>
           <MobileDropsView
             theme={theme}
             currentUserId={user?.uid ?? null}
@@ -324,13 +331,13 @@ export function EditorialMobileShell({
             onSelectionModeChange={setDropsSelecting}
             deselectSignal={deselectSignal}
           />
-        )}
-        {activeTab === 'create' && (
+        </div>
+        <div className={activeTab === 'create' ? 'h-full' : 'hidden'}>
           <MobileViewPlaceholder message="Create view lands in a later order." toneClass={`${tc.muted} ${tc.fontClass}`} />
-        )}
-        {activeTab === 'search' && (
+        </div>
+        <div className={activeTab === 'search' ? 'h-full' : 'hidden'}>
           <MobileViewPlaceholder message="Search view lands in a later order." toneClass={`${tc.muted} ${tc.fontClass}`} />
-        )}
+        </div>
       </main>
 
       {/* Chat overlay — the same full-screen treatment as EditorialLayout.tsx:484-501 on non-wide widths */}
