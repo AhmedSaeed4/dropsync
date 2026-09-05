@@ -19,6 +19,12 @@ interface EditorialWorkspaceSwitcherProps {
   showChat?: boolean;
   // Workspace ids with ≥1 unread @mention of this user → their names glow (tags-only signal).
   mentionedWorkspaceIds?: Set<string>;
+  // Mobile header fit (defect D2): the phone header hosts this switcher on the LEFT, where the
+  // desktop's right-0 dropdown would open off-screen and a long name would blow out the 56px
+  // row. When true: dropdown anchors left-0, and the pill clamps + truncates its label.
+  // Desktop never passes it — default false keeps every desktop call site rendering exactly
+  // as today (#3/#27).
+  mobileFit?: boolean;
 }
 
 export function EditorialWorkspaceSwitcher({
@@ -34,6 +40,7 @@ export function EditorialWorkspaceSwitcher({
   theme = 'light',
   showChat = false,
   mentionedWorkspaceIds,
+  mobileFit = false,
 }: EditorialWorkspaceSwitcherProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -98,7 +105,7 @@ export function EditorialWorkspaceSwitcher({
       {/* Main button - editorial pill style */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className={`flex items-center border ${tc.border} ${tc.bg} rounded-md hover:border-[#1a1a1a] transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${
+        className={`flex items-center border ${tc.border} ${tc.bg} ${mobileFit ? 'rounded-full' : 'rounded-md'} hover:border-[#1a1a1a] transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${mobileFit ? 'max-w-[46vw]' : ''} ${
           showChat ? 'gap-1.5 px-3 py-1.5' : 'gap-2 px-4 py-2'
         }`}
       >
@@ -119,7 +126,7 @@ export function EditorialWorkspaceSwitcher({
 
         {/* Workspace name */}
         <span
-          className={`${tc.fontClass} ${tc.text} transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${
+          className={`${tc.fontClass} ${tc.text} transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${mobileFit ? 'min-w-0 flex-1 truncate' : ''} ${
             showChat ? 'text-sm' : 'text-[15px]'
           }`}
         >
@@ -145,7 +152,7 @@ export function EditorialWorkspaceSwitcher({
         <>
           <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
           <div
-            className={`absolute top-full right-0 mt-1 w-48 sm:w-52 border ${tc.border} ${tc.bg} rounded-lg shadow-lg z-50 overflow-hidden`}
+            className={`absolute top-full mt-1 w-48 sm:w-52 border ${tc.border} ${tc.bg} rounded-lg shadow-lg z-50 overflow-hidden ${mobileFit ? 'left-0' : 'right-0'}`}
           >
             {/* Personal option + backup gear */}
             <div className={`flex items-stretch ${!currentWorkspace ? (theme === 'dark' ? 'bg-white/10 text-white' : `${tc.activePillBg} ${tc.activePillText}`) : tc.bg}`}>

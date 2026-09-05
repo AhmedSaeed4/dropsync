@@ -2,6 +2,7 @@
 
 import type { ReactNode } from 'react';
 import { getEditorialThemeColors } from '../editorialTheme';
+import { motion } from 'motion/react';
 
 type Theme = 'light' | 'dark' | 'minimal';
 type MobileTab = 'drops' | 'create' | 'search';
@@ -10,6 +11,9 @@ interface MobileNavbarProps {
   activeTab: MobileTab;
   onTabChange: (tab: MobileTab) => void;
   theme: Theme;
+  // While the Drops view is in select mode the bulk bar replaces this bar — it slides away
+  // (prototype `body.selecting .navbar`, :288). The shell mirrors the view's selection state.
+  hidden?: boolean;
 }
 
 // z-30 keeps the bar UNDER the z-40 chat overlay, mirroring the desktop non-wide treatment
@@ -44,7 +48,7 @@ const TABS: { id: MobileTab; label: string }[] = [
 ];
 
 // Floating bottom pill navbar (prototype's .navbar rebuilt with theme tokens, no hardcoded hexes).
-export function MobileNavbar({ activeTab, onTabChange, theme }: MobileNavbarProps) {
+export function MobileNavbar({ activeTab, onTabChange, theme, hidden = false }: MobileNavbarProps) {
   const tc = getEditorialThemeColors(theme);
 
   return (
@@ -52,7 +56,12 @@ export function MobileNavbar({ activeTab, onTabChange, theme }: MobileNavbarProp
       aria-label="Sections"
       className="pointer-events-none fixed inset-x-0 bottom-0 z-30 flex justify-center pb-[env(safe-area-inset-bottom)]"
     >
-      <div className={`pointer-events-auto mb-[14px] flex items-center gap-[2px] rounded-full border p-[6px] ${tc.cardBg} ${tc.border}`}>
+      <motion.div
+        initial={false}
+        animate={hidden ? { y: 90, opacity: 0 } : { y: 0, opacity: 1 }}
+        transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
+        className={`mb-[14px] flex items-center gap-[2px] rounded-full border p-[6px] ${tc.cardBg} ${tc.border} ${hidden ? 'pointer-events-none' : 'pointer-events-auto'}`}
+      >
         {TABS.map(({ id, label }) => {
           const active = activeTab === id;
           return (
@@ -71,7 +80,7 @@ export function MobileNavbar({ activeTab, onTabChange, theme }: MobileNavbarProp
             </button>
           );
         })}
-      </div>
+      </motion.div>
     </nav>
   );
 }

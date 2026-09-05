@@ -1,6 +1,13 @@
 'use client';
 
+import type { ComponentProps } from 'react';
 import { getEditorialThemeColors } from '../editorialTheme';
+import { EditorialWorkspaceSwitcher } from '../EditorialWorkspaceSwitcher';
+
+// The workspace-nav API the header hosts — the REAL switcher's own props minus the ones the
+// header fixes (theme) or never uses (showChat). The shell's workspaceNav object already has
+// exactly this shape, so its call site is untouched (defect D2: owner wants the old panel).
+export type MobileWorkspaceNav = Omit<ComponentProps<typeof EditorialWorkspaceSwitcher>, 'theme' | 'showChat'>;
 
 type Theme = 'light' | 'dark' | 'minimal';
 
@@ -11,16 +18,25 @@ interface MobileHeaderProps {
   chatOpen: boolean;
   unreadCount: number;
   onOpenSettings: () => void;
+  // Workspace-switcher slot (#6): the REAL workspace switcher hosts here on the left (owner
+  // ruling D2) when the active tab shows it (drops now, Create joins with its order).
+  activeTab?: 'drops' | 'create' | 'search';
+  workspaceNav?: MobileWorkspaceNav;
 }
 
-// Mobile header (decisions #6 + #13): no logo — chat, theme, settings icons on the right.
-// Desktop keeps its pills and its logo; this bar is shell-only.
-export function MobileHeader({ theme, onCycleTheme, onToggleChat, chatOpen, unreadCount, onOpenSettings }: MobileHeaderProps) {
+// Mobile header (decisions #6 + #13): no logo — the REAL workspace switcher on the left (owner
+// ruling D2, Drops tab), chat, theme, settings icons on the right. Desktop keeps its pills and
+// its logo; this bar is shell-only.
+export function MobileHeader({ theme, onCycleTheme, onToggleChat, chatOpen, unreadCount, onOpenSettings, activeTab, workspaceNav }: MobileHeaderProps) {
   const tc = getEditorialThemeColors(theme);
+  const showPill = !!workspaceNav && (activeTab === 'drops' || activeTab === 'create');
 
   return (
-    <header className={`${tc.bg} border-b ${tc.border} shrink-0 pt-[env(safe-area-inset-top)] transition-colors duration-500`}>
-      <div className="flex h-[56px] items-center justify-end px-4">
+    <header className={`${tc.bg} shrink-0 pt-[env(safe-area-inset-top)] transition-colors duration-500`}>
+      <div className={`flex items-center px-4 py-4 ${showPill ? 'justify-between' : 'justify-end'}`}>
+        {showPill && workspaceNav && (
+          <EditorialWorkspaceSwitcher {...workspaceNav} theme={theme} mobileFit />
+        )}
         <div className="flex items-center gap-2">
           {onToggleChat && (
             <button
