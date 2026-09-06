@@ -17,6 +17,7 @@ import type { MemberInfo } from '@/lib/workspaces';
 import { MobileHeader } from './MobileHeader';
 import { MobileNavbar } from './MobileNavbar';
 import { MobileDropsView } from './MobileDropsView';
+import { MobileCreateView } from './MobileCreateView';
 
 type Theme = 'light' | 'dark' | 'minimal';
 
@@ -333,7 +334,20 @@ export function EditorialMobileShell({
           />
         </div>
         <div className={activeTab === 'create' ? 'h-full' : 'hidden'}>
-          <MobileViewPlaceholder message="Create view lands in a later order." toneClass={`${tc.muted} ${tc.fontClass}`} />
+          <MobileCreateView
+            // R11/D19: whether Create is the visible tab — going inactive cancels a live dictation.
+            active={activeTab === 'create'}
+            theme={theme}
+            user={user}
+            currentUserId={user?.uid ?? null}
+            currentWorkspace={currentWorkspace}
+            currentWorkspaceId={currentWorkspaceId}
+            workspaceMembers={workspaceMembers}
+            drops={drops}
+            categories={categories}
+            onCreateCategory={onCreateCategory}
+            onCreated={() => setActiveTab('drops')}
+          />
         </div>
         <div className={activeTab === 'search' ? 'h-full' : 'hidden'}>
           <MobileViewPlaceholder message="Search view lands in a later order." toneClass={`${tc.muted} ${tc.fontClass}`} />
