@@ -22,6 +22,10 @@ interface DrawingCanvasProps {
   theme: 'light' | 'dark' | 'minimal';
   bgColor: string;
   initialScene?: { elements: any[]; appState: any; files?: any };
+  // Mobile Create flow (Order 3): mount directly in the internal fullscreen card.
+  startFullscreen?: boolean;
+  // Optional node rendered inside the fullscreen card above the pad (title + bg colors on phones).
+  header?: React.ReactNode;
 }
 
 const BG_COLORS = [
@@ -32,8 +36,8 @@ const BG_COLORS = [
   { value: '#000000', label: 'Black' },
 ];
 
-export function DrawingCanvas({ onSave, onCancel, onDraw, theme, bgColor, initialScene }: DrawingCanvasProps) {
-  const [isFullscreen, setIsFullscreen] = useState(false);
+export function DrawingCanvas({ onSave, onCancel, onDraw, theme, bgColor, initialScene, startFullscreen = false, header }: DrawingCanvasProps) {
+  const [isFullscreen, setIsFullscreen] = useState(!!startFullscreen);
   const apiRef = useRef<any>(null);
   const elementsRef = useRef<any[]>([]);
   const filesRef = useRef<any>(null);
@@ -91,10 +95,15 @@ export function DrawingCanvas({ onSave, onCancel, onDraw, theme, bgColor, initia
   return (
     <div className={isFullscreen ? 'fixed inset-0 z-[999] bg-black/40 flex items-center justify-center p-4' : ''}>
       <div className={`flex flex-col ${isFullscreen ? `w-full h-full max-w-[1200px] ${isDark ? 'bg-[#0D0D0D]' : 'bg-[#FAF7F2]'} ${roundedClass} overflow-hidden shadow-2xl` : 'gap-3'}`}>
+        {header && (
+          <div className="shrink-0 px-4 pt-3 pb-1">
+            {header}
+          </div>
+        )}
         <div className={isFullscreen ? 'flex-1 min-h-0 p-3' : ''}>
           <div
             className={`relative border ${isDark ? 'border-white/10' : 'border-[#1a1a1a]/20'} ${roundedClass} overflow-hidden`}
-            style={{ height: isFullscreen ? 'calc(100vh - 120px)' : 350 }}
+            style={{ height: isFullscreen ? (header ? 'calc(100vh - 168px)' : 'calc(100vh - 120px)') : 350 }}
           >
             <Excalidraw
               excalidrawAPI={handleAPI}
@@ -121,22 +130,24 @@ export function DrawingCanvas({ onSave, onCancel, onDraw, theme, bgColor, initia
               isCollaborating={false}
             />
             {/* Fullscreen toggle */}
-            <button
-              type="button"
-              onClick={() => setIsFullscreen(!isFullscreen)}
-              className={`absolute top-2 right-2 z-10 w-8 h-8 flex items-center justify-center bg-[#1a1a1a]/10 hover:bg-[#1a1a1a]/20 text-[#1a1a1a] ${roundedClass} transition-colors`}
-              title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-            >
-              {isFullscreen ? (
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" />
-                </svg>
-              ) : (
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
-                </svg>
-              )}
-            </button>
+            {!startFullscreen && (
+              <button
+                type="button"
+                onClick={() => setIsFullscreen(!isFullscreen)}
+                className={`absolute top-2 right-2 z-10 w-8 h-8 flex items-center justify-center bg-[#1a1a1a]/10 hover:bg-[#1a1a1a]/20 text-[#1a1a1a] ${roundedClass} transition-colors`}
+                title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+              >
+                {isFullscreen ? (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" />
+                  </svg>
+                ) : (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
+                  </svg>
+                )}
+              </button>
+            )}
           </div>
         </div>
         <div className={isFullscreen ? `shrink-0 px-4 py-3 border-t ${isDark ? 'border-white/10' : 'border-[#1a1a1a]/10'}` : ''}>

@@ -11,6 +11,10 @@ interface EditorialStatusPanelProps {
   animEnabled: boolean;
   animStyle: string;
   animHold: number;
+  // Defect D5: the mobile Drops view renders only the animated word — the count moves into the
+  // view's own "N drops · X expiring soon" subline. Default true keeps every desktop call site
+  // rendering exactly as today (#3/#27).
+  showCount?: boolean;
 }
 
 const WORDS = [
@@ -22,7 +26,7 @@ const WORDS = [
 
 const COMBO_STYLES = ['flip', 'smooth', 'ripple', 'cascade', 'glitch'];
 
-export function EditorialStatusPanel({ dropsCount, encryptionInitializing, theme, showChat = false, animEnabled, animStyle, animHold }: EditorialStatusPanelProps) {
+export function EditorialStatusPanel({ dropsCount, encryptionInitializing, theme, showChat = false, showCount = true, animEnabled, animStyle, animHold }: EditorialStatusPanelProps) {
   const tc = getEditorialThemeColors(theme);
   const wordRef = useRef<HTMLSpanElement>(null);
 
@@ -287,10 +291,14 @@ export function EditorialStatusPanel({ dropsCount, encryptionInitializing, theme
       <span ref={wordRef} className={tc.text}>
         {encryptionInitializing ? 'Setting up…' : 'Precipitating'}
       </span>
-      <span className={tc.muted}>&middot;</span>
-      <span>
-        {dropsCount} drops
-      </span>
+      {showCount && (
+        <>
+          <span className={tc.muted}>&middot;</span>
+          <span>
+            {dropsCount} drops
+          </span>
+        </>
+      )}
     </div>
   );
 }

@@ -1,0 +1,104 @@
+'use client';
+
+import type { ReactNode } from 'react';
+import { getEditorialThemeColors } from '../editorialTheme';
+import { motion, useReducedMotion } from 'motion/react';
+
+type Theme = 'light' | 'dark' | 'minimal';
+type MobileTab = 'drops' | 'create' | 'search';
+
+interface MobileNavbarProps {
+  activeTab: MobileTab;
+  onTabChange: (tab: MobileTab) => void;
+  theme: Theme;
+  // While the Drops view is in select mode the bulk bar replaces this bar — it slides away
+  // (prototype `body.selecting .navbar`, :288). The shell mirrors the view's selection state.
+  hidden?: boolean;
+}
+
+// z-30 keeps the bar UNDER the z-40 chat overlay, mirroring the desktop non-wide treatment
+// where the full-screen chat covers the entire app (EditorialLayout.tsx:479-501).
+const TAB_ICONS: Record<MobileTab, ReactNode> = {
+  drops: (
+    <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3.5" y="3.5" width="7.5" height="7.5" rx="2" />
+      <rect x="13" y="3.5" width="7.5" height="7.5" rx="2" />
+      <rect x="3.5" y="13" width="7.5" height="7.5" rx="2" />
+      <rect x="13" y="13" width="7.5" height="7.5" rx="2" />
+    </svg>
+  ),
+  create: (
+    <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round">
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M12 8.5v7M8.5 12h7" />
+    </svg>
+  ),
+  search: (
+    <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round">
+      <circle cx="11" cy="11" r="7" />
+      <path d="m20 20-3.5-3.5" />
+    </svg>
+  ),
+};
+
+const TABS: { id: MobileTab; label: string }[] = [
+  { id: 'drops', label: 'Drops' },
+  { id: 'create', label: 'Create' },
+  { id: 'search', label: 'Search' },
+];
+
+// Floating bottom pill navbar (prototype's .navbar rebuilt with theme tokens, no hardcoded hexes).
+export function MobileNavbar({ activeTab, onTabChange, theme, hidden = false }: MobileNavbarProps) {
+  const tc = getEditorialThemeColors(theme);
+  const prefersReducedMotion = useReducedMotion();
+  const tabIndex = TABS.findIndex((t) => t.id === activeTab);
+
+  return (
+    <nav
+      aria-label="Sections"
+      className="pointer-events-none fixed inset-x-0 bottom-0 z-30 flex justify-center pb-[env(safe-area-inset-bottom)]"
+    >
+      <motion.div
+        initial={false}
+        animate={hidden ? { y: 90, opacity: 0 } : { y: 0, opacity: 1 }}
+        transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
+        className={`relative mb-[14px] flex w-[216px] items-center gap-0 rounded-full border p-[6px] ${tc.cardBg} ${tc.border} ${hidden ? 'pointer-events-none' : 'pointer-events-auto'}`}
+      >
+        {/* R14: the desktop pill's elastic knob (pill.html:81-90) — one geometric third glides
+            behind the active tab; the 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) overshoot IS the
+            bounce. The buttons sit above it (z-10) and carry only the text colors. */}
+        <div
+          aria-hidden="true"
+          className={`pointer-events-none absolute rounded-full ${tc.activePillBg} shadow-[0_1px_3px_rgba(0,0,0,0.12)]`}
+          style={{
+            top: 6,
+            bottom: 6,
+            left: 6,
+            width: 'calc((100% - 12px) / 3)',
+            transform: `translateX(${tabIndex * 100}%)`,
+            transition: prefersReducedMotion ? 'none' : 'transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)',
+            willChange: 'transform',
+          }}
+        />
+        {TABS.map(({ id, label }) => {
+          const active = activeTab === id;
+          return (
+            <button
+              key={id}
+              type="button"
+              onClick={() => onTabChange(id)}
+              aria-label={label}
+              aria-current={active ? 'true' : undefined}
+              className={`relative z-10 flex min-w-0 flex-1 flex-col items-center gap-[2px] rounded-full px-[17px] py-[7px] transition-colors duration-300 ${
+                active ? tc.activePillText : tc.inactivePillText
+              }`}
+            >
+              {TAB_ICONS[id]}
+              <span className={`text-[10px] font-semibold tracking-[0.04em] ${tc.fontClass}`}>{label}</span>
+            </button>
+          );
+        })}
+      </motion.div>
+    </nav>
+  );
+}

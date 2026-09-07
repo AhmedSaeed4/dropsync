@@ -8,10 +8,12 @@ interface ToastProps {
   duration?: number;
   theme?: 'light' | 'dark' | 'minimal';
   editorial?: boolean;
+  // Mobile Create flow (Order 3): float above the mobile navbar instead of the bottom edge.
+  mobileFloat?: boolean;
   onDone: () => void;
 }
 
-export function Toast({ message, duration = 3, theme = 'light', editorial = false, onDone }: ToastProps) {
+export function Toast({ message, duration = 3, theme = 'light', editorial = false, mobileFloat = false, onDone }: ToastProps) {
   const [visible, setVisible] = useState(true);
   // Latest-callback ref: callers (chat panels, DropList) pass an inline onDone that is a NEW
   // function identity on every render. Keeping onDone OUT of the effect deps below means the
@@ -69,7 +71,7 @@ export function Toast({ message, duration = 3, theme = 'light', editorial = fals
         position: 'fixed',
         left: '50%',
         transform: 'translateX(-50%)',
-        bottom: '24px',
+        bottom: mobileFloat ? 'calc(100px + env(safe-area-inset-bottom))' : '24px',
         zIndex: 9999,
       }}
     >
