@@ -50,6 +50,9 @@ interface MobileDropsViewProps {
   onOpenMoveModal: (drops: Drop[]) => void;
   // Selection-mode mirror for the shell: slides the navbar away while selecting (OWNER REQUEST #2).
   onSelectionModeChange?: (v: boolean) => void;
+  // R15: report whether any Drops overlay is open (⋯ sheet or sort menu) — the shell drops
+  // the navbar while it is true.
+  onOverlayOpenChange?: (open: boolean) => void;
   // OWNER REQUEST #3: bumped by the shell whenever a header control (chat/settings/theme)
   // fires — those live above this view. Any non-zero bump cancels an open selection.
   deselectSignal?: number;
@@ -117,6 +120,7 @@ export function MobileDropsView({
   onEditDrop,
   onOpenMoveModal,
   onSelectionModeChange,
+  onOverlayOpenChange,
   deselectSignal,
 }: MobileDropsViewProps) {
   const tc = getEditorialThemeColors(theme);
@@ -167,6 +171,12 @@ export function MobileDropsView({
   const [pinLimitToast, setPinLimitToast] = useState(false);
   const [sheetDrop, setSheetDrop] = useState<Drop | null>(null);
   const [sortMenuOpen, setSortMenuOpen] = useState(false);
+
+  // R15: the shell drops the navbar while any Drops overlay is open (the ⋯ sheet or the
+  // sort menu) — the same signal pattern as the selection-mode report above.
+  useEffect(() => {
+    onOverlayOpenChange?.(!!sheetDrop || sortMenuOpen);
+  }, [sheetDrop, sortMenuOpen, onOverlayOpenChange]);
 
   const visibleDrops = drops.filter(d => !pendingDeletions.has(d.id) && !deletedDropIds.has(d.id));
 

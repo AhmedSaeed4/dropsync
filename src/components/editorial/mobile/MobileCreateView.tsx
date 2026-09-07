@@ -42,6 +42,10 @@ interface MobileCreateViewProps {
   // Whether Create is the visible tab (the shell's activeTab === 'create'). Going inactive
   // cancels a live dictation (OWNER REQUEST #11 / D19): leaving Create never leaves the mic on.
   active: boolean;
+  // R15: report whether any Create overlay is open (editor sheet / full-screen editor,
+  // draw-mode switch popup, drawing canvas, Forever lock modal) — the shell drops the
+  // navbar while it is true.
+  onOverlayOpenChange?: (open: boolean) => void;
 }
 
 // The expiry pills carry the prototype's SHORT face (1h/2h/6h/24h/Forever — prototype :557-563),
@@ -76,6 +80,7 @@ export function MobileCreateView({
   onCreateCategory,
   onCreated,
   active,
+  onOverlayOpenChange,
 }: MobileCreateViewProps) {
   const tc = getEditorialThemeColors(theme);
   const font = tc.fontClass;
@@ -106,6 +111,12 @@ export function MobileCreateView({
   // R7 full-screen editor panel — open, the editor body renders in the panel instead of the
   // card (exactly one mount at a time).
   const [editorExpanded, setEditorExpanded] = useState(false);
+
+  // R15: the shell drops the navbar while any Create overlay is open (editor sheet /
+  // full-screen editor, draw-mode switch popup, drawing canvas, Forever lock modal).
+  useEffect(() => {
+    onOverlayOpenChange?.(editorExpanded || switchSheet || drawOpen || showForeverLocked);
+  }, [editorExpanded, switchSheet, drawOpen, showForeverLocked, onOverlayOpenChange]);
   // R10 card stretch: the card body's height in px (84 = the built 3b field). The grabber on
   // the card's bottom edge drags it between 84 and ~55% of the viewport (demo-card-stretch).
   const [bodyH, setBodyH] = useState(84);

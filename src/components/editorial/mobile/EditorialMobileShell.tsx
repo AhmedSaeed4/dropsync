@@ -194,6 +194,12 @@ export function EditorialMobileShell({
   const [deselectSignal, setDeselectSignal] = useState(0);
   const cancelDropsSelection = () => setDeselectSignal((n) => n + 1);
 
+  // R15: mirrors of the three views' overlay state — the navbar drops while ANY overlay is
+  // open, the same slide as select mode. Each view reports through one callback prop.
+  const [dropsOverlayOpen, setDropsOverlayOpen] = useState(false);
+  const [createOverlayOpen, setCreateOverlayOpen] = useState(false);
+  const [searchOverlayOpen, setSearchOverlayOpen] = useState(false);
+
   const prefersReducedMotion = useReducedMotion();
 
   useEffect(() => {
@@ -243,6 +249,14 @@ export function EditorialMobileShell({
     setMoveReturnDrop(null);
     if (returnDrop) returnToPreview(returnDrop);
   };
+
+  // R15: one flag for the navbar — the views' overlays (reported via the three mirrors)
+  // plus the shell-hosted modals with translucent backdrops. Chat is excluded: its opaque
+  // full-screen cover (z-40) already hides the navbar completely.
+  const navbarHidden =
+    dropsSelecting || dropsOverlayOpen || createOverlayOpen || searchOverlayOpen ||
+    !!previewDrop || (!!moveDrops && moveDrops.length > 0) ||
+    showSettingsModal || showCreateModal || showJoinModal || !!workspaceToLeave;
 
   return (
     <div className={`relative flex h-[100dvh] flex-col overflow-x-hidden ${tc.bg} transition-colors duration-500`}>
@@ -331,6 +345,7 @@ export function EditorialMobileShell({
             onEditDrop={onEditDrop}
             onOpenMoveModal={setMoveDrops}
             onSelectionModeChange={setDropsSelecting}
+            onOverlayOpenChange={setDropsOverlayOpen}
             deselectSignal={deselectSignal}
           />
         </div>
@@ -351,6 +366,7 @@ export function EditorialMobileShell({
             categories={categories}
             onCreateCategory={onCreateCategory}
             onCreated={() => setActiveTab('drops')}
+            onOverlayOpenChange={setCreateOverlayOpen}
           />
         </div>
         <div
@@ -367,6 +383,7 @@ export function EditorialMobileShell({
             workspaceMembers={workspaceMembers}
             hoverable={hoverable}
             active={activeTab === 'search'}
+            onOverlayOpenChange={setSearchOverlayOpen}
             onPreview={onOpenRootDrop}
             onEditDrop={onEditDrop}
             onOpenMoveModal={setMoveDrops}
@@ -573,7 +590,7 @@ export function EditorialMobileShell({
       )}
 
       {/* Bottom floating navbar (Drops · Create · Search) */}
-      <MobileNavbar activeTab={activeTab} onTabChange={setActiveTab} theme={theme} hidden={dropsSelecting} />
+      <MobileNavbar activeTab={activeTab} onTabChange={setActiveTab} theme={theme} hidden={navbarHidden} />
     </div>
   );
 }

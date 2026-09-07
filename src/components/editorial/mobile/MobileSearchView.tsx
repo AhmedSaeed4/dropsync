@@ -36,6 +36,8 @@ interface MobileSearchViewProps {
   onOpenMoveModal: (drops: Drop[]) => void;
   onJoinCall?: (drop: Drop) => void;
   isReopenCallId?: string;
+  // R15: report whether the ⋯ sheet is open — the shell drops the navbar while it is true.
+  onOverlayOpenChange?: (open: boolean) => void;
 }
 
 // Verbatim port of EditorialDropList :88-115 (same copy MobileDropsView carries) — frozen sort semantics; duplicated intentionally, see order §6.
@@ -91,6 +93,7 @@ export function MobileSearchView({
   onOpenMoveModal,
   onJoinCall,
   isReopenCallId,
+  onOverlayOpenChange,
 }: MobileSearchViewProps) {
   const tc = getEditorialThemeColors(theme);
   const font = tc.fontClass;
@@ -102,6 +105,11 @@ export function MobileSearchView({
   const [mentionSearch, setMentionSearch] = useState('');
   const [mentionOpen, setMentionOpen] = useState(false);
   const [sheetDrop, setSheetDrop] = useState<Drop | null>(null);
+
+  // R15: the shell drops the navbar while the ⋯ sheet is open.
+  useEffect(() => {
+    onOverlayOpenChange?.(!!sheetDrop);
+  }, [sheetDrop, onOverlayOpenChange]);
   const [pinLimitToast, setPinLimitToast] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
