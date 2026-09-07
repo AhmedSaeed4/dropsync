@@ -142,6 +142,9 @@ export interface UseMentionEditorOptions {
   excludeUid?: string;
   // Full className for an @member chip in the editor (single style — no found/deleted split).
   memberClassName?: string;
+  // Mobile Create multi-mount mode (D22) — see setEditorRef below. Omitted/undefined keeps the
+  // classic single-editor detach semantics for every existing consumer (chat panels, modals).
+  keepRefOnDetach?: boolean;
 }
 
 export function useMentionEditor({
@@ -154,6 +157,7 @@ export function useMentionEditor({
   allMembers,
   excludeUid,
   memberClassName,
+  keepRefOnDetach,
 }: UseMentionEditorOptions) {
   const editorRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -187,13 +191,22 @@ export function useMentionEditor({
   // AND the chat panels' focus/auto-grow effects — keep working unchanged) AND bumps mountKey on
   // attach so the sync effect re-runs. The drop-note editor keeps using ref={mention.editorRef}
   // directly (no callback, never remounts → mountKey stays 0 → no behavior change).
+  //
+  // Multi-mount callers (keepRefOnDetach — mobile Create only, D22): the caller renders the SAME
+  // editor JSX in two conditional places (composer card + full-screen panel). During the panel's
+  // AnimatePresence exit slide BOTH copies are alive; when the exiting copy finally unmounts, its
+  // ref-detach fires with null — nulling editorRef.current here would cut the bridge to the
+  // SURVIVING copy (typing stops syncing to state, Create saves stale text, clearDraft can't wipe
+  // the DOM). With the flag, a null detach is ignored; a real attach always overwrites, so exactly
+  // one live node stays wired.
   const setEditorRef = useCallback((node: HTMLDivElement | null) => {
+    if (node === null && keepRefOnDetach) return;
     editorRef.current = node;
     if (node) {
       lastSerializedRef.current = null;   // force the guard below to see `content` as new
       setMountKey((k) => k + 1);
     }
-  }, []);
+  }, [keepRefOnDetach]);
 
   const filteredMentionDrops = useMemo(() => {
     const q = mentionQuery.toLowerCase().trim();

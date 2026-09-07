@@ -151,6 +151,9 @@ export function MobileCreateView({
     allDrops: drops,
     foundClassName: `${mentionChipBase} ${tc.activePillBg} ${tc.activePillText}`,
     deletedClassName: `${mentionChipBase} ${tc.inactivePillBg} ${tc.muted} line-through cursor-not-allowed`,
+    // D22: the editorBody mounts in two places (card + full-screen panel); the panel's exit
+    // slide must not cut the ref bridge to the surviving copy when it finally unmounts.
+    keepRefOnDetach: true,
   });
 
   const showToast = (msg: string) => {
