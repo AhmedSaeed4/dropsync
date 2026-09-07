@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useReducedMotion } from 'motion/react';
 import { Drop, Workspace, Category, ExpirationOption } from '@/types';
 import { getEditorialThemeColors } from '../editorialTheme';
 import { EditorialChatPanel } from '../EditorialChatPanel';
@@ -193,6 +194,8 @@ export function EditorialMobileShell({
   const [deselectSignal, setDeselectSignal] = useState(0);
   const cancelDropsSelection = () => setDeselectSignal((n) => n + 1);
 
+  const prefersReducedMotion = useReducedMotion();
+
   useEffect(() => {
     try {
       const t = localStorage.getItem('dropsync_editorial_mobile_tab');
@@ -289,12 +292,18 @@ export function EditorialMobileShell({
         }}
       />
 
-      {/* Active view panel — D16: all three views stay MOUNTED; the inactive one is hidden
-          (display:none), so Drops keeps its scroll position, loaded images, category filter,
-          and decryption across tab switches instead of rebuilding from zero. Order 3's real
-          Create view will inherit this keep-mounted behavior. */}
-      <main className="flex-1 min-h-0">
-        <div className={activeTab === 'drops' ? 'h-full' : 'hidden'}>
+      {/* Active view panel — D16: all three views stay MOUNTED (unchanged); the inactive one is
+          hidden via visibility:hidden + opacity 0 (NOT display:none) so tab switches crossfade
+          (R13, tuned Orders 5b–5c): the outgoing view fades out 0.25s; the incoming view waits 0.1s
+          then fades in 0.3s — the pause lets the phone paint the heavy view before the fade
+          plays (the instant-appear cure); reduced motion = instant. Scroll position, loaded
+          images, category filter, decryption and the voice-cancel wiring all survive exactly
+          as before. */}
+      <main className="relative flex-1 min-h-0">
+        <div
+          className={`absolute inset-0 ${activeTab === 'drops' ? 'visible opacity-100 z-10' : 'invisible pointer-events-none opacity-0'}`}
+          style={{ transition: prefersReducedMotion ? 'none' : `opacity ${activeTab === 'drops' ? '0.3s cubic-bezier(0.4, 0, 0.2, 1) 0.1s' : '0.25s cubic-bezier(0.4, 0, 0.2, 1)'}, visibility ${activeTab === 'drops' ? '0.3s cubic-bezier(0.4, 0, 0.2, 1) 0.1s' : '0.25s cubic-bezier(0.4, 0, 0.2, 1)'}` }}
+        >
           <MobileDropsView
             theme={theme}
             currentUserId={user?.uid ?? null}
@@ -325,7 +334,10 @@ export function EditorialMobileShell({
             deselectSignal={deselectSignal}
           />
         </div>
-        <div className={activeTab === 'create' ? 'h-full' : 'hidden'}>
+        <div
+          className={`absolute inset-0 ${activeTab === 'create' ? 'visible opacity-100 z-10' : 'invisible pointer-events-none opacity-0'}`}
+          style={{ transition: prefersReducedMotion ? 'none' : `opacity ${activeTab === 'create' ? '0.3s cubic-bezier(0.4, 0, 0.2, 1) 0.1s' : '0.25s cubic-bezier(0.4, 0, 0.2, 1)'}, visibility ${activeTab === 'create' ? '0.3s cubic-bezier(0.4, 0, 0.2, 1) 0.1s' : '0.25s cubic-bezier(0.4, 0, 0.2, 1)'}` }}
+        >
           <MobileCreateView
             // R11/D19: whether Create is the visible tab — going inactive cancels a live dictation.
             active={activeTab === 'create'}
@@ -341,7 +353,10 @@ export function EditorialMobileShell({
             onCreated={() => setActiveTab('drops')}
           />
         </div>
-        <div className={activeTab === 'search' ? 'h-full' : 'hidden'}>
+        <div
+          className={`absolute inset-0 ${activeTab === 'search' ? 'visible opacity-100 z-10' : 'invisible pointer-events-none opacity-0'}`}
+          style={{ transition: prefersReducedMotion ? 'none' : `opacity ${activeTab === 'search' ? '0.3s cubic-bezier(0.4, 0, 0.2, 1) 0.1s' : '0.25s cubic-bezier(0.4, 0, 0.2, 1)'}, visibility ${activeTab === 'search' ? '0.3s cubic-bezier(0.4, 0, 0.2, 1) 0.1s' : '0.25s cubic-bezier(0.4, 0, 0.2, 1)'}` }}
+        >
           <MobileSearchView
             theme={theme}
             currentUserId={user?.uid ?? null}

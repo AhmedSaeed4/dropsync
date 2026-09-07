@@ -2,7 +2,7 @@
 
 import type { ReactNode } from 'react';
 import { getEditorialThemeColors } from '../editorialTheme';
-import { motion } from 'motion/react';
+import { motion, useReducedMotion } from 'motion/react';
 
 type Theme = 'light' | 'dark' | 'minimal';
 type MobileTab = 'drops' | 'create' | 'search';
@@ -50,6 +50,8 @@ const TABS: { id: MobileTab; label: string }[] = [
 // Floating bottom pill navbar (prototype's .navbar rebuilt with theme tokens, no hardcoded hexes).
 export function MobileNavbar({ activeTab, onTabChange, theme, hidden = false }: MobileNavbarProps) {
   const tc = getEditorialThemeColors(theme);
+  const prefersReducedMotion = useReducedMotion();
+  const tabIndex = TABS.findIndex((t) => t.id === activeTab);
 
   return (
     <nav
@@ -60,8 +62,24 @@ export function MobileNavbar({ activeTab, onTabChange, theme, hidden = false }: 
         initial={false}
         animate={hidden ? { y: 90, opacity: 0 } : { y: 0, opacity: 1 }}
         transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
-        className={`mb-[14px] flex items-center gap-[2px] rounded-full border p-[6px] ${tc.cardBg} ${tc.border} ${hidden ? 'pointer-events-none' : 'pointer-events-auto'}`}
+        className={`relative mb-[14px] flex w-[216px] items-center gap-0 rounded-full border p-[6px] ${tc.cardBg} ${tc.border} ${hidden ? 'pointer-events-none' : 'pointer-events-auto'}`}
       >
+        {/* R14: the desktop pill's elastic knob (pill.html:81-90) — one geometric third glides
+            behind the active tab; the 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) overshoot IS the
+            bounce. The buttons sit above it (z-10) and carry only the text colors. */}
+        <div
+          aria-hidden="true"
+          className={`pointer-events-none absolute rounded-full ${tc.activePillBg} shadow-[0_1px_3px_rgba(0,0,0,0.12)]`}
+          style={{
+            top: 6,
+            bottom: 6,
+            left: 6,
+            width: 'calc((100% - 12px) / 3)',
+            transform: `translateX(${tabIndex * 100}%)`,
+            transition: prefersReducedMotion ? 'none' : 'transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)',
+            willChange: 'transform',
+          }}
+        />
         {TABS.map(({ id, label }) => {
           const active = activeTab === id;
           return (
@@ -71,8 +89,8 @@ export function MobileNavbar({ activeTab, onTabChange, theme, hidden = false }: 
               onClick={() => onTabChange(id)}
               aria-label={label}
               aria-current={active ? 'true' : undefined}
-              className={`flex min-w-[64px] flex-col items-center gap-[2px] rounded-full px-[17px] py-[7px] transition-colors ${
-                active ? `${tc.activePillBg} ${tc.activePillText}` : tc.inactivePillText
+              className={`relative z-10 flex min-w-0 flex-1 flex-col items-center gap-[2px] rounded-full px-[17px] py-[7px] transition-colors duration-300 ${
+                active ? tc.activePillText : tc.inactivePillText
               }`}
             >
               {TAB_ICONS[id]}
