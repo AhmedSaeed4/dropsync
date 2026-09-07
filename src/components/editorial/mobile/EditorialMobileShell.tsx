@@ -18,6 +18,7 @@ import { MobileHeader } from './MobileHeader';
 import { MobileNavbar } from './MobileNavbar';
 import { MobileDropsView } from './MobileDropsView';
 import { MobileCreateView } from './MobileCreateView';
+import { MobileSearchView } from './MobileSearchView';
 
 type Theme = 'light' | 'dark' | 'minimal';
 
@@ -117,15 +118,6 @@ interface EditorialMobileShellProps {
   onJoinCall: (drop: Drop) => void;
   isReopenCallId?: string;
   hoverable: boolean;
-}
-
-// Placeholder view panel (4.6) — a quiet full-height dead-end until the view's own order lands.
-function MobileViewPlaceholder({ message, toneClass }: { message: string; toneClass: string }) {
-  return (
-    <div className="flex h-full items-center justify-center px-6 text-center">
-      <p className={`text-sm ${toneClass}`}>{message}</p>
-    </div>
-  );
 }
 
 export function EditorialMobileShell({
@@ -350,7 +342,22 @@ export function EditorialMobileShell({
           />
         </div>
         <div className={activeTab === 'search' ? 'h-full' : 'hidden'}>
-          <MobileViewPlaceholder message="Search view lands in a later order." toneClass={`${tc.muted} ${tc.fontClass}`} />
+          <MobileSearchView
+            theme={theme}
+            currentUserId={user?.uid ?? null}
+            currentWorkspace={currentWorkspace}
+            drops={drops}
+            dropsLoading={dropsLoading}
+            refreshDrops={refreshDrops}
+            workspaceMembers={workspaceMembers}
+            hoverable={hoverable}
+            active={activeTab === 'search'}
+            onPreview={onOpenRootDrop}
+            onEditDrop={onEditDrop}
+            onOpenMoveModal={setMoveDrops}
+            onJoinCall={onJoinCall}
+            isReopenCallId={isReopenCallId}
+          />
         </div>
       </main>
 

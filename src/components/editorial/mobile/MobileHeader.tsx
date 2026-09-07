@@ -18,8 +18,8 @@ interface MobileHeaderProps {
   chatOpen: boolean;
   unreadCount: number;
   onOpenSettings: () => void;
-  // Workspace-switcher slot (#6): the REAL workspace switcher hosts here on the left (owner
-  // ruling D2) when the active tab shows it (drops now, Create joins with its order).
+  // Workspace-switcher slot (#6 as amended 2026-09-07): the REAL workspace switcher hosts here
+  // on the left (owner ruling D2) on ALL THREE tabs — search results are space-scoped (R12).
   activeTab?: 'drops' | 'create' | 'search';
   workspaceNav?: MobileWorkspaceNav;
 }
@@ -29,7 +29,7 @@ interface MobileHeaderProps {
 // its logo; this bar is shell-only.
 export function MobileHeader({ theme, onCycleTheme, onToggleChat, chatOpen, unreadCount, onOpenSettings, activeTab, workspaceNav }: MobileHeaderProps) {
   const tc = getEditorialThemeColors(theme);
-  const showPill = !!workspaceNav && (activeTab === 'drops' || activeTab === 'create');
+  const showPill = !!workspaceNav && (activeTab === 'drops' || activeTab === 'create' || activeTab === 'search');
 
   return (
     <header className={`${tc.bg} shrink-0 pt-[env(safe-area-inset-top)] transition-colors duration-500`}>
