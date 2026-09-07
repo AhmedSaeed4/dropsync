@@ -140,6 +140,13 @@ export function MobileSearchView({
   const [sortMode, setSortMode] = useState<DropSortMode>('newest');
   const [manualOrder, setManualOrder] = useState<string[]>([]);
 
+  // R16: scroll memory is per-workspace — the position survives tab switches (D16) but a
+  // workspace switch (any direction) always lands at the top of the new space's results.
+  const searchScrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    searchScrollRef.current?.scrollTo({ top: 0 });
+  }, [spaceKey]);
+
   // Read-only sync of the space's sort prefs: on tab entry (active), on space change while
   // here, and at mount when Search is the landing tab. Firestore stays the only authority.
   useEffect(() => {
@@ -236,7 +243,7 @@ export function MobileSearchView({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex-1 min-h-0 space-y-3 overflow-y-auto overscroll-contain px-4 pb-28 editorial-scroll-hide">
+      <div ref={searchScrollRef} className="flex-1 min-h-0 space-y-3 overflow-y-auto overscroll-contain px-4 pb-28 editorial-scroll-hide">
         <p className={`text-[10px] font-semibold uppercase tracking-[0.12em] ${font} ${tc.muted}`}>Search</p>
 
         {/* The search box — the prototype's .search-box (card bg, 18px radius, in-flow magnifier)

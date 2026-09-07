@@ -117,6 +117,16 @@ export function MobileCreateView({
   useEffect(() => {
     onOverlayOpenChange?.(editorExpanded || switchSheet || drawOpen || showForeverLocked);
   }, [editorExpanded, switchSheet, drawOpen, showForeverLocked, onOverlayOpenChange]);
+
+  // R16: scroll memory is per-workspace — the position survives tab switches (D16) but a
+  // workspace switch (any direction) always lands at the top. The draft itself survives
+  // every switch (the established keep-mounted ruling); only the scroll resets.
+  const workspaceId = currentWorkspace?.id ?? 'personal';
+  const createScrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    createScrollRef.current?.scrollTo({ top: 0 });
+  }, [workspaceId]);
+
   // R10 card stretch: the card body's height in px (84 = the built 3b field). The grabber on
   // the card's bottom edge drags it between 84 and ~55% of the viewport (demo-card-stretch).
   const [bodyH, setBodyH] = useState(84);
@@ -639,7 +649,7 @@ export function MobileCreateView({
   );
 
   return (
-    <div className="h-full space-y-4 overflow-y-auto overscroll-contain px-4 pb-28 editorial-scroll-hide">
+    <div ref={createScrollRef} className="h-full space-y-4 overflow-y-auto overscroll-contain px-4 pb-28 editorial-scroll-hide">
       {/* Title block (prototype :517) — the Drops h1 idiom; NO top padding (D12: the header's
           own space is the gap) */}
       <div>

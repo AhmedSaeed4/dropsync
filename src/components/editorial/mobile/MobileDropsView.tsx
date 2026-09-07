@@ -241,6 +241,14 @@ export function MobileDropsView({
   const spaceKey = currentWorkspace?.id ?? 'personal';
   const spaceKeyRef = useRef(spaceKey);
   spaceKeyRef.current = spaceKey;
+
+  // R16: scroll memory is per-workspace — the position survives tab switches (D16) but a
+  // workspace switch (any direction) always lands at the top of the new space's list.
+  const dropsScrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    dropsScrollRef.current?.scrollTo({ top: 0 });
+  }, [spaceKey]);
+
   const [sortMode, setSortMode] = useState<DropSortMode>('newest');
   const [manualOrder, setManualOrder] = useState<string[]>([]);
   const sortPrefsRef = useRef<{ mode: Record<string, string>; order: Record<string, string[]> }>({ mode: {}, order: {} });
@@ -451,7 +459,7 @@ export function MobileDropsView({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex-1 min-h-0 space-y-3 overflow-y-auto overscroll-contain px-4 pb-28 editorial-scroll-hide">
+      <div ref={dropsScrollRef} className="flex-1 min-h-0 space-y-3 overflow-y-auto overscroll-contain px-4 pb-28 editorial-scroll-hide">
         {/* Title block (#11, D5): the real status panel renders only the animated word (count
             moved into the subline), then the prototype's stacked title + whisper subline
             (prototype :442-446; .h1 = 26px/600/−0.5px/1.15) before the control row. */}
