@@ -20,10 +20,9 @@ import {
   createYouTubeLabelGuard,
   extractYouTubeVideoIds,
   labelDropBestEffort,
-  markYoutubeBackfillComplete,
+  noteYoutubeBackfillComplete,
   normalizeYoutubeLabels,
   sourceFromDrop,
-  writeSharedBackfillCompletion,
   type YouTubeLabelingResult,
 } from './youtubeLabels';
 
@@ -596,11 +595,7 @@ export async function runYoutubeBackfill(options: {
   // contributions on resolution, so nothing residual blocks completion and
   // strike-skipped drops do not re-show the backfill button.
   clearCheckpoint(userId);
-  markYoutubeBackfillComplete(userId);
-  // Account-wide finish note (best-effort): lets every other device of this
-  // account hide the button too. A failed write never disturbs the run or its
-  // result — the local flag above is already set regardless.
-  void writeSharedBackfillCompletion(userId);
+  await noteYoutubeBackfillComplete(userId);
   emit(onProgress, {
     phase: 'complete',
     scopeName: 'Finished',
