@@ -31,12 +31,10 @@ import { initializeUserKeys, hasUserKeys, getUserKeys, ensurePublicKeyPublished 
 import { ensureProfilePublished } from '@/lib/profiles';
 import { decryptDrop, updateTextDrop, updateDropMetadata, moveDrop, getExpirationDate } from '@/lib/drops';
 import {
-  YOUTUBE_BACKFILL_STATE_EVENT,
   evaluateYoutubeBackfillVisibility,
   isPasswordCategories,
   normalizeYoutubeLabels,
-  readSharedBackfillCompletion,
-  type SharedBackfillCompletion,
+  subscribeBackfillDecisionState,
 } from '@/lib/youtubeLabels';
 import { getWorkspaceMembers, MemberInfo } from '@/lib/workspaces';
 import { getLastRead, initReadState, markWorkspaceChatRead, clearWorkspaceMentions } from '@/lib/groupChat';
@@ -268,12 +266,10 @@ export default function Home() {
   const deepLinkHandledRef = useRef(false);
   const [resolvedWorkspaceMembers, setResolvedWorkspaceMembers] = useState<MemberInfo[]>([]);
 
-  // Backfill button visibility = local recovery notes + ONE bounded read of the
-  // account-wide finish flag (users/{uid}.youtubeBackfillCompletedAt). Every
-  // input — local note changes (YOUTUBE_BACKFILL_STATE_EVENT), the shared
-  // answer arriving, a failed or timed-out read — re-evaluates through the
-  // single decision function below; nothing ever sets hidden directly (so a
-  // slow "finished" answer cannot stomp a freshly planted unfinished note).
+  // Backfill button visibility = account-wide Firestore state on users/{uid},
+  // live via onSnapshot (all tabs and devices converge; localStorage is no
+  // longer an input). Hidden until the first snapshot answers; a stream error
+  // keeps the last-known state and self-heals on reconnect. Signed out → hidden.
   const youtubeUserId = user?.uid;
   useEffect(() => {
     if (!youtubeUserId) {
@@ -281,25 +277,12 @@ export default function Home() {
       setYoutubeBackfillVisibilityReady(true);
       return;
     }
-    let sharedCompletion: SharedBackfillCompletion = 'unknown';
-    const evaluateYoutubeBackfill = () => {
-      setYoutubeBackfillVisible(evaluateYoutubeBackfillVisibility(youtubeUserId, sharedCompletion));
-    };
-    // Undetermined until the shared read answers (or fails / times out at ~5s).
     setYoutubeBackfillVisibilityReady(false);
-    evaluateYoutubeBackfill();
-    const stopSharedRead = readSharedBackfillCompletion(youtubeUserId, (answer) => {
-      sharedCompletion = answer;
-      // The real answer, a read failure, or the timeout: all three make the
-      // visibility decidable right now.
+    const stopSubscribe = subscribeBackfillDecisionState(youtubeUserId, (state) => {
+      setYoutubeBackfillVisible(evaluateYoutubeBackfillVisibility(state));
       setYoutubeBackfillVisibilityReady(true);
-      evaluateYoutubeBackfill();
     });
-    window.addEventListener(YOUTUBE_BACKFILL_STATE_EVENT, evaluateYoutubeBackfill);
-    return () => {
-      stopSharedRead();
-      window.removeEventListener(YOUTUBE_BACKFILL_STATE_EVENT, evaluateYoutubeBackfill);
-    };
+    return stopSubscribe;
   }, [youtubeUserId]);
 
   // A newly restored workspace is not present in the listener snapshot until Firestore emits it.

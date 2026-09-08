@@ -3,16 +3,15 @@
 import {
   deleteField,
   doc,
-  getDoc,
+  onSnapshot,
   runTransaction,
   serverTimestamp,
-  updateDoc,
+  setDoc,
   type DocumentData,
 } from 'firebase/firestore';
 import { auth, db } from './firebase';
 import type { Drop } from '@/types';
 
-export const YOUTUBE_BACKFILL_STATE_EVENT = 'dropsync-youtube-backfill-state';
 export const MAX_YOUTUBE_LABEL_IDS_PER_DROP = 50;
 export const MAX_YOUTUBE_RESOLVE_IDS_PER_REQUEST = 10;
 // Must comfortably exceed the helper endpoint's worst-case legitimate answer time
@@ -21,10 +20,6 @@ export const MAX_YOUTUBE_RESOLVE_IDS_PER_REQUEST = 10;
 // answers slowly, and aborting at 15s turned one slow video into a permanently
 // stuck backfill (production incident, fixed 2026-08-21).
 export const YOUTUBE_RESOLVE_TIMEOUT_MS = 35000;
-// Hard bound on the one-time read of the account-wide backfill flag. A hanging
-// Firestore read must never leave the button visibility undetermined: after
-// this long the shared flag is treated as 'unknown' (fail-safe → visible).
-export const YOUTUBE_BACKFILL_SHARED_READ_TIMEOUT_MS = 5000;
 
 const AGENT_URL = process.env.NEXT_PUBLIC_AGENT_URL || 'http://localhost:8000';
 const YOUTUBE_HOSTS = new Set([
@@ -86,123 +81,106 @@ function stateKey(uid: string, suffix: string): string {
   return `dropsync_youtube_backfill_${suffix}_${uid}`;
 }
 
-function emitStateChange(): void {
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new Event(YOUTUBE_BACKFILL_STATE_EVENT));
-  }
+// Legacy per-browser notes from the pre-account-state era. No longer decision
+// inputs anywhere; swept best-effort when a run completes.
+function legacyNoteKeys(uid: string): string[] {
+  return [
+    stateKey(uid, 'needed'),
+    stateKey(uid, 'completed'),
+    `dropsync_youtube_backfill_checkpoint_${uid}`,
+  ];
 }
 
-// Three-state answer for the account-wide backfill flag: true (finished),
-// false (not finished), 'unknown' (not loaded yet / read failed / timed out).
-// 'unknown' is always treated as NOT finished — wrongly showing the button is
-// acceptable; wrongly hiding it is not.
-export type SharedBackfillCompletion = boolean | 'unknown';
+// ── Account-wide decision state (users/{uid}) ──────────────────────────
+// The button's ONLY memory is the account's Firestore doc:
+//   - youtubeBackfillCompletedAt: set when a run genuinely completes.
+//   - youtubeBackfillNeededAt: set when labeling fails or comes back
+//     incomplete after a save; wins over completed.
+//   - hasYoutubeDrops: sticky D7 signal (D8) — true once any YouTube-link
+//     drop exists; EXPLICITLY false only for accounts created after this
+//     feature shipped; ABSENT = legacy account = show-eligible (the sweep's
+//     already-done skip makes its one no-op run cheap, and its completion
+//     then hides the button for good).
+export interface YoutubeBackfillDecisionState {
+  hasYoutubeDrops?: boolean;
+  needed: boolean;
+  completed: boolean;
+}
 
-/**
- * The ONE visibility decision-maker. Every input — local note changes (the
- * YOUTUBE_BACKFILL_STATE_EVENT), the shared account-wide answer arriving, a
- * read failing or timing out — must be re-evaluated through this single
- * function; no code path may set the button hidden directly. It reads only the
- * local notes; the shared flag arrives as a parameter (this function never
- * touches Firestore or the backend).
- *
- * 1. A local unfinished note exists → SHOW. Always wins, even if both notes
- *    exist and the shared flag says finished (a save-time failure replants it).
- * 2. Otherwise, a local finished note OR shared=true → HIDE.
- * 3. Otherwise — including shared='unknown' → SHOW.
- */
 export function evaluateYoutubeBackfillVisibility(
-  uid: string,
-  sharedCompletion: SharedBackfillCompletion,
+  state: YoutubeBackfillDecisionState,
 ): boolean {
-  if (typeof window === 'undefined') return true;
-  try {
-    if (window.localStorage.getItem(stateKey(uid, 'needed')) === '1') return true;
-    const completed = window.localStorage.getItem(stateKey(uid, 'completed')) === '1';
-    return !(completed || sharedCompletion === true);
-  } catch {
-    // If local storage is unavailable, leave the recovery button visible.
-    return true;
-  }
+  if (state.hasYoutubeDrops === false) return false; // D7: known-empty account
+  if (state.needed) return true; // recovery path wins over everything
+  if (state.completed) return false;
+  return true; // has drops and never swept (or legacy account)
 }
 
-export function markYoutubeBackfillNeeded(uid: string): void {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(stateKey(uid, 'needed'), '1');
-  } catch {
-    // Visibility defaults to visible when storage is unavailable.
-  }
-  emitStateChange();
-}
-
-export function markYoutubeBackfillComplete(uid: string): void {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(stateKey(uid, 'completed'), '1');
-    window.localStorage.removeItem(stateKey(uid, 'needed'));
-  } catch {
-    // Keeping the button visible is the safe fallback.
-  }
-  emitStateChange();
-}
-
-/**
- * Account-wide finish note: users/{uid}.youtubeBackfillCompletedAt, written
- * once when a backfill run genuinely completes. Best-effort — a failed write
- * never disturbs the run or its result; the device-local flag is set
- * regardless. The existing users/{uid} rule already permits self-updates of
- * any field except tier, so no rules change is needed.
- */
-export async function writeSharedBackfillCompletion(uid: string): Promise<void> {
-  if (typeof window === 'undefined') return;
-  try {
-    await updateDoc(doc(db, 'users', uid), { youtubeBackfillCompletedAt: serverTimestamp() });
-  } catch {
-    // Other devices keep seeing the button until they run their own backfill.
-  }
-}
-
-/**
- * Single bounded read of the account-wide finish note after sign-in (no
- * continuous listener). Reports exactly one of:
- *  - the real answer (true/false),
- *  - 'unknown' when the read failed,
- *  - 'unknown' when no answer arrived within the hard ~5s timeout (a hanging
- *    read must never leave the button stuck undetermined).
- *
- * onResult may fire MORE than once: if the real answer arrives after the
- * timeout already reported 'unknown', it is still delivered — never discarded
- * silently — so the caller can re-run its single decision function (whose
- * rule 1 protects an unfinished note planted while waiting). Returns a cancel
- * function for effect cleanup.
- */
-export function readSharedBackfillCompletion(
+// Live subscription — every tab and device converges; replaces the one-shot
+// 5s-bounded read (its timeout/'unknown' machinery is gone). A stream error
+// keeps the LAST-KNOWN state (hidden before the first snapshot arrives) and
+// self-heals on reconnect — a completed or empty account must never flash the
+// button because of a transient outage.
+export function subscribeBackfillDecisionState(
   uid: string,
-  onResult: (completion: SharedBackfillCompletion) => void,
+  onState: (state: YoutubeBackfillDecisionState) => void,
 ): () => void {
-  if (typeof window === 'undefined') {
-    onResult('unknown');
-    return () => {};
+  return onSnapshot(
+    doc(db, 'users', uid),
+    (snapshot) => {
+      const data = snapshot.data() ?? {};
+      onState({
+        hasYoutubeDrops:
+          typeof data.hasYoutubeDrops === 'boolean' ? data.hasYoutubeDrops : undefined,
+        needed: !!data.youtubeBackfillNeededAt,
+        completed: !!data.youtubeBackfillCompletedAt,
+      });
+    },
+    () => {
+      // Stream error: keep the last-known state (hidden before the first
+      // snapshot). The listener self-heals; never guess a state here — a
+      // guess would flash the button on completed and empty accounts.
+    },
+  );
+}
+
+async function writeBackfillDecisionFields(
+  uid: string,
+  fields: Record<string, unknown>,
+): Promise<void> {
+  try {
+    await setDoc(doc(db, 'users', uid), fields, { merge: true });
+  } catch {
+    // Best-effort: a failed write never disturbs the primary flow. merge:true
+    // (not updateDoc) so a missing users/{uid} doc is created, not an error.
   }
-  let cancelled = false;
-  const deliver = (completion: SharedBackfillCompletion) => {
-    if (!cancelled) onResult(completion);
-  };
-  const timer = window.setTimeout(() => deliver('unknown'), YOUTUBE_BACKFILL_SHARED_READ_TIMEOUT_MS);
-  getDoc(doc(db, 'users', uid))
-    .then((snapshot) => {
-      window.clearTimeout(timer);
-      deliver(snapshot.exists() && !!snapshot.data().youtubeBackfillCompletedAt);
-    })
-    .catch(() => {
-      window.clearTimeout(timer);
-      deliver('unknown');
-    });
-  return () => {
-    cancelled = true;
-    window.clearTimeout(timer);
-  };
+}
+
+// Sticky D7 signal: flipped true by any write path that introduces a
+// YouTube-link drop (frontend saves + agent backend). Never unset.
+export function noteYoutubeDropPresence(uid: string): void {
+  void writeBackfillDecisionFields(uid, { hasYoutubeDrops: true });
+}
+
+// Account-wide "needed": labeling failed/incomplete after a successful save.
+// Shows the button on EVERY device until a completed run clears it.
+export function noteYoutubeBackfillNeeded(uid: string): void {
+  void writeBackfillDecisionFields(uid, { youtubeBackfillNeededAt: serverTimestamp() });
+}
+
+// Genuine completion: set completed AND clear needed in one merged write
+// (atomic per document — the pair can never settle completed-with-needed),
+// then sweep the legacy per-browser notes nothing reads anymore.
+export async function noteYoutubeBackfillComplete(uid: string): Promise<void> {
+  await writeBackfillDecisionFields(uid, {
+    youtubeBackfillCompletedAt: serverTimestamp(),
+    youtubeBackfillNeededAt: deleteField(),
+  });
+  try {
+    for (const key of legacyNoteKeys(uid)) window.localStorage.removeItem(key);
+  } catch {
+    // Storage unavailable — visibility no longer depends on it.
+  }
 }
 
 function normalizeCategories(value: unknown, legacyValue?: unknown): string[] {
@@ -518,6 +496,9 @@ export async function labelDropBestEffort(input: {
   }
 
   const allIds = extractYouTubeVideoIds(`${source.name}\n${source.content}`);
+  if (allIds.length > 0) {
+    noteYoutubeDropPresence(input.userId);
+  }
   if (allIds.length === 0) {
     const existingLabels = normalizeYoutubeLabels(input.existingLabels);
     if (existingLabels.length === 0) {
@@ -525,7 +506,7 @@ export async function labelDropBestEffort(input: {
     }
     const accepted = await writeLabelsIfCurrent(input.dropId, [], input.guard);
     if (!accepted) {
-      markYoutubeBackfillNeeded(input.userId);
+      noteYoutubeBackfillNeeded(input.userId);
       return { status: 'incomplete', labelsWritten: 0, unresolved: 1, writeFailed: true };
     }
     return { status: 'labeled', labelsWritten: 0, unresolved: 0, writeFailed: false };
@@ -586,7 +567,7 @@ export async function labelDropBestEffort(input: {
   if (writeFailed) incomplete = true;
 
   if (incomplete) {
-    markYoutubeBackfillNeeded(input.userId);
+    noteYoutubeBackfillNeeded(input.userId);
   }
   return {
     status: incomplete ? 'incomplete' : 'labeled',

@@ -39,6 +39,7 @@ export async function signInWithGoogle(): Promise<User | null> {
         createdAt: serverTimestamp(),
         lastActive: serverTimestamp(),
         tier: 'standard',
+        hasYoutubeDrops: false,
       });
       batch.set(doc(db, PROFILES_COLLECTION, firebaseUser.uid), {
         displayName: firebaseUser.displayName,
@@ -126,6 +127,7 @@ export async function signUpWithEmail(email: string, password: string): Promise<
       lastActive: serverTimestamp(),
       emailVerified: false,
       tier: 'standard',
+      hasYoutubeDrops: false,
     });
     batch.set(doc(db, PROFILES_COLLECTION, firebaseUser.uid), {
       displayName: firebaseUser.displayName || email.split('@')[0],

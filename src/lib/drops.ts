@@ -31,7 +31,7 @@ import {
   createYouTubeLabelGuard,
   isPasswordCategories,
   labelDropBestEffort,
-  markYoutubeBackfillNeeded,
+  noteYoutubeBackfillNeeded,
   normalizeYoutubeLabels,
   sourceFromDrop,
   type YouTubeLabelGuard,
@@ -489,8 +489,8 @@ export async function createTextDrop(
       guard: labelGuard,
     }).catch(() => {
       // The primary save already succeeded. Make sure an unexpected failure also
-      // restores the local recovery button without reading Firestore.
-      markYoutubeBackfillNeeded(userId);
+      // flags the account account-wide as needing a backfill (fire-and-forget).
+      void noteYoutubeBackfillNeeded(userId);
     });
 
     return {
@@ -1087,9 +1087,9 @@ export async function updateTextDrop(
         guard: labelGuard,
         existingLabels: drop.youtubeVideoLabels,
       }).catch(() => {
-        // The primary edit succeeded; restore the local recovery button without
-        // reading Firestore if the final defensive boundary is reached.
-        markYoutubeBackfillNeeded(currentUserId);
+        // The primary edit succeeded; flag the account account-wide as needing a
+        // backfill (fire-and-forget) if the final defensive boundary is reached.
+        void noteYoutubeBackfillNeeded(currentUserId);
       });
     }
 
