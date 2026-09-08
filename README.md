@@ -12,13 +12,15 @@ A secure, temporary file-sharing and collaboration app. Drop files, text, drawin
 
 **Live calls** — LiveKit-powered group calling (desktop) · Up to 4 participants · Screen sharing · 30-minute daily per-person limit (trusted users exempt)
 
-**AI assistant** — Chat with an AI agent over your drops (search, create, delete, stats, previews). Password-category drops are kept out of its reach.
+**YouTube titles** — Titles and channels saved automatically on YouTube-link drops · `#` title search in the drops search box · a "Saved video labels" button that backfills missing titles account-wide
+
+**AI assistant** — Streaming chat with an AI agent over your drops (search, create, edit, move, copy, delete, reminders, workspaces, categories, stats, previews, YouTube title lookups). Replies stream in with live activity, and a dropped connection resumes instead of dying. Password-category drops are kept out of its reach.
 
 **Backup & restore** — Password-protected `.dropsync` backups of your personal or workspace drops (files, drawings, categories, reminders, locked & password-category drops), restorable on any device with new IDs and preserved expiry
 
 **Sharing** — Public view-only share links with auto-expiry, video player, and download
 
-**Everyday UX** — Two layouts (Classic + Editorial) · Three themes (Light/Dark/Minimal) · 30-second delete undo · Bulk select/move/copy/delete · Saved paths scratchpad · FCM push notifications · Email verification
+**Everyday UX** — Two layouts (Classic + Editorial) · Three themes (Light/Dark/Minimal) · 30-second delete undo · Bulk select/move/copy/delete · Saved paths scratchpad · FCM push notifications · Email verification · Editorial phone-shell experience on mobile (Drops / Create / Search views)
 
 ---
 
@@ -83,7 +85,7 @@ A secure, temporary file-sharing and collaboration app. Drop files, text, drawin
 
 ### Organization & Bulk Actions
 
-- **Search** — by name/content; type `@` in a workspace search to filter by member
+- **Search** — by name/content; type `@` in a workspace search to filter by member; type `#` to search saved YouTube video titles and channels
 - **Sorting** — newest, manual (drag-and-drop reorder, persisted per space), name, size, expiry; fired reminders and pinned drops always sort first
 - **Bulk select** — multi-select with bulk move, copy, and delete
 - **Undo delete** — single-drop deletes get a 30-second undo toast with a live countdown
@@ -153,6 +155,7 @@ src/
 │   └── page.tsx            #   main app (auth gate, drops, preview, calls, chat)
 ├── components/             # Classic-layout UI (drop list, modals, chat, settings…)
 │   ├── editorial/          # Editorial-layout mirrors of the same features
+│   ├── editorial/mobile/   # Phone-shell views for small screens (Drops / Create / Search)
 │   ├── layouts/            # ClassicLayout + EditorialLayout shells
 │   ├── call/               # LiveKit call UI (start screen, modal, drop tile, pill)
 │   └── share/              # Public share-page components
@@ -337,6 +340,7 @@ All routes live under `src/app/api/` and authenticate via Firebase ID tokens (Be
 | `drops/{id}` | Drops (text/file/call); call drops use deterministic `call-{workspaceId}` ids |
 | `categories/{id}` | Custom categories (personal or per-workspace) |
 | `shares/{id}` | Public share links with expiry |
+| `youtubeTitles/{videoId}` | Backend-managed cache of YouTube video titles/channels (labeling + title search) |
 | `chats/{uid}/conversations/{id}/messages` | AI-assistant conversation history |
 | `voiceUsage/{uid}`, `callUsage/{uid}` | Daily voice-transcription and call-time accounting |
 | `config/owner` | Owner uid (admin, trusted tier) |

@@ -58,9 +58,11 @@ const PROSE: Record<string, SectionProse> = {
       ),
       'themes-and-layouts': (
         <p className={BODY}>
-          DropSync ships in two layouts (Classic and Editorial) and three themes (Light, Dark, and
-          Minimal-sage). Switch them in Settings → Appearance; your choice is remembered on this
-          device. (See Settings & appearance below for every option.)
+          DropSync ships in two layouts (Classic and Editorial) and three themes (Light, Dark,
+          and Minimal-sage). Switch them in Settings → Appearance; your choice is remembered
+          on this device. On phones, the Editorial layout switches to a dedicated mobile
+          experience with Drops, Create, and Search views. (See Settings & appearance below
+          for every option.)
         </p>
       ),
     },
@@ -99,6 +101,16 @@ const PROSE: Record<string, SectionProse> = {
           text, which becomes a normal text drop you can review before saving.
         </p>
       ),
+      'youtube-titles': (
+        <p className={BODY}>
+          When a text drop contains a YouTube link, DropSync fetches the video’s title and
+          channel and saves them on the drop, so title search works even when the note itself
+          never names the video. The “Saved video labels” button appears when your account has
+          YouTube drops that are still missing titles; run it once and it sweeps and labels
+          them, and the result is remembered account-wide — across every browser you sign in
+          from. In the search box, type # to search saved video titles and channels.
+        </p>
+      ),
       categories: (
         <p className={BODY}>
           Tag a drop with up to three categories to keep things organized. Password and Link are
@@ -131,6 +143,15 @@ const PROSE: Record<string, SectionProse> = {
         <p className={BODY}>
           A drop can be locked so only its creator or the workspace owner can change it. Members
           can still read locked drops; the lock protects editing and deletion, not visibility.
+        </p>
+      ),
+      reminders: (
+        <p className={BODY}>
+          Text drops can carry an in-app reminder. Choose a preset (15 minutes, 30 minutes,
+          1 hour, or 2 hours) or a custom time, as long as it fires before the drop expires.
+          When the time comes, the drop floats to the top of the list and its title glows
+          until you dismiss it. Reminders are in-app only — they don’t send push
+          notifications to a closed app.
         </p>
       ),
       'personal-backup': (
@@ -299,6 +320,40 @@ const PROSE: Record<string, SectionProse> = {
     },
   },
 
+  'live-calls': {
+    intro: (
+      <p className={BODY}>
+        Any workspace can talk live: a group call with voice, video, and screen sharing,
+        right next to your drops.
+      </p>
+    ),
+    subs: {
+      'starting-a-call': (
+        <p className={BODY}>
+          Start a call from your workspace on desktop — calls don’t run on phones or tablets.
+          A call drop with a LIVE badge appears pinned at the top of the workspace’s drop list
+          while the call runs, so everyone can see it. One call per workspace at a time, and
+          up to 4 people can join.
+        </p>
+      ),
+      'during-the-call': (
+        <p className={BODY}>
+          Mute your microphone, turn your camera on or off, share your screen, or go
+          fullscreen. Minimize the call to a floating pill to keep using DropSync — the call
+          keeps running while you browse.
+        </p>
+      ),
+      'the-daily-limit': (
+        <p className={BODY}>
+          Every person gets 30 minutes of call time per day, counted in UTC and reset at
+          midnight. Trusted users are exempt — and while a trusted user is in the call, the
+          limit is lifted for everyone in it. Your remaining time is checked on the server
+          before the call asks for your microphone.
+        </p>
+      ),
+    },
+  },
+
   notifications: {
     intro: (
       <p className={BODY}>
@@ -336,15 +391,20 @@ const PROSE: Record<string, SectionProse> = {
     subs: {
       'chat-with-the-assistant': (
         <p className={BODY}>
-          Open the assistant and ask questions or give instructions in chat. Answers come back as
-          Markdown, and your conversation history is kept.
+          Open the assistant and ask questions or give instructions in chat. Answers come back
+          as Markdown, and your conversation history is kept. Replies stream in as they are
+          written, with a live view of what the agent is doing — and if your connection drops
+          mid-answer, the run resumes instead of starting over.
         </p>
       ),
       'what-it-can-do': (
         <p className={BODY}>
-          The agent can list and search your drops, get or preview one, and create, move, or delete
-          drops on your behalf. It only ever touches drops you can see — and it never touches
-          password-category drops.
+          The agent can list and search your drops — including saved YouTube video titles and
+          channels — preview any drop, create, edit, move, copy, or delete text drops, set and
+          clear reminders, create or join workspaces, manage categories, and report storage
+          stats. It can look up a YouTube video’s real title from a link, and it will save a
+          YouTube link as a new drop if you approve it first. It only ever touches drops you
+          can see — and it never touches password-category drops.
         </p>
       ),
     },
