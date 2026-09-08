@@ -187,8 +187,10 @@ export default function AboutClient() {
                 ['BULK ACTIONS', 'Select multiple drops at once. Bulk move to another workspace or bulk delete in a single action.'],
                 ['DROP EDITING', 'Edit existing drops — update names, content, categories, expiry, or attached images with automatic re-encryption.'],
                 ['BACKUP & RESTORE', 'Export your personal or workspace drops to a password-protected .dropsync file and restore them anytime — files, drawings, categories, and reminders included.'],
+                ['LIVE CALLS', 'Start a live group call in any workspace — up to 4 people, screen sharing, and a 30-minute daily limit per person. Desktop only.'],
+                ['DRAWINGS', 'Sketch quick diagrams on an embedded Excalidraw canvas — saved as an image drop that stays editable when you reopen it.'],
                 ['MULTI-CATEGORY', 'Assign up to 3 categories per drop for better organization. Built-in categories like Password and Link, or create your own.'],
-                ['AI CHAT ASSISTANT', 'Talk to your drops naturally — search, create, delete, get stats, and preview drops via the built-in AI agent.'],
+                ['AI CHAT ASSISTANT', 'Talk to your drops naturally — search, create, edit, move, copy, delete, set reminders, and get stats, with live streaming replies.'],
                 ['UNDO DELETE', 'Accidentally deleted a drop? A 30-second undo window gives you time to recover before it&apos;s gone for good.'],
                 ['ACCOUNT DELETION', 'Delete your account anytime. Your drops, profile, keys, and chat history are removed from our database.'],
               ].map(([title, desc]) => (
@@ -451,8 +453,10 @@ export default function AboutClient() {
               ['Bulk Actions', 'Select multiple drops at once. Bulk move to another workspace or bulk delete in a single action.', 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z'],
               ['Drop Editing', 'Edit existing drops — update names, content, categories, expiry, or attached images with automatic re-encryption.', 'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z'],
               ['Backup & Restore', 'Export your personal or workspace drops to a password-protected .dropsync file and restore them anytime — files, drawings, categories, and reminders included.', 'M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2'],
+              ['Live Calls', 'Start a live group call in any workspace — up to 4 people, screen sharing, and a 30-minute daily limit per person. Desktop only.', 'M23 7l-7 5 7 5V7zM1 5h15v14H1z'],
+              ['Drawings', 'Sketch quick diagrams on an embedded Excalidraw canvas — saved as an image drop that stays editable when you reopen it.', 'M17 3a2.828 2.828 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z'],
               ['Multi-Category', 'Assign up to 3 categories per drop for better organization. Built-in categories like Password and Link, or create your own.', 'M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z'],
-              ['AI Chat Assistant', 'Talk to your drops naturally — search, create, delete, get stats, and preview drops via the built-in AI agent.', 'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z'],
+              ['AI Chat Assistant', 'Talk to your drops naturally — search, create, edit, move, copy, delete, set reminders, and get stats, with live streaming replies.', 'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z'],
               ['Undo Delete', 'Accidentally deleted a drop? A 30-second undo window gives you time to recover before it&apos;s gone for good.', 'M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6'],
               ['Account Deletion', 'Delete your account anytime. Your drops, profile, keys, and chat history are removed from our database.', 'M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M10 11v6M14 11v6'],
             ].map(([title, desc, path]) => (

@@ -18,7 +18,7 @@ export type Section = {
   items?: { label?: string; text: string }[];
 };
 
-export const LAST_UPDATED = "August 14, 2026";
+export const LAST_UPDATED = "September 9, 2026";
 
 export const sections: Section[] = [
   {
@@ -39,6 +39,10 @@ export const sections: Section[] = [
       {
         label: "Audio for transcription.",
         text: "When you use voice-to-text, the audio you record is sent for transcription (see “Third parties”).",
+      },
+      {
+        label: "Live-call data.",
+        text: "When you start or join a live call, we keep the call's drop entry, your per-person call-time accounting used to enforce the daily call limit, and basic call metadata (such as participant presence) needed to run the call.",
       },
       {
         label: "Operational data.",
@@ -108,6 +112,10 @@ export const sections: Section[] = [
         text: "Web hosting for the app.",
       },
       {
+        label: "LiveKit — USA / global.",
+        text: "Relays live group calls: while a call is running, your call audio and video pass through LiveKit's real-time network.",
+      },
+      {
         label: "A third-party backend hosting provider — location per provider.",
         text: "Runs the AI assistant backend. To answer your requests, it processes your chat messages, decrypts the relevant drops, and sends them to the model provider.",
       },
@@ -129,7 +137,7 @@ export const sections: Section[] = [
     id: "transfers",
     title: "5. International data transfers",
     paragraphs: [
-      "Your data is processed in the United States (Google Firebase, Google Gemini, Cloudflare R2, Vercel, Groq, and OpenAI). The AI assistant backend runs in the region of its hosting provider.",
+      "Your data is processed in the United States (Google Firebase, Google Gemini, Cloudflare R2, Vercel, LiveKit, Groq, and OpenAI). The AI assistant backend runs in the region of its hosting provider.",
       "Where data is transferred from the EU/UK/EEA, we rely on the EU-US Data Privacy Framework for US providers that participate in it, and on Standard Contractual Clauses (or other lawful transfer mechanisms) where applicable. We do not knowingly offer the service where doing so would be unlawful.",
     ],
   },
@@ -139,7 +147,7 @@ export const sections: Section[] = [
     paragraphs: [
       "DropSync does not use cookies to track you. We do not set analytics, advertising, cross-site, or social-media cookies, and we do not use third-party tracking or advertising scripts.",
       "We do use your browser's local storage — a small on-device store that is never sent to our servers — to remember your preferences, such as your light/dark theme, your layout, and the workspace you last opened. This information stays on your device, under your control, and you can clear it at any time through your browser's settings.",
-      "If you open a preview of a drop that links to a third-party service such as YouTube, that service's embedded player is loaded in its privacy-enhanced mode where available. It may still set its own cookies if you interact with it; those are governed by that service's own privacy policy, not DropSync.",
+      "If you open a preview of a drop that links to a third-party service such as YouTube, that service's embedded player is loaded in its privacy-enhanced mode where available. It may still set its own cookies if you interact with it; those are governed by that service's own privacy policy, not DropSync. Separately, when a drop contains a YouTube link, DropSync may ask YouTube for that video's title so it can label the drop and power title search; such a request shares only the video's ID, and the returned title is cached in the app database.",
       "Your browser's standard controls for cookies and site data apply in all cases.",
     ],
   },
