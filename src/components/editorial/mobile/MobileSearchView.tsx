@@ -111,6 +111,9 @@ export function MobileSearchView({
     onOverlayOpenChange?.(!!sheetDrop);
   }, [sheetDrop, onOverlayOpenChange]);
   const [pinLimitToast, setPinLimitToast] = useState(false);
+  // "Copied" confirmation for the ⋯ sheet's Copy row — same view-owned pattern as
+  // MobileDropsView (this view also hosts MobileActionSheet).
+  const [copiedToast, setCopiedToast] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   // The shared pending-deletions store — tombstoned drops vanish from Search too (and a
@@ -403,6 +406,7 @@ export function MobileSearchView({
             onDelete={handleDeleteWithUndo}
             onPin={handlePinDrop}
             onUnpin={handlePinDrop}
+            onCopied={() => setCopiedToast(true)}
           />
         )}
       </AnimatePresence>
@@ -431,6 +435,17 @@ export function MobileSearchView({
           theme={theme}
           editorial
           onDone={() => setPinLimitToast(false)}
+        />
+      )}
+
+      {copiedToast && (
+        <Toast
+          message="Copied"
+          duration={2}
+          theme={theme}
+          editorial
+          mobileFloat
+          onDone={() => setCopiedToast(false)}
         />
       )}
     </div>

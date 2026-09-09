@@ -134,25 +134,8 @@ export function MobileDropsView({
     onSelectionModeChange?.(v);
   }, [onSelectionModeChange]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
-  const bulkDeleteRef = useRef<HTMLButtonElement>(null);
   const [deleting, setDeleting] = useState(false);
-
-  useEffect(() => {
-    if (!confirmBulkDelete) return;
-    const t = setTimeout(() => setConfirmBulkDelete(false), 3000);
-    return () => clearTimeout(t);
-  }, [confirmBulkDelete]);
-
-  useEffect(() => {
-    if (!confirmBulkDelete) return;
-    const onDocPointerDown = (e: PointerEvent) => {
-      if (bulkDeleteRef.current && e.target instanceof Node && bulkDeleteRef.current.contains(e.target)) return;
-      setConfirmBulkDelete(false);
-    };
-    document.addEventListener('pointerdown', onDocPointerDown);
-    return () => document.removeEventListener('pointerdown', onDocPointerDown);
-  }, [confirmBulkDelete]);
+  const [holdDone, setHoldDone] = useState(false);
 
   const toggleSelect = useCallback((id: string) => {
     const next = new Set(selectedIds);
@@ -162,7 +145,6 @@ export function MobileDropsView({
       next.add(id);
     }
     setSelectedIds(next);
-    if (next.size === 0) setConfirmBulkDelete(false);
   }, [selectedIds]);
 
   // --- Single-drop delete-with-undo (shared store) + tombstone visibility filter ---
@@ -170,6 +152,9 @@ export function MobileDropsView({
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [pinLimitToast, setPinLimitToast] = useState(false);
   const [sheetDrop, setSheetDrop] = useState<Drop | null>(null);
+  // "Copied" confirmation for the ⋯ sheet's Copy row — the sheet unmounts as it closes, so
+  // the VIEW owns this toast (it must outlive the sheet's slide-down).
+  const [copiedToast, setCopiedToast] = useState(false);
   const [sortMenuOpen, setSortMenuOpen] = useState(false);
 
   // R15: the shell drops the navbar while any Drops overlay is open (the ⋯ sheet or the
@@ -186,7 +171,6 @@ export function MobileDropsView({
   useEffect(() => {
     setSelectedIds(new Set());
     applySelectionMode(false);
-    setConfirmBulkDelete(false);
     setSheetDrop(null);
   }, [currentWorkspace, applySelectionMode]);
 
@@ -207,14 +191,12 @@ export function MobileDropsView({
     // down (AnimatePresence exit) and the navbar returns (the shell mirror).
     if (selectionMode && next.size === 0) {
       applySelectionMode(false);
-      setConfirmBulkDelete(false);
     }
   }, [drops, selectedIds, selectionMode, applySelectionMode]);
 
   const cancelSelection = () => {
     setSelectedIds(new Set());
     applySelectionMode(false);
-    setConfirmBulkDelete(false);
   };
 
   // OWNER REQUEST #3: a header control fired (chat / settings / theme) — cancel the
@@ -224,7 +206,6 @@ export function MobileDropsView({
     if (!deselectSignal) return;
     setSelectedIds(new Set());
     applySelectionMode(false);
-    setConfirmBulkDelete(false);
   }, [deselectSignal, applySelectionMode]);
 
   const handleDeleteWithUndo = useCallback((drop: Drop) => requestDelete(drop, refreshDrops), [refreshDrops]);
@@ -405,32 +386,27 @@ export function MobileDropsView({
   const moveUp = useCallback((id: string) => moveDropSlot(id, 'up'), [moveDropSlot]);
   const moveDown = useCallback((id: string) => moveDropSlot(id, 'down'), [moveDropSlot]);
 
-  // --- Bulk delete (ported :275-297) — immediate, NO undo ---
-  const handleBulkDeleteClick = () => {
-    if (!confirmBulkDelete) {
-      setConfirmBulkDelete(true);
-      return;
-    }
-    setConfirmBulkDelete(false);
-    handleBulkDelete();
-  };
-
+  // --- Bulk delete — immediate, NO undo. Fired by MobileBulkBar's hold button (D10):
+  // "Deleting..." runs while the deletes land, then the green "Deleted ✓" beat, then
+  // the bar closes. ---
   const handleBulkDelete = async () => {
     if (selectedIds.size === 0) return;
     setDeleting(true);
     const selectedDrops = filteredDrops.filter(d => selectedIds.has(d.id));
     await Promise.all(selectedDrops.map(drop => deleteDrop(drop)));
-    setSelectedIds(new Set());
-    applySelectionMode(false);
-    refreshDrops();
     setDeleting(false);
-    setConfirmBulkDelete(false);
+    setHoldDone(true);
+    window.setTimeout(() => {
+      setSelectedIds(new Set());
+      applySelectionMode(false);
+      refreshDrops();
+      setHoldDone(false);
+    }, 650);
   };
 
   const selectAll = () => {
     if (selectedIds.size === filteredDrops.length) {
       setSelectedIds(new Set());
-      setConfirmBulkDelete(false);
     } else {
       // Live-call tiles are never selectable (#21).
       setSelectedIds(new Set(filteredDrops.filter(d => d.type !== 'call').map(d => d.id)));
@@ -687,10 +663,9 @@ export function MobileDropsView({
               const selectedDrops = drops.filter(d => selectedIds.has(d.id));
               if (selectedDrops.length > 0) onOpenMoveModal(selectedDrops);
             }}
-            confirmDelete={confirmBulkDelete}
             deleting={deleting}
-            onDeleteClick={handleBulkDeleteClick}
-            deleteButtonRef={bulkDeleteRef}
+            done={holdDone}
+            onHoldComplete={handleBulkDelete}
           />
         )}
       </AnimatePresence>
@@ -722,6 +697,7 @@ export function MobileDropsView({
         onPin={handlePinDrop}
         onUnpin={handlePinDrop}
         manualMove={sheetManualMove}
+        onCopied={() => setCopiedToast(true)}
           />
         )}
       </AnimatePresence>
@@ -749,6 +725,17 @@ export function MobileDropsView({
           theme={theme}
           editorial
           onDone={() => setPinLimitToast(false)}
+        />
+      )}
+
+      {copiedToast && (
+        <Toast
+          message="Copied"
+          duration={2}
+          theme={theme}
+          editorial
+          mobileFloat
+          onDone={() => setCopiedToast(false)}
         />
       )}
     </div>
