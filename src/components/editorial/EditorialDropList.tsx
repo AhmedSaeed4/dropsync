@@ -15,6 +15,7 @@ import { ensureCategoriesForTarget } from '@/lib/categories';
 import { dropMatchesSearchQuery } from '@/lib/youtubeLabels';
 import { EditorialMoveDropModal } from './EditorialMoveDropModal';
 import { getEditorialThemeColors } from './editorialTheme';
+import HoldToDeleteButton from './HoldToDeleteButton';
 import { MemberInfo } from '@/lib/workspaces';
 import { getCategoryCollapsed, setCategoryCollapsed, getDropSortPrefs, setDropSortMode, setDropOrder } from '@/lib/auth';
 import type { DropSortMode } from '@/lib/auth';
@@ -183,29 +184,8 @@ export function EditorialDropList({
 }: EditorialDropListProps) {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  // Two-tap bulk-delete guard (owner-approved): first click arms, second click deletes.
-  // Auto-disarms after 3s, on outside click, on Cancel, or when the selection empties.
-  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
-  const bulkDeleteRef = useRef<HTMLButtonElement>(null);
-
-  // Auto-disarm after 3s; also when selection empties.
-  useEffect(() => {
-    if (!confirmBulkDelete) return;
-    const t = setTimeout(() => setConfirmBulkDelete(false), 3000);
-    return () => clearTimeout(t);
-  }, [confirmBulkDelete]);
-
-  // Outside click disarms; clicks on the confirm button itself are ignored.
-  useEffect(() => {
-    if (!confirmBulkDelete) return;
-    const onDocPointerDown = (e: PointerEvent) => {
-      if (bulkDeleteRef.current && e.target instanceof Node && bulkDeleteRef.current.contains(e.target)) return;
-      setConfirmBulkDelete(false);
-    };
-    document.addEventListener('pointerdown', onDocPointerDown);
-    return () => document.removeEventListener('pointerdown', onDocPointerDown);
-  }, [confirmBulkDelete]);
   const [deleting, setDeleting] = useState(false);
+  const [holdDone, setHoldDone] = useState(false);
   // Single-drop delete-with-undo state lives in the shared module store (PR #168) so it survives a
   // classic<->editorial layout switch / client-side nav mid-30s-window. `pending` is the request-
   // time hide + the 30s timer; `deletedDropIds` (the tombstone) hides drops whose delete has
@@ -249,8 +229,7 @@ export function EditorialDropList({
     setMentionDropdownOpen(true);
   };
 
-  // Mirrors DropList.toggleSelect so both themes behave identically. Deps include
-  // selectedIds so the disarm-on-empty guard reads the live set; selection only
+  // Mirrors DropList.toggleSelect so both themes behave identically. Selection only
   // changes in selection mode, so drag-frame memo stability is unaffected.
   const toggleSelect = useCallback((id: string) => {
     const next = new Set(selectedIds);
@@ -260,25 +239,14 @@ export function EditorialDropList({
       next.add(id);
     }
     setSelectedIds(next);
-    if (next.size === 0) setConfirmBulkDelete(false);
   }, [selectedIds]);
 
   const selectAll = () => {
     if (selectedIds.size === filteredDrops.length) {
       setSelectedIds(new Set());
-      setConfirmBulkDelete(false);
     } else {
       setSelectedIds(new Set(filteredDrops.map(d => d.id)));
     }
-  };
-
-  const handleBulkDeleteClick = () => {
-    if (!confirmBulkDelete) {
-      setConfirmBulkDelete(true);
-      return;
-    }
-    setConfirmBulkDelete(false);
-    handleBulkDelete();
   };
 
   const handleBulkDelete = async () => {
@@ -289,17 +257,21 @@ export function EditorialDropList({
 
     await Promise.all(selectedDrops.map(drop => deleteDrop(drop)));
 
-    setSelectedIds(new Set());
-    setSelectionMode(false);
-    onDelete();
     setDeleting(false);
-    setConfirmBulkDelete(false);
+    setHoldDone(true);
+    // D10 (owner-ordered sequence): "Deleting..." ran while the deletes landed; now the
+    // green "Deleted ✓" beat plays, then the toolbar closes out.
+    window.setTimeout(() => {
+      setSelectedIds(new Set());
+      setSelectionMode(false);
+      onDelete();
+      setHoldDone(false);
+    }, 650);
   };
 
   const cancelSelection = () => {
     setSelectedIds(new Set());
     setSelectionMode(false);
-    setConfirmBulkDelete(false);
   };
 
   // Single-drop delete-with-undo handlers — thin wrappers over the shared store (PR #168). The
@@ -1040,14 +1012,14 @@ export function EditorialDropList({
                     >
                       Move {selectedIds.size}
                     </button>
-                    <button
-                      ref={bulkDeleteRef}
-                      onClick={handleBulkDeleteClick}
-                      disabled={deleting}
-                      className={`text-xs ${font} px-3 py-1.5 ${tc.roundedClass} bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-50 flex items-center gap-1`}
-                    >
-                      {deleting ? 'Deleting...' : confirmBulkDelete ? `Confirm delete ${selectedIds.size}` : `Delete ${selectedIds.size}`}
-                    </button>
+                    <HoldToDeleteButton
+                      variant="full"
+                      count={selectedIds.size}
+                      deleting={deleting}
+                      done={holdDone}
+                      onHoldComplete={handleBulkDelete}
+                      className={`h-7 px-3 ${tc.roundedClass} hover:bg-red-600 transition-colors ${font}`}
+                    />
                   </>
                 )}
               </div>

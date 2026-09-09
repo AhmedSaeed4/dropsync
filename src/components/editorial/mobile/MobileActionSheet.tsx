@@ -17,6 +17,9 @@ interface MobileActionSheetProps {
   // the locked state below always reflects the current doc.
   drop: Drop | null;
   onClose: () => void;
+  // Fired after a successful clipboard copy — the VIEW owns the "Copied" toast, because
+  // the sheet unmounts as it closes and could not show one (D10 add-on: keep confirmation).
+  onCopied: () => void;
   theme: Theme;
   currentUserId: string | null;
   onPreview: (drop: Drop) => void;
@@ -48,6 +51,7 @@ function isTextFile(drop: Drop): boolean {
 export function MobileActionSheet({
   drop,
   onClose,
+  onCopied,
   theme,
   currentUserId,
   onPreview,
@@ -68,7 +72,6 @@ export function MobileActionSheet({
   const [displayImageData, setDisplayImageData] = useState('');
   const [isDownloading, setIsDownloading] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
-  const [copiedToast, setCopiedToast] = useState(false);
   const [shareToast, setShareToast] = useState(false);
 
   const lockedNoMutate = !!drop?.locked && !canMutate;
@@ -200,7 +203,8 @@ export function MobileActionSheet({
     })() : '');
     if (content) {
       await navigator.clipboard.writeText(contentToPlainText(content));
-      setCopiedToast(true);
+      onClose();
+      onCopied();
     }
   };
 
@@ -351,9 +355,6 @@ export function MobileActionSheet({
         </div>
       </motion.div>
 
-      {copiedToast && (
-        <Toast message="Copied" duration={2} theme={theme} editorial onDone={() => setCopiedToast(false)} />
-      )}
       {shareToast && (
         <Toast message="Link copied" duration={2} theme={theme} editorial onDone={() => setShareToast(false)} />
       )}
