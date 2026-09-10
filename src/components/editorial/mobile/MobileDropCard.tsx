@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Drop, Workspace } from '@/types';
 import { formatFileSize, getTimeRemaining, decryptDrop, getYouTubeVideoId } from '@/lib/drops';
+import { primeDecryptedPreview } from '@/lib/previewPrime';
 import { DropMentionContent } from '../../DropMentionContent';
 import { useVideoThumbnail } from '@/hooks/useVideoThumbnail';
 import { getEditorialThemeColors } from '../editorialTheme';
@@ -152,6 +153,7 @@ export function MobileDropCard({
 
       try {
         const decrypted = await decryptDrop(drop, currentUserId);
+        primeDecryptedPreview(drop, decrypted);
         if (decrypted.type === 'text' && decrypted.content) {
           setDecryptedContent(decrypted.content);
           setDecryptError(false);

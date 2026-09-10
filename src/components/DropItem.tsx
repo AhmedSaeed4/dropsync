@@ -2,11 +2,12 @@
 
 import { Drop } from '@/types';
 import { formatFileSize, getTimeRemaining, decryptDrop, getYouTubeVideoId } from '@/lib/drops';
+import { primeDecryptedPreview, prebuildVideoUrl } from '@/lib/previewPrime';
 import { createShare } from '@/lib/shares';
 import { downloadBinaryFromUrl } from '@/lib/download';
 import { contentToPlainText } from '@/lib/dropTagUtils';
 import { DropMentionContent } from './DropMentionContent';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useVideoThumbnail } from '@/hooks/useVideoThumbnail';
 import { DropContextMenu, useContextMenu } from './DropContextMenu';
 import { LockedHintTooltip } from './LockedHintTooltip';
@@ -77,6 +78,9 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
   const isMinimal = theme === 'minimal';
 
   const { menuState, closeMenu, contextMenuProps } = useContextMenu();
+  // Win B hover pre-stage (desktop): a settled mouse on a video card pre-builds its blob
+  // URL so the click finds it staged. Sweeping past never triggers (100 ms settle).
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const isImage = drop.mimeType?.startsWith('image/');
   const isVideo = drop.mimeType?.startsWith('video/');
@@ -89,6 +93,7 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
         try {
           // decryptDrop handles both workspace and personal drops
           const decrypted = await decryptDrop(drop, currentUserId);
+          primeDecryptedPreview(drop, decrypted);
 
           if (decrypted.type === 'text' && decrypted.content) {
             setDecryptedContent(decrypted.content);
@@ -119,6 +124,11 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
     }
     decrypt();
   }, [drop, currentUserId]);
+
+  // Cancel a pending hover pre-stage when the card unmounts.
+  useEffect(() => () => {
+    if (hoverTimerRef.current !== null) clearTimeout(hoverTimerRef.current);
+  }, []);
 
   // What to display: decrypted, error message, or original content
   const displayContent = drop.encrypted
@@ -328,6 +338,26 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
   return (
     <div
       onClick={() => selectionMode ? onSelect(drop.id) : onPreview(drop)}
+      onPointerEnter={(e) => {
+        if (!hoverable || e.pointerType !== 'mouse' || selectionMode || !isVideo) return;
+        if (hoverTimerRef.current !== null) clearTimeout(hoverTimerRef.current);
+        hoverTimerRef.current = setTimeout(() => {
+          hoverTimerRef.current = null;
+          if (displayFileData && displayFileData.startsWith('data:')) {
+            prebuildVideoUrl({ ...drop, fileData: displayFileData });
+          } else if (drop.fileFormat === 'binary' && drop.fileUrl) {
+            // Best-effort warm for a streamed binary video: pull the first 64 KB so the
+            // browser may serve the player's first range request from its HTTP cache.
+            void fetch(drop.fileUrl, { headers: { Range: 'bytes=0-65535' } }).catch(() => {});
+          }
+        }, 100);
+      }}
+      onPointerLeave={() => {
+        if (hoverTimerRef.current !== null) {
+          clearTimeout(hoverTimerRef.current);
+          hoverTimerRef.current = null;
+        }
+      }}
       {...contextMenuProps}
       className={`relative select-none border ${tc.borderColor} ${tc.bgColor} transition-all cursor-pointer group overflow-hidden ${
         selected ? `${tc.selectedBg} ${tc.selectedBorder}` : tc.hoverBg

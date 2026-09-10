@@ -78,6 +78,42 @@ export function PreviewModal({ drop, onClose, onBack, canBack, theme = 'light', 
     let url: string | null = null;
     let cancelled = false;
 
+    // Instant-open (Win B): a settled desktop hover pre-built this video's blob URL. It may
+    // be DEAD — revoked when an earlier preview unmounted while the carrying drop object
+    // resurfaced (edit-close, edit-save, move-cancel) — so re-fetch it and wrap a FRESH
+    // object URL owned by this mount's cleanup; if it is dead, fall back to the normal
+    // data-URL path below.
+    if (drop.prebuiltVideoUrl) {
+      fetch(drop.prebuiltVideoUrl)
+        .then(res => {
+          if (!res.ok) throw new Error('prebuilt blob URL is dead');
+          return res.blob();
+        })
+        .then(blob => {
+          if (!cancelled) {
+            url = URL.createObjectURL(blob);
+            setVideoSrc(url);
+          }
+        })
+        .catch(() => {
+          if (cancelled) return;
+          if (drop.fileData && drop.fileData.startsWith('data:')) {
+            fetch(drop.fileData)
+              .then(res => res.blob())
+              .then(fallbackBlob => {
+                if (!cancelled) {
+                  url = URL.createObjectURL(fallbackBlob);
+                  setVideoSrc(url);
+                }
+              })
+              .catch(() => { if (!cancelled) setVideoSrc(null); });
+          } else {
+            setVideoSrc(null);
+          }
+        });
+      return;
+    }
+
     if (drop.fileData && drop.fileData.startsWith('data:')) {
       // Encrypted video: data URL → blob
       fetch(drop.fileData)
@@ -119,7 +155,7 @@ export function PreviewModal({ drop, onClose, onBack, canBack, theme = 'light', 
         URL.revokeObjectURL(url);
       }
     };
-  }, [isVideo, drop.fileData, drop.fileUrl, drop.fileFormat]);
+  }, [isVideo, drop.fileData, drop.fileUrl, drop.fileFormat, drop.prebuiltVideoUrl]);
 
   // Reset the ready flag only when the source actually changes (not on every effect re-run), so
   // the overlay shows for a new video and hides once onCanPlay fires for it. onError also clears

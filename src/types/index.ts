@@ -51,6 +51,11 @@ export interface Drop {
   imageMimeType?: string;
   imageIv?: string; // IV for image encryption
   imageData?: string; // Runtime only: decrypted base64 image data
+  // Runtime only: a hover-prebuilt blob URL for a supported video, attached by handlePreview
+  // at click time (src/lib/previewPrime.ts). NEVER persisted — no Firestore write path reads
+  // it. The preview modal re-fetches it (it may have been revoked by an earlier preview
+  // mount) and revokes its own wrapper on unmount, falling back to the decrypted data URL.
+  prebuiltVideoUrl?: string;
   // Category fields
   category?: string; // Legacy: single category string
   categories?: string[]; // New: array of category names (max 3)
