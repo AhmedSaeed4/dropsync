@@ -2,6 +2,7 @@
 
 import { Drop } from '@/types';
 import { formatFileSize, getTimeRemaining, decryptDrop, getYouTubeVideoId } from '@/lib/drops';
+import { primeDecryptedPreview, prebuildVideoUrl } from '@/lib/previewPrime';
 import { createShare } from '@/lib/shares';
 import { downloadBinaryFromUrl } from '@/lib/download';
 import { contentToPlainText } from '@/lib/dropTagUtils';
@@ -209,6 +210,9 @@ export const EditorialDropItem = memo(function EditorialDropItem({
   //   - imageR2Key: covers image-ONLY edits (PATH 2 changes imageR2Key without
   //     touching iv), which iv alone would miss.
   const lastSigRef = useRef<string | null>(null);
+  // Win B hover pre-stage (desktop): a settled mouse on a video card pre-builds its blob
+  // URL so the click finds it staged. Sweeping past never triggers (100 ms settle).
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const tc = getEditorialThemeColors(theme);
   const font = tc.fontClass;
@@ -256,6 +260,7 @@ export const EditorialDropItem = memo(function EditorialDropItem({
 
       try {
         const decrypted = await decryptDrop(drop, currentUserId);
+        primeDecryptedPreview(drop, decrypted);
 
         if (decrypted.type === 'text' && decrypted.content) {
           setDecryptedContent(decrypted.content);
@@ -280,6 +285,11 @@ export const EditorialDropItem = memo(function EditorialDropItem({
     }
     decrypt();
   }, [drop, currentUserId, inView]);
+
+  // Cancel a pending hover pre-stage when the card unmounts.
+  useEffect(() => () => {
+    if (hoverTimerRef.current !== null) clearTimeout(hoverTimerRef.current);
+  }, []);
 
   const displayContent = drop.encrypted
     ? (decryptError ? '[Encrypted - cannot decrypt]' : decryptedContent)
@@ -467,6 +477,26 @@ export const EditorialDropItem = memo(function EditorialDropItem({
     <div
       ref={cardRef}
       onClick={() => selectionMode ? onSelect(drop.id) : onPreview(drop)}
+      onPointerEnter={(e) => {
+        if (!hoverable || e.pointerType !== 'mouse' || selectionMode || !isVideo) return;
+        if (hoverTimerRef.current !== null) clearTimeout(hoverTimerRef.current);
+        hoverTimerRef.current = setTimeout(() => {
+          hoverTimerRef.current = null;
+          if (displayFileData && displayFileData.startsWith('data:')) {
+            prebuildVideoUrl({ ...drop, fileData: displayFileData });
+          } else if (drop.fileFormat === 'binary' && drop.fileUrl) {
+            // Best-effort warm for a streamed binary video: pull the first 64 KB so the
+            // browser may serve the player's first range request from its HTTP cache.
+            void fetch(drop.fileUrl, { headers: { Range: 'bytes=0-65535' } }).catch(() => {});
+          }
+        }, 100);
+      }}
+      onPointerLeave={() => {
+        if (hoverTimerRef.current !== null) {
+          clearTimeout(hoverTimerRef.current);
+          hoverTimerRef.current = null;
+        }
+      }}
       {...contextMenuProps}
       className={`relative select-none ${tc.cardBg} ${tc.roundedClass} border ${tc.border} transition-all cursor-pointer group overflow-hidden ${
         tc.hoverBorder

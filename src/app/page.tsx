@@ -30,6 +30,7 @@ import { Drop, Workspace, ExpirationOption } from '@/types';
 import { initializeUserKeys, hasUserKeys, getUserKeys, ensurePublicKeyPublished } from '@/lib/keys';
 import { ensureProfilePublished } from '@/lib/profiles';
 import { decryptDrop, updateTextDrop, updateDropMetadata, moveDrop, getExpirationDate } from '@/lib/drops';
+import { previewSig, getPrimedPreview, consumePrebuiltVideoUrl, clearPreviewPrimeCaches, primeDecryptedPreview } from '@/lib/previewPrime';
 import {
   evaluateYoutubeBackfillVisibility,
   isPasswordCategories,
@@ -190,6 +191,10 @@ export default function Home() {
   // this state because the trail belongs to Home, not either layout branch.
   useEffect(() => {
     resetPreviewNavigation();
+    // The instant-open caches are cleared HERE, never in resetPreviewNavigation: that runs
+    // before every fresh open, and clearing there would erase the priming the click is
+    // about to use. A different account/workspace must never inherit primed payloads.
+    clearPreviewPrimeCaches();
   }, [user?.uid, currentWorkspaceId, resetPreviewNavigation]);
 
   // Categories for current workspace
@@ -571,6 +576,29 @@ export default function Home() {
 
     // If encrypted, show modal immediately with skeleton, then decrypt
     if (drop.encrypted) {
+      // Instant open (Win A): the clicked card already decrypted this payload into the
+      // primed cache — serve the primed PAYLOAD on top of the LIVE drop (name/lock/
+      // reminder must stay fresh) and skip the duplicate download+decrypt. Signature-
+      // guarded: any payload change rotates iv/imageR2Key/r2Key and falls through to the
+      // normal path below.
+      const primed = getPrimedPreview(drop.id, previewSig(drop));
+      if (primed) {
+        const shown: Drop = {
+          ...drop,
+          content: primed.content,
+          fileData: primed.fileData,
+          imageData: primed.imageData,
+          encrypted: false,
+        };
+        // Win B: a settled hover may have pre-built this video's blob URL — hand it over
+        // (ownership transfers; the modal's cleanup revokes it).
+        const prebuiltUrl = consumePrebuiltVideoUrl(drop.id, previewSig(drop));
+        if (prebuiltUrl) shown.prebuiltVideoUrl = prebuiltUrl;
+        setPreviewDrop(shown);
+        setPreviewLoading(false);
+        decryptedPreviewCache.current.set(drop.id, primed);
+        return;
+      }
       setPreviewDrop(drop); // Show modal immediately with encrypted drop
       setPreviewLoading(true); // Show skeleton
       try {
@@ -581,6 +609,10 @@ export default function Home() {
         if (previewEpochRef.current === epoch) {
           setPreviewDrop(decryptedDrop); // Update with decrypted content
           decryptedPreviewCache.current.set(drop.id, decryptedDrop);
+          // The click did the decrypt work anyway — hand the fresh payload to the
+          // instant-open shelf, so reopening THIS drop is always a hit even if the
+          // cards' scroll-priming was evicted.
+          primeDecryptedPreview(drop, decryptedDrop);
         }
       } finally {
         if (previewEpochRef.current === epoch) {
