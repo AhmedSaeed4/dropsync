@@ -160,6 +160,118 @@ const SortableEditorialDropItem = memo(function SortableEditorialDropItem(props:
   );
 });
 
+// PERF(PF-1): the everyday branch wraps every card in a motion.div layout so deletes
+// and new drops can animate. Without this memo, EVERY list commit (e.g. the chat
+// panel opening) re-renders and re-measures all N wrappers even when the cards
+// inside skip. Equal props → the whole row (wrapper + card) skips.
+const AnimatedDropRow = memo(function AnimatedDropRow({
+  drop,
+  moveIdx,
+  manualCount,
+  ...cardProps
+}: ComponentProps<typeof EditorialDropItem> & { moveIdx: number | undefined; manualCount: number }) {
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, scale: 0.97 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.9 }}
+      transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+    >
+      <EditorialDropItem drop={drop} {...cardProps} />
+    </motion.div>
+  );
+});
+
+// PERF(PF-1): the popLayout collection is the only place where every list commit
+// costs O(N) AnimatePresence bookkeeping over all mounted rows. Isolating it behind
+// a memo means commits that change nothing here (e.g. the chat panel opening — its
+// showChat styling lives in the parent chrome) skip the entire collection.
+const AnimatedDropList = memo(function AnimatedDropList({
+  filteredDrops,
+  manualIndexById,
+  manualCount,
+  selectedIds,
+  toggleSelect,
+  selectionMode,
+  theme,
+  currentUserId,
+  currentWorkspace,
+  onDelete,
+  onPin,
+  onPreview,
+  onEdit,
+  allDrops,
+  onJoinCall,
+  workspaceMembers,
+  isReopenCallId,
+  hoverable,
+  moveUp,
+  moveDown,
+}: {
+  filteredDrops: Drop[];
+  manualIndexById: Map<string, number>;
+  manualCount: number;
+  selectedIds: Set<string>;
+  toggleSelect: (id: string) => void;
+  selectionMode: boolean;
+  theme?: 'light' | 'dark' | 'minimal';
+  currentUserId?: string;
+  currentWorkspace?: Workspace | null;
+  onDelete: (drop: Drop) => void;
+  onPin: (drop: Drop) => Promise<void> | void;
+  onPreview: (drop: Drop) => void;
+  onEdit?: (drop: Drop) => void;
+  allDrops?: Drop[];
+  onJoinCall?: (drop: Drop) => void;
+  workspaceMembers?: MemberInfo[];
+  isReopenCallId?: string;
+  hoverable?: boolean;
+  moveUp: (id: string) => void;
+  moveDown: (id: string) => void;
+}) {
+  const now = new Date();
+  return (
+    <div className="relative p-3 space-y-2">
+      <AnimatePresence initial={false} mode="popLayout">
+        {filteredDrops.map((drop) => {
+          const moveIdx = manualIndexById.get(drop.id);
+          return (
+            <AnimatedDropRow
+              key={drop.id}
+              drop={drop}
+              moveIdx={moveIdx}
+              manualCount={manualCount}
+              onDelete={onDelete}
+              onPreview={onPreview}
+              onEdit={onEdit}
+              selected={selectedIds.has(drop.id)}
+              onSelect={toggleSelect}
+              selectionMode={selectionMode}
+              theme={theme}
+              currentUserId={currentUserId}
+              reminderGlow={isReminderGlowingForViewer(drop, currentUserId ?? null, now)}
+              canMutate={!!currentUserId && (currentUserId === drop.userId || (!!currentWorkspace && currentUserId === currentWorkspace.ownerId))}
+              onPin={onPin}
+              onUnpin={onPin}
+              allDrops={allDrops}
+              onJoinCall={onJoinCall}
+              members={workspaceMembers}
+              isReopenCallId={isReopenCallId}
+              hoverable={hoverable}
+              showMoveControls={moveIdx !== undefined}
+              canMoveUp={moveIdx !== undefined && moveIdx > 0}
+              canMoveDown={moveIdx !== undefined && moveIdx < manualCount - 1}
+              onMoveUp={moveUp}
+              onMoveDown={moveDown}
+            />
+          );
+        })}
+      </AnimatePresence>
+    </div>
+  );
+});
+
 export function EditorialDropList({
   drops,
   loading,
@@ -232,14 +344,16 @@ export function EditorialDropList({
   // Mirrors DropList.toggleSelect so both themes behave identically. Selection only
   // changes in selection mode, so drag-frame memo stability is unaffected.
   const toggleSelect = useCallback((id: string) => {
-    const next = new Set(selectedIds);
-    if (next.has(id)) {
-      next.delete(id);
-    } else {
-      next.add(id);
-    }
-    setSelectedIds(next);
-  }, [selectedIds]);
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
 
   const selectAll = () => {
     if (selectedIds.size === filteredDrops.length) {
@@ -288,7 +402,10 @@ export function EditorialDropList({
   // clearing the pendingDeletions hide and onSnapshot actually removing the doc, so the drop never
   // flashes back at 30s. Undo never sets the tombstone, so undo still re-shows it. Both clauses are
   // load-bearing: collapsing to one reopens the #167 30s flash.
-  const visibleDrops = drops.filter(d => !pendingDeletions.has(d.id) && !deletedDropIds.has(d.id));
+  const visibleDrops = useMemo(
+    () => drops.filter(d => !pendingDeletions.has(d.id) && !deletedDropIds.has(d.id)),
+    [drops, pendingDeletions, deletedDropIds]
+  );
 
   // Respect prefers-reduced-motion: those users get the current instant snap.
   const prefersReducedMotion = useReducedMotion();
@@ -398,10 +515,10 @@ export function EditorialDropList({
       : sentinelTop <= firstTop + 2
         ? wrapIndex
         : Math.max(1, wrapIndex - 1);
-    setOverflows(overflowPills);
-    setCollapsedHeight(firstRowBottom - firstTop);
-    setExpandedHeight(contentBottom - firstTop);
-    setFirstRowCount(count);
+    setOverflows((prev) => (prev === overflowPills ? prev : overflowPills));
+    setCollapsedHeight((prev) => (prev === firstRowBottom - firstTop ? prev : firstRowBottom - firstTop));
+    setExpandedHeight((prev) => (prev === contentBottom - firstTop ? prev : contentBottom - firstTop));
+    setFirstRowCount((prev) => (prev === count ? prev : count));
   }, []);
 
   // Initial measure + re-measure on resize (pills re-wrap when the width changes). The
@@ -1191,49 +1308,28 @@ export function EditorialDropList({
               </div>
             </DndContext>
           ) : animateDrops ? (
-            <div className="relative p-3 space-y-2">
-              <AnimatePresence initial={false} mode="popLayout">
-                {filteredDrops.map((drop) => {
-                  const moveIdx = manualIndexById.get(drop.id);
-                  return (
-                    <motion.div
-                      key={drop.id}
-                      layout
-                      initial={{ opacity: 0, scale: 0.97 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      exit={{ opacity: 0, scale: 0.9 }}
-                      transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
-                    >
-                      <EditorialDropItem
-                        drop={drop}
-                        onDelete={handleDeleteWithUndo}
-                        onPreview={onPreview}
-                        onEdit={onEdit}
-                        selected={selectedIds.has(drop.id)}
-                        onSelect={toggleSelect}
-                        selectionMode={selectionMode}
-                        theme={theme}
-                        currentUserId={currentUserId}
-                        reminderGlow={isReminderGlowingForViewer(drop, currentUserId ?? null, now)}
-                        canMutate={!!currentUserId && (currentUserId === drop.userId || (!!currentWorkspace && currentUserId === currentWorkspace.ownerId))}
-                        onPin={handlePinDrop}
-                        onUnpin={handlePinDrop}
-                        allDrops={allDrops}
-                        onJoinCall={onJoinCall}
-                        members={workspaceMembers}
-                        isReopenCallId={isReopenCallId}
-                        hoverable={hoverable}
-                        showMoveControls={moveIdx !== undefined}
-                        canMoveUp={moveIdx !== undefined && moveIdx > 0}
-                        canMoveDown={moveIdx !== undefined && moveIdx < manualCount - 1}
-                        onMoveUp={moveUp}
-                        onMoveDown={moveDown}
-                      />
-                    </motion.div>
-                  );
-                })}
-              </AnimatePresence>
-            </div>
+            <AnimatedDropList
+              filteredDrops={filteredDrops}
+              manualIndexById={manualIndexById}
+              manualCount={manualCount}
+              selectedIds={selectedIds}
+              toggleSelect={toggleSelect}
+              selectionMode={selectionMode}
+              theme={theme}
+              currentUserId={currentUserId}
+              currentWorkspace={currentWorkspace}
+              onDelete={handleDeleteWithUndo}
+              onPin={handlePinDrop}
+              onPreview={onPreview}
+              onEdit={onEdit}
+              allDrops={allDrops}
+              onJoinCall={onJoinCall}
+              workspaceMembers={workspaceMembers}
+              isReopenCallId={isReopenCallId}
+              hoverable={hoverable}
+              moveUp={moveUp}
+              moveDown={moveDown}
+            />
           ) : (
             <div className="p-3 space-y-2">
               {filteredDrops.map((drop) => {

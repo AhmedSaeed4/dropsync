@@ -498,7 +498,7 @@ export const EditorialDropItem = memo(function EditorialDropItem({
         }
       }}
       {...contextMenuProps}
-      className={`relative select-none ${tc.cardBg} ${tc.roundedClass} border ${tc.border} transition-all cursor-pointer group overflow-hidden ${
+      className={`relative select-none ${tc.cardBg} ${tc.roundedClass} border ${tc.border} transition-all cursor-pointer group overflow-hidden [content-visibility:auto] [contain-intrinsic-size:auto_160px] ${
         tc.hoverBorder
       } ${selectionMode && selected ? 'opacity-60' : ''}`}
     >
@@ -580,6 +580,8 @@ export const EditorialDropItem = memo(function EditorialDropItem({
             <img
               src={thumbnailSrc}
               alt={drop.name}
+              loading="lazy"
+              decoding="async"
               className="w-full h-full object-cover"
             />
             {isVideo && (
