@@ -10,7 +10,7 @@
 // map (you never see your own online dot to yourself). Firestore has no onDisconnect, so offline is
 // detected via the heartbeat + TTL (a missed heartbeat ages lastSeen past the grace window).
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   CLOCK_SKEW_TOLERANCE_MS,
   PRESENCE_GRACE_MS,
@@ -23,20 +23,52 @@ import {
 export type PresenceMap = Record<string, { lastSeen: number; online: boolean }>;
 
 export function usePresence(userId: string | null, workspaceId: string | null): PresenceMap {
-  // Raw entries from the listener (self already excluded), keyed by uid.
-  const [entries, setEntries] = useState<Record<string, { lastSeenMs: number; online: boolean }>>({});
-  // 5s re-filter tick: a doc going stale (no new snapshot) must drop offline without a fresh write.
-  const [tick, setTick] = useState(0);
+  // Raw entries from the listener (self already excluded), keyed by uid. Kept in a ref
+  // on purpose — PERF(PF-1): heartbeat snapshots refresh lastSeenMs every few seconds,
+  // and that churn must never re-render the page; only a REAL change of the derived
+  // online map may.
+  const entriesRef = useRef<Record<string, { lastSeenMs: number; online: boolean }>>({});
+  const [onlineMap, setOnlineMap] = useState<PresenceMap>({});
+
+  // Re-derive the online map from the latest raw entries and publish it ONLY when its
+  // visible content changed: the key set, any online flag, or the lastSeen of an OFFLINE
+  // member (the only lastSeen a label renders — formatLastSeen shows it under offline
+  // members only). An online member's heartbeat lastSeen refresh is display-invisible
+  // and deliberately skipped.
+  const recomputeOnlineMap = useCallback(() => {
+    const now = Date.now();
+    const out: PresenceMap = {};
+    for (const [uid, e] of Object.entries(entriesRef.current)) {
+      const age = now - e.lastSeenMs;
+      const online = e.online === true && age >= -CLOCK_SKEW_TOLERANCE_MS && age < PRESENCE_GRACE_MS;
+      out[uid] = { lastSeen: e.lastSeenMs, online };
+    }
+    setOnlineMap((prev) => {
+      const prevKeys = Object.keys(prev);
+      const nextKeys = Object.keys(out);
+      if (prevKeys.length !== nextKeys.length) return out;
+      for (const uid of nextKeys) {
+        const p = prev[uid];
+        const n = out[uid];
+        if (!p || p.online !== n.online || (n.online === false && p.lastSeen !== n.lastSeen)) {
+          return out;
+        }
+      }
+      return prev;
+    });
+  }, []);
 
   // Reader — subscribe to presence docs for this workspace. Self-guard: no-op when null.
   useEffect(() => {
     if (!userId || !workspaceId) {
-      setEntries({});
+      entriesRef.current = {};
+      recomputeOnlineMap();
       return;
     }
     // Reset on workspace switch — the derived onlineMap must not reflect the previous workspace
     // during the subscription gap before this workspace's first onSnapshot lands.
-    setEntries({});
+    entriesRef.current = {};
+    recomputeOnlineMap();
     let cancelled = false;
     const unsub = subscribeToPresence(workspaceId, (list: PresenceEntry[]) => {
       if (cancelled) return;
@@ -45,13 +77,14 @@ export function usePresence(userId: string | null, workspaceId: string | null): 
         if (e.uid === userId) continue; // never show yourself as online to yourself
         map[e.uid] = { lastSeenMs: e.lastSeenMs, online: e.online };
       }
-      setEntries(map);
+      entriesRef.current = map;
+      recomputeOnlineMap();
     });
     return () => {
       cancelled = true;
       unsub();
     };
-  }, [userId, workspaceId]);
+  }, [userId, workspaceId, recomputeOnlineMap]);
 
   // Heartbeat (writer) — 10s while the tab is visible. Switching workspace stops the old heartbeat
   // via this effect's cleanup; the old workspace's lastSeen simply ages out (no explicit offline
@@ -90,25 +123,13 @@ export function usePresence(userId: string | null, workspaceId: string | null): 
     };
   }, [userId, workspaceId]);
 
-  // 5s re-filter tick arm.
+  // 5s re-filter tick arm: re-derive so a doc going stale (no new snapshot) drops
+  // offline without a fresh write — PERF(PF-1): unchanged derivations publish nothing.
   useEffect(() => {
     if (!userId || !workspaceId) return;
-    const i = setInterval(() => setTick((t) => t + 1), 5000);
+    const i = setInterval(() => recomputeOnlineMap(), 5000);
     return () => clearInterval(i);
-  }, [userId, workspaceId]);
-
-  // Derive the online map. Memoized on [entries, tick] so the reference is stable when nothing
-  // changed — avoids re-rendering both panels every 5s.
-  const onlineMap = useMemo<PresenceMap>(() => {
-    const now = Date.now();
-    const out: PresenceMap = {};
-    for (const [uid, e] of Object.entries(entries)) {
-      const age = now - e.lastSeenMs;
-      const online = e.online === true && age >= -CLOCK_SKEW_TOLERANCE_MS && age < PRESENCE_GRACE_MS;
-      out[uid] = { lastSeen: e.lastSeenMs, online };
-    }
-    return out;
-  }, [entries, tick]);
+  }, [userId, workspaceId, recomputeOnlineMap]);
 
   return onlineMap;
 }

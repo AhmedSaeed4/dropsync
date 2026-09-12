@@ -797,6 +797,15 @@ export default function Home() {
     }
   };
 
+  // PERF(PF-1) stable identity: the drop cards are React.memo'd, so every handler that
+  // reaches a card must keep its identity across unrelated Home re-renders. The ref
+  // carries the latest closure; the wrapper never changes.
+  const handleJoinCallRef = useRef(handleJoinCall);
+  useEffect(() => {
+    handleJoinCallRef.current = handleJoinCall;
+  });
+  const stableJoinCall = useCallback((drop: Drop) => handleJoinCallRef.current(drop), []);
+
   const handleMinimizeCall = () => {
     retractFooterIfUp();
     setCallMinimized(true);
@@ -1323,6 +1332,13 @@ export default function Home() {
   // Invalidate any in-flight preview decrypt. Called when the preview's context is superseded by
   // another overlay the layouts open from the preview (the move modal) — a late decrypt must never
   // resurrect the preview behind that overlay nor clobber what the layouts show after it closes.
+  // PERF(PF-1) stable identity — see the stableJoinCall note above.
+  const handleEditDropRef = useRef(handleEditDrop);
+  useEffect(() => {
+    handleEditDropRef.current = handleEditDrop;
+  });
+  const stableEditDrop = useCallback((drop: Drop) => handleEditDropRef.current(drop), []);
+
   const handlePreviewInvalidate = () => {
     previewEpochRef.current += 1;
     editPreparationEpochRef.current += 1;
@@ -1333,6 +1349,13 @@ export default function Home() {
     resetPreviewNavigation();
     handlePreview(drop);
   };
+
+  // PERF(PF-1) stable identity — see the stableJoinCall note above.
+  const handleOpenRootDropRef = useRef(handleOpenRootDrop);
+  useEffect(() => {
+    handleOpenRootDropRef.current = handleOpenRootDrop;
+  });
+  const stableOpenRootDrop = useCallback((drop: Drop) => handleOpenRootDropRef.current(drop), []);
 
   const handleOpenMentionedDrop = (target: Drop) => {
     const current = previewDropRef.current;
@@ -1473,6 +1496,18 @@ export default function Home() {
       console.error('Failed to delete category:', result.error);
     }
   };
+
+  // PERF(PF-1) stable identity (Order 8h): the drops list is memoized, so every handler
+  // that reaches it must keep its identity across unrelated Home re-renders. The ref
+  // carries the latest closure; the wrapper never changes.
+  const handleDeleteCategoryRef = useRef(handleDeleteCategory);
+  useEffect(() => {
+    handleDeleteCategoryRef.current = handleDeleteCategory;
+  });
+  const stableDeleteCategory = useCallback(
+    (categoryId: string, categoryName: string) => handleDeleteCategoryRef.current(categoryId, categoryName),
+    [],
+  );
 
   // Theme configuration
   const getThemeColors = (theme: Theme) => {
@@ -1658,6 +1693,11 @@ export default function Home() {
     setArchiveScope('personal');
     setArchiveMode(mode);
   }, []);
+
+  // PERF(PF-1) stable identity (Order 8h): the drops list receives these props; the
+  // inline arrows in layoutProps churned identity on every render.
+  const stableWorkspaceExport = useCallback(() => openWorkspaceArchive('export'), [openWorkspaceArchive]);
+  const stablePersonalExport = useCallback(() => openPersonalArchive('export'), [openPersonalArchive]);
   const openPersonalOptions = useCallback(() => {
     retractFooterIfUp();
     setPersonalOptionsOpen(true);
@@ -2632,9 +2672,9 @@ export default function Home() {
     onToggleChat: handleToggleChat,
     notifPermission, notifMuted, onToggleNotifications: handleToggleNotifications,
     footerEnabled, onToggleFooterEnabled,
-    onExportWorkspace: canManageWorkspaceArchive ? () => openWorkspaceArchive('export') : undefined,
+    onExportWorkspace: canManageWorkspaceArchive ? stableWorkspaceExport : undefined,
     onImportWorkspace: canManageWorkspaceArchive ? () => openWorkspaceArchive('import') : undefined,
-    onExportPersonal: user && !currentWorkspace ? () => openPersonalArchive('export') : undefined,
+    onExportPersonal: user && !currentWorkspace ? stablePersonalExport : undefined,
     onOpenPersonalOptions: user ? openPersonalOptions : undefined,
     youtubeBackfillVisible: youtubeBackfillVisibilityReady && youtubeBackfillVisible,
     onOpenYoutubeBackfill: () => setShowYoutubeBackfill(true),
@@ -2655,16 +2695,16 @@ export default function Home() {
     mentionedWorkspaceIds,
     switchWorkspace,
     drops, dropsLoading, refreshDrops,
-    categories, handleCreateCategory, handleDeleteCategory,
+    categories, handleCreateCategory, handleDeleteCategory: stableDeleteCategory,
     handleCreateWorkspace, handleJoinWorkspace,
     handleDeleteWorkspace, handleLeaveWorkspace, handleLeaveAndTransfer,
     onKick: handleKickMember, isKicking: isKickingMember,
-    handlePreview, handleOpenRootDrop, handleOpenMentionedDrop, handlePreviewBack,
+    handlePreview, handleOpenRootDrop: stableOpenRootDrop, handleOpenMentionedDrop, handlePreviewBack,
     handleClosePreview, clearPreviewTrail, dropTrailLength: dropTrail.length,
     handleShowVerifyModal, handleCheckVerification,
     signIn, emailSignIn, signUp, resetPassword, resendVerification,
     signOutUser, updateDisplayName, reauthenticateUser,
-    editDrop, setEditDrop, handleEditDrop, handleEditSubmit, onEditClose: handleEditClose,
+    editDrop, setEditDrop, handleEditDrop: stableEditDrop, handleEditSubmit, onEditClose: handleEditClose,
     handlePreviewInvalidate, editPreparing,
     presenceMap,
     hoverable,
@@ -2674,7 +2714,7 @@ export default function Home() {
     callAccessError: callAccess.error,
     onRefreshCallAccess: callAccess.refresh,
     onStartCall: handleStartCall,
-    onJoinCall: handleJoinCall,
+    onJoinCall: stableJoinCall,
     onMinimizeCall: handleMinimizeCall,
     onLeaveCall: handleLeaveCall,
   };

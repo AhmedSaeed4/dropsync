@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState, useEffect } from 'react';
+import { memo, useRef, useState, useEffect } from 'react';
 import { Drop, Workspace, ExpirationOption } from '@/types';
 import { EditorialPreviewModal } from './EditorialPreviewModal';
 import { EditorialCreateWorkspaceModal } from './EditorialCreateWorkspaceModal';
@@ -18,6 +18,17 @@ import { EditorialSavedPaths } from './EditorialSavedPaths';
 import { getEditorialThemeColors } from './editorialTheme';
 import { retractFooterIfUp } from '../SmoothScrollProvider';
 import type { DropSortMode } from '@/lib/auth';
+
+// PERF(PF-1, Order 8h): memoized at module scope so its identity never changes. The chat
+// toggle's connection churn re-renders the layout many times; the list must skip those
+// commits unless one of its own inputs actually changed.
+const MemoEditorialDropList = memo(EditorialDropList);
+
+// PERF(PF-1, Order 10): memoized at module scope — the showChat commit re-renders the whole
+// layout; these left-column components skip unless one of their own inputs changed.
+const MemoEditorialStatusPanel = memo(EditorialStatusPanel);
+const MemoEditorialThemeSelector = memo(EditorialThemeSelector);
+const MemoEditorialSavedPaths = memo(EditorialSavedPaths);
 import { EditorialTextModal } from './EditorialTextModal';
 import { EditorialMoveDropModal } from './EditorialMoveDropModal';
 import WorkspaceOptionsModal from '@/components/WorkspaceOptionsModal';
@@ -544,7 +555,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
               </section>
             )}
 
-            <EditorialStatusPanel
+            <MemoEditorialStatusPanel
               dropsCount={drops.length}
               encryptionInitializing={encryptionInitializing}
               theme={theme}
@@ -553,13 +564,13 @@ export function EditorialLayout(props: EditorialLayoutProps) {
               animStyle={wordAnimStyle}
               animHold={wordAnimHold}
             />
-            <EditorialThemeSelector
+            <MemoEditorialThemeSelector
               theme={theme}
               onThemeChange={setTheme}
               showChat={showChat}
             />
             <div className="hidden md:block">
-              <EditorialSavedPaths theme={theme} showChat={showChat} />
+              <MemoEditorialSavedPaths theme={theme} showChat={showChat} />
             </div>
           </div>
         </div>
@@ -567,7 +578,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
         {/* Right column: Drops + Saved Paths */}
         <div className={`shrink-0 wide:overflow-y-auto editorial-scroll-hide wide:min-h-0 transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] w-full ${showChat ? 'wide:w-[480px] wide:min-w-[480px]' : 'wide:w-[520px] wide:min-w-[520px]'}`}>
           <div>
-            <EditorialDropList
+            <MemoEditorialDropList
               drops={drops}
               loading={dropsLoading}
               onDelete={refreshDrops}
