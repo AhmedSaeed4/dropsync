@@ -560,6 +560,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
               encryptionInitializing={encryptionInitializing}
               theme={theme}
               showChat={showChat}
+              showMascot
               animEnabled={wordAnimEnabled}
               animStyle={wordAnimStyle}
               animHold={wordAnimHold}
