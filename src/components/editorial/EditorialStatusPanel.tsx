@@ -30,20 +30,21 @@ const WORDS = [
 
 const COMBO_STYLES = ['flip', 'smooth', 'ripple', 'cascade', 'glitch'];
 
-// ── Order 12 + 12i: the mascot tile ───────────────────────────────────────────────
-// Owner-made animation: the intro GIF plays once per page reload (handover timer
-// at MASCOT_SWAP_AT_MS — both exported intro/loop GIFs carry the "loop forever"
-// flag), then the loop runs forever as a CANVAS FLIPBOOK: its 193 frames live
-// in 7 WebP strips (28 frames each, 224px frames) and every tick copies the
-// active frame into the small canvas — 40 fresh paints per second, so the
-// browser cannot leave a stale frame stuck on screen (the lost-repaint freeze
-// of the sliding-strip display, MF-2; the 12d background-position era
-// flickered instead — MF-1). The frame index comes from the wall clock, so a
-// color swap (the owner's yellow toggle) or a theme swap repaints the SAME
-// index in the new color — frame-exact by construction. Theme mapping:
-// light -> black, dark -> white, minimal -> black; yellow rides over every
-// theme until clicked again; reload resets everything; desktop only
-// (showMascot stays default-off, so MobileDropsView never renders it).
+// ── Order 12 + 12j: the mascot tile ───────────────────────────────────────────────
+// Owner-made animation: the INTRO (206 frames, plays once per reload) and the
+// LOOP (193 frames, forever) BOTH live on the canvas as WebP strip frames
+// (28 frames each, 224px frames) drawn off ONE wall clock: ticks 0-205 draw the
+// intro, tick 206 onward draws the loop — so a click during the intro recolors
+// it instantly, same frame (the old GIF intro could not be recolored; 12j).
+// Every tick copies one frame into the small canvas — 40 fresh paints per
+// second, so the browser cannot leave a stale frame stuck on screen (the
+// lost-repaint freeze of the sliding-strip display, MF-2; the 12d
+// background-position era flickered instead — MF-1). A color swap (the owner's
+// yellow toggle) or a theme swap repaints the SAME index in the new color —
+// frame-exact by construction. Theme mapping: light -> black, dark -> white,
+// minimal -> black; yellow rides over every theme until clicked again; reload
+// resets everything; desktop only (showMascot stays default-off, so
+// MobileDropsView never renders it).
 
 const MASCOT_VARIANT: Record<EditorialStatusPanelProps['theme'], 'black' | 'white' | 'yellow'> = {
   light: 'black',
@@ -51,11 +52,12 @@ const MASCOT_VARIANT: Record<EditorialStatusPanelProps['theme'], 'black' | 'whit
   minimal: 'black',
 };
 
-const MASCOT_SWAP_AT_MS = 206 * 50 - 50;
+const MASCOT_INTRO_FRAMES = 206;
 const MASCOT_LOOP_FRAMES = 193;
 const MASCOT_FRAME_MS = 50;
 const MASCOT_STRIP_FRAMES = 28;
 const MASCOT_STRIPS = 7;
+const MASCOT_INTRO_STRIPS = 8;
 const MASCOT_COLORS = ['black', 'white', 'yellow'] as const;
 // every strip is a row of 224x224 frames; one drawImage copies one frame
 const MASCOT_FRAME_PX = 224;
@@ -63,91 +65,41 @@ const MASCOT_FRAME_PX = 224;
 // Once per PAGE RELOAD: module scope survives every re-mount of the panel and
 // resets on a real reload. The flip clock is also module state, so a re-mount
 // resumes the SAME wall clock instead of restarting the animation.
-let mascotIntroPlayed = false;
 let mascotYellowMode = false;
 let mascotFlipStart = 0;
 let mascotFlipRunning = false;
+let mascotClockStarted = false;
 let mascotFlipTimer: number | undefined;
-let mascotHandoverTimer: number | undefined;
 
-// ── MF-2 PROBE (Order 12g) — TEMPORARY diagnostic, removed by a later order ──
-const mascotProbeLog: string[] = [];
-let mascotProbeInstanceCounter = 0;
-let mascotProbeLastPaint = 0;
-let mascotProbeStallLogged = false;
-let mascotProbeBox: HTMLDivElement | null = null;
-let mascotProbeButton: HTMLButtonElement | null = null;
-
-function mascotProbeOverlayInit() {
-  if (typeof document === "undefined" || mascotProbeBox) return;
-  mascotProbeBox = document.createElement("div");
-  mascotProbeBox.style.cssText =
-    "position:fixed;right:10px;bottom:44px;z-index:9999;pointer-events:none;" +
-    "font:10px/1.35 monospace;color:#fff;background:rgba(0,0,0,0.78);" +
-    "padding:8px 10px;border-radius:6px;max-width:360px;white-space:pre-line;";
-  document.body.appendChild(mascotProbeBox);
-  mascotProbeButton = document.createElement("button");
-  mascotProbeButton.textContent = "save mascot log";
-  mascotProbeButton.type = "button";
-  mascotProbeButton.style.cssText =
-    "position:fixed;right:10px;bottom:10px;z-index:9999;pointer-events:auto;" +
-    "font:11px monospace;padding:4px 8px;cursor:pointer;";
-  mascotProbeButton.addEventListener("click", mascotProbeDownload);
-  document.body.appendChild(mascotProbeButton);
-}
-
-function mascotProbeDownload() {
-  if (typeof document === "undefined") return;
-  const blob = new Blob([mascotProbeLog.join("\n") + "\n"], { type: "text/plain" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "mascot-probe.log";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
-
-function mascotProbe(msg: string) {
-  const t = Math.round(performance.now());
-  const line = t + " " + msg;
-  mascotProbeLog.push(line);
-  if (mascotProbeLog.length > 600) mascotProbeLog.shift();
-  console.log("[MASCOT-PROBE]", line);
-  mascotProbeOverlayInit();
-  if (mascotProbeBox) {
-    mascotProbeBox.textContent = mascotProbeLog.slice(-12).join("\n");
-  }
-}
-
-function mascotStripUrl(color: string, strip: number) {
+function mascotStripUrl(color: string, strip: number, kind: 'intro' | 'loop') {
   const n = strip < 10 ? '0' + strip : String(strip);
-  return `/mascot/strips/mascot-${color}/mascot-${color}-loop-${n}.webp`;
+  return `/mascot/strips/mascot-${color}/mascot-${color}-${kind}-${n}.webp`;
 }
 
-// Canvas-painter sources: each color's 7 strips as Image objects, loaded once
-// per page and reused for every draw. The 193 loop frames = six 28-frame
-// strips + a 25-frame tail; source-rect drawing cannot stretch anything (the
-// display-side stretch was MF-1) and i % 28 indexes the tail correctly
-// because 168 = 6*28 wraps it back to 0.
+// Canvas-painter sources: each color's intro AND loop strips as Image objects,
+// loaded once per page and reused for every draw. The intro's 206 frames = 7
+// strips of 28 + a 10-frame tail; the loop's 193 = six 28-frame strips + a
+// 25-frame tail. Source-rect drawing cannot stretch anything (the display-side
+// stretch was MF-1) and i % 28 indexes each tail correctly because each
+// boundary is a multiple of 28.
 const mascotStripImgs = new Map<string, HTMLImageElement[]>();
-function mascotGetStrips(color: string) {
-  let imgs = mascotStripImgs.get(color);
+function mascotGetStrips(color: string, kind: 'intro' | 'loop') {
+  const key = `${color}-${kind}`;
+  let imgs = mascotStripImgs.get(key);
   if (!imgs) {
-    imgs = Array.from({ length: MASCOT_STRIPS }, (_, s) => {
+    imgs = Array.from({ length: kind === 'intro' ? MASCOT_INTRO_STRIPS : MASCOT_STRIPS }, (_, s) => {
       const img = new Image();
-      img.src = mascotStripUrl(color, s);
+      img.src = mascotStripUrl(color, s, kind);
       return img;
     });
-    mascotStripImgs.set(color, imgs);
+    mascotStripImgs.set(key, imgs);
   }
   return imgs;
 }
 
 function MascotTile({ theme, small }: { theme: 'light' | 'dark' | 'minimal'; small: boolean }) {
+  const tc = getEditorialThemeColors(theme);
   const [yellowMode, setYellowMode] = useState(mascotYellowMode);
-  const introRef = useRef<HTMLImageElement>(null);
   const flipRef = useRef<HTMLCanvasElement>(null);
   const themeRef = useRef(theme);
   const smallRef = useRef(small);
@@ -158,20 +110,15 @@ function MascotTile({ theme, small }: { theme: 'light' | 'dark' | 'minimal'; sma
 
   useEffect(() => {
     themeRef.current = theme;
-    const intro = introRef.current;
-    if (!intro) return; // refs are always set before effects run; this is type-narrowing
 
-    let probeLastIdx = -1;
     const applyFlip = () => {
       const canvas = flipRef.current;
       if (!canvas) return;
-      const probeIdx = Math.floor((performance.now() - mascotFlipStart) / MASCOT_FRAME_MS) % MASCOT_LOOP_FRAMES;
-      if (probeLastIdx >= 0 && probeIdx < probeLastIdx) mascotProbe(`loop wrap -> idx ${probeIdx} (interval alive)`);
-      if (probeIdx !== probeLastIdx) mascotProbeLastPaint = performance.now();
-      probeLastIdx = probeIdx;
-      const i = Math.floor((performance.now() - mascotFlipStart) / MASCOT_FRAME_MS) % MASCOT_LOOP_FRAMES;
+      const total = Math.floor((performance.now() - mascotFlipStart) / MASCOT_FRAME_MS);
+      const inIntro = total < MASCOT_INTRO_FRAMES;
+      const i = inIntro ? total : (total - MASCOT_INTRO_FRAMES) % MASCOT_LOOP_FRAMES;
       const color = mascotYellowMode ? 'yellow' : MASCOT_VARIANT[themeRef.current];
-      const img = mascotGetStrips(color)[Math.floor(i / MASCOT_STRIP_FRAMES)];
+      const img = mascotGetStrips(color, inIntro ? 'intro' : 'loop')[Math.floor(i / MASCOT_STRIP_FRAMES)];
       if (!img.complete || !img.naturalWidth) return; // strip still loading — next tick redraws
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
@@ -181,72 +128,41 @@ function MascotTile({ theme, small }: { theme: 'light' | 'dark' | 'minimal'; sma
       ctx.drawImage(img, (i % MASCOT_STRIP_FRAMES) * MASCOT_FRAME_PX, 0, MASCOT_FRAME_PX, MASCOT_FRAME_PX, 0, 0, canvas.width, canvas.height);
     };
 
-    // Starts the shared wall clock once; every later color/theme swap is just a
-    // repaint of the same index.
+    // Starts the shared wall clock once per page; every later color/theme swap
+    // or re-mount is just a repaint of the same timeline position.
     const startFlipClock = () => {
-      mascotProbe(`startFlipClock called: running was ${mascotFlipRunning}`);
-      if (mascotFlipRunning) return;
+      if (mascotClockStarted) {
+        if (!mascotFlipRunning) {
+          mascotFlipRunning = true;
+          mascotFlipTimer = window.setInterval(applyFlip, 25);
+        }
+        return;
+      }
+      mascotClockStarted = true;
       mascotFlipRunning = true;
       mascotFlipStart = performance.now();
       applyFlip(); // paint the first frame BEFORE the layer is revealed — no blank
       mascotFlipTimer = window.setInterval(applyFlip, 25);
-      mascotProbe(`clock STARTED (start=${Math.round(mascotFlipStart)})`);
-      window.setInterval(() => {
-        const since = performance.now() - mascotProbeLastPaint;
-        if (since > 800 && !mascotProbeStallLogged) {
-          mascotProbe(`PAINT STALLED: no index change for ${Math.round(since)}ms`);
-          mascotProbeStallLogged = true;
-        } else if (since <= 800) {
-          mascotProbeStallLogged = false;
-        }
-      }, 1000);
       if (flipRef.current) flipRef.current.style.display = 'block';
     };
 
     apiRef.current = {
       repaint: applyFlip,
       toggleYellow: () => {
-        mascotProbe(`CLICK: introPlayed=${mascotIntroPlayed} yellow=${mascotYellowMode}->${!mascotYellowMode} running=${mascotFlipRunning}`);
         mascotYellowMode = !mascotYellowMode;
         setYellowMode(mascotYellowMode);
-        if (!mascotIntroPlayed) {
-          // clicked during the intro: cut straight to the loop — the one visible
-          // transition, since the intro has no yellow twin running
-          mascotIntroPlayed = true;
-          mascotProbe("CUT-TO-LOOP branch taken (introPlayed was false)");
-          if (mascotHandoverTimer !== undefined) {
-            window.clearTimeout(mascotHandoverTimer);
-            mascotHandoverTimer = undefined;
-          }
-          if (introRef.current) introRef.current.style.display = 'none';
-          startFlipClock();
-        }
         applyFlip();
-        mascotProbe(`CLICK DONE: yellow=${mascotYellowMode} idxAfter=${Math.floor((performance.now() - mascotFlipStart) / MASCOT_FRAME_MS) % MASCOT_LOOP_FRAMES}`);
       },
     };
 
-    if (mascotIntroPlayed) {
-      // this page already moved past the intro — flip clock only
-      intro.style.display = 'none';
-      startFlipClock();
-      return () => {
-        if (mascotFlipTimer !== undefined) window.clearInterval(mascotFlipTimer);
-        mascotFlipRunning = false;
-      };
+    // every color's intro AND loop strips start loading NOW — the intro plays
+    // for ~10s, so the loop is decoded long before tick 206 needs it
+    for (const c of MASCOT_COLORS) {
+      mascotGetStrips(c, 'intro');
+      mascotGetStrips(c, 'loop');
     }
-    intro.src = `/mascot/mascot-${MASCOT_VARIANT[theme]}-intro.gif`;
-    // start every color's strips loading NOW — the intro window covers the
-    // fetch, so the loop and any click swap draw decoded pixels instantly
-    for (const c of MASCOT_COLORS) mascotGetStrips(c);
-    mascotHandoverTimer = window.setTimeout(() => {
-      mascotIntroPlayed = true;
-      mascotProbe("handover fired");
-      if (introRef.current) introRef.current.style.display = 'none';
-      startFlipClock();
-    }, MASCOT_SWAP_AT_MS);
+    startFlipClock();
     return () => {
-      if (mascotHandoverTimer !== undefined) window.clearTimeout(mascotHandoverTimer);
       if (mascotFlipTimer !== undefined) window.clearInterval(mascotFlipTimer);
       mascotFlipRunning = false;
     };
@@ -257,21 +173,13 @@ function MascotTile({ theme, small }: { theme: 'light' | 'dark' | 'minimal'; sma
     if (mascotFlipRunning) apiRef.current?.repaint();
   }, [small]);
 
-  // MF-2 PROBE: mount/unmount + state-commit trace (temporary)
-  useEffect(() => {
-    mascotProbe(`MOUNTED (mount #${++mascotProbeInstanceCounter})`);
-    return () => mascotProbe("UNMOUNTED");
-  }, []);
-  useEffect(() => {
-    mascotProbe(`state committed: yellowMode=${yellowMode}`);
-  }, [yellowMode]);
-
   const toggleYellow = () => apiRef.current?.toggleYellow();
 
   return (
     <span
       role="button"
       tabIndex={0}
+      title="click me"
       aria-label="Mascot: click to toggle yellow"
       aria-pressed={yellowMode}
       onClick={toggleYellow}
@@ -281,14 +189,8 @@ function MascotTile({ theme, small }: { theme: 'light' | 'dark' | 'minimal'; sma
           toggleYellow();
         }
       }}
-      className={`relative block shrink-0 overflow-hidden cursor-pointer transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${small ? 'h-4 w-4' : 'h-5 w-5'}`}
+      className={`relative block shrink-0 border ${tc.border} ${tc.hoverBorder} overflow-hidden cursor-pointer transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${small ? 'h-4 w-4' : 'h-5 w-5'}`}
     >
-      <img
-        ref={introRef}
-        alt=""
-        className="absolute inset-0 h-full w-full"
-        style={{ display: mascotIntroPlayed ? 'none' : 'block' }}
-      />
       <canvas
         ref={flipRef}
         aria-hidden="true"
