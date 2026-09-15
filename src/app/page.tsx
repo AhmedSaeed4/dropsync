@@ -31,6 +31,7 @@ import { initializeUserKeys, hasUserKeys, getUserKeys, ensurePublicKeyPublished 
 import { ensureProfilePublished } from '@/lib/profiles';
 import { decryptDrop, updateTextDrop, updateDropMetadata, moveDrop, getExpirationDate } from '@/lib/drops';
 import { previewSig, getPrimedPreview, consumePrebuiltVideoUrl, clearPreviewPrimeCaches, primeDecryptedPreview } from '@/lib/previewPrime';
+import { editorialCardCache, payloadRevision } from '@/lib/editorialCardCache';
 import {
   evaluateYoutubeBackfillVisibility,
   isPasswordCategories,
@@ -181,11 +182,22 @@ export default function Home() {
     // Server-side removal notice: fires when a workspace the user belonged to disappears and it
     // was NOT a locally-initiated leave/delete (i.e. the owner kicked them, or the owner deleted
     // the workspace). Honest in both cases. Empty initial list → no false fire on load/refresh.
-    onWorkspaceRemoved: (ws) => setRemovedNotice(`You no longer have access to "${ws.name}".`),
+    onWorkspaceRemoved: (ws) => {
+      // Stage B: confirmed access loss - drop the scope's cached payloads.
+      editorialCardCache.revokeScope(ws.id);
+      setRemovedNotice(`You no longer have access to "${ws.name}".`);
+    },
   });
 
   // Pass currentWorkspaceId to useDrops
-  const { drops, loading: dropsLoading, refreshDrops } = useDrops(currentWorkspaceId);
+  const { drops, loading: dropsLoading, refreshDrops } = useDrops(currentWorkspaceId, {
+    // Stage B: a permission-denied on a workspace's drops listener is
+    // confirmed access loss - the resource store drops that scope's cached
+    // payloads and aborts its in-flight work.
+    onAccessDenied: (deniedWorkspaceId) => {
+      if (deniedWorkspaceId) editorialCardCache.revokeScope(deniedWorkspaceId);
+    },
+  });
 
   // A workspace/personal scope change starts a fresh preview trail. Layout switches do not affect
   // this state because the trail belongs to Home, not either layout branch.
@@ -196,6 +208,13 @@ export default function Home() {
     // about to use. A different account/workspace must never inherit primed payloads.
     clearPreviewPrimeCaches();
   }, [user?.uid, currentWorkspaceId, resetPreviewNavigation]);
+
+  // Stage B lifecycle: a different signed-in account starts a fresh resource
+  // store (the same visit keeps everything - Option 1). Scope revocation is
+  // event-driven (removal notice / permission-denied), not navigation-driven.
+  useEffect(() => {
+    editorialCardCache.beginSession(user?.uid ?? null);
+  }, [user?.uid]);
 
   // Categories for current workspace
   const { categories, addCategory, removeCategory } = useCategories(currentWorkspaceId, user?.uid);
@@ -599,6 +618,24 @@ export default function Home() {
         decryptedPreviewCache.current.set(drop.id, primed);
         return;
       }
+      // Stage B (Order 17): the scoped page-visit store is the second hit
+      // path - a drop this visit already decrypted (even one whose card is
+      // no longer mounted) reopens with its payload and NO lock flash.
+      const scopeKey = currentWorkspaceId ?? 'personal';
+      const scopeGen = editorialCardCache.scopeGeneration(scopeKey);
+      const cached = editorialCardCache.snapshot(scopeKey, drop.id, payloadRevision(drop));
+      if (cached.ready) {
+        const shown: Drop = {
+          ...drop,
+          content: cached.text,
+          fileData: cached.file,
+          imageData: cached.image,
+          encrypted: false,
+        };
+        setPreviewDrop(shown);
+        setPreviewLoading(false);
+        return;
+      }
       setPreviewDrop(drop); // Show modal immediately with encrypted drop
       setPreviewLoading(true); // Show skeleton
       try {
@@ -613,6 +650,9 @@ export default function Home() {
           // instant-open shelf, so reopening THIS drop is always a hit even if the
           // cards' scroll-priming was evicted.
           primeDecryptedPreview(drop, decryptedDrop);
+          // Stage B: seed the page-visit store too, so the (possibly unmounted)
+          // window card reopens without the lock flash.
+          editorialCardCache.seedFromDecrypted(scopeKey, drop.id, drop, decryptedDrop, scopeGen);
         }
       } finally {
         if (previewEpochRef.current === epoch) {

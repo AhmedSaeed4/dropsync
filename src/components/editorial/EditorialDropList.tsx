@@ -19,6 +19,8 @@ import HoldToDeleteButton from './HoldToDeleteButton';
 import { MemberInfo } from '@/lib/workspaces';
 import { getCategoryCollapsed, setCategoryCollapsed, getDropSortPrefs, setDropSortMode, setDropOrder } from '@/lib/auth';
 import type { DropSortMode } from '@/lib/auth';
+import { EditorialWindowList } from './EditorialWindowList';
+import { useWideEditorial } from '@/hooks/useEditorialWindow';
 
 interface EditorialDropListProps {
   drops: Drop[];
@@ -294,6 +296,9 @@ export function EditorialDropList({
   onExportWorkspace,
   onExportPersonal,
 }: EditorialDropListProps) {
+  // Wide-desktop visible window (Round 9 D17): picks the windowed renderer at
+  // >=1400px. False through SSR/hydration; the wide branch mounts right after.
+  const isWide = useWideEditorial();
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
@@ -356,7 +361,12 @@ export function EditorialDropList({
   }, []);
 
   const selectAll = () => {
-    if (selectedIds.size === filteredDrops.length) {
+    // Wide window (D17): membership-based all-selected so off-window rows of
+    // the full filtered list count; legacy keeps the size-equality behavior.
+    const allSelected = isWide
+      ? filteredDrops.length > 0 && filteredDrops.every(d => selectedIds.has(d.id))
+      : selectedIds.size === filteredDrops.length;
+    if (allSelected) {
       setSelectedIds(new Set());
     } else {
       setSelectedIds(new Set(filteredDrops.map(d => d.id)));
@@ -1110,7 +1120,7 @@ export function EditorialDropList({
                   onClick={selectAll}
                   className={`text-xs ${font} ${tc.muted} ${tc.inactivePillHoverBg} px-3 py-1.5 ${tc.roundedClass} border ${tc.border} transition-colors`}
                 >
-                  {selectedIds.size === filteredDrops.length ? 'Deselect' : 'Select all'}
+                  {(isWide ? filteredDrops.length > 0 && filteredDrops.every(d => selectedIds.has(d.id)) : selectedIds.size === filteredDrops.length) ? 'Deselect' : 'Select all'}
                 </button>
                 <button
                   onClick={cancelSelection}
@@ -1122,7 +1132,10 @@ export function EditorialDropList({
                   <>
                     <button
                       onClick={() => {
-                        const selectedDrops = drops.filter(d => selectedIds.has(d.id));
+                        // Wide window (D17): resolve against the FULL filtered
+                        // list; legacy keeps the raw-list behavior byte-for-byte.
+                        const source = isWide ? filteredDrops : drops;
+                        const selectedDrops = source.filter(d => selectedIds.has(d.id));
                         setBulkMoveDrops(selectedDrops);
                       }}
                       className={`text-xs ${font} px-3 py-1.5 ${tc.roundedClass} ${tc.activePillBg} ${tc.activePillText} hover:opacity-90 transition-opacity ml-auto flex items-center gap-1`}
@@ -1218,6 +1231,31 @@ export function EditorialDropList({
                   : 'No drops in this category'}
               </p>
             </div>
+          ) : isWide ? (
+            /* Wide desktop: the visible-window renderer (D17, Stage A). Drag
+               and add/remove animations stay legacy-only until Stages D/E. */
+            <EditorialWindowList
+              filteredDrops={filteredDrops}
+              manualIndexById={manualIndexById}
+              manualCount={manualCount}
+              selectedIds={selectedIds}
+              toggleSelect={toggleSelect}
+              selectionMode={selectionMode}
+              theme={theme}
+              currentUserId={currentUserId}
+              currentWorkspace={currentWorkspace}
+              onDelete={handleDeleteWithUndo}
+              onPin={handlePinDrop}
+              onPreview={onPreview}
+              onEdit={onEdit}
+              allDrops={allDrops}
+              onJoinCall={onJoinCall}
+              workspaceMembers={workspaceMembers}
+              isReopenCallId={isReopenCallId}
+              hoverable={hoverable}
+              moveUp={moveUp}
+              moveDown={moveDown}
+            />
           ) : enableDrag ? (
             <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
               <div className="p-3 space-y-2">

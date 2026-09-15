@@ -190,7 +190,8 @@ function formatFireRemaining(ms: number): string {
 export function createDropListener(
   userId: string,
   workspaceId: string | null,
-  callback: (drops: Drop[]) => void
+  callback: (drops: Drop[]) => void,
+  onAccessDenied?: (workspaceId: string | null) => void
 ): () => void {
   // Query based on workspaceId
   // For personal drops (null), filter by userId AND workspaceId == null
@@ -286,6 +287,9 @@ export function createDropListener(
     // Handle permission errors gracefully (e.g., workspace deleted)
     if (error.code === 'permission-denied' || error.message?.includes('permissions')) {
       console.log('Drops listener: Access denied, workspace may have been deleted');
+      // Stage B: confirmed access loss - the scoped resource store drops this
+      // scope's cached payloads and aborts its in-flight work (null = personal).
+      onAccessDenied?.(workspaceId);
       // Return empty array instead of erroring
       callback([]);
       return;
@@ -1942,7 +1946,7 @@ async function getUserDisplayName(userId: string): Promise<string | null> {
 }
 
 // Decrypt a drop's content
-export async function decryptDrop(drop: Drop, currentUserId: string): Promise<Drop> {
+export async function decryptDrop(drop: Drop, currentUserId: string, signal?: AbortSignal): Promise<Drop> {
   // Call drops carry no encrypted content (no content/fileUrl/encrypted fields) — return as-is so
   // they never enter the crypto/R2 path (which would no-op anyway, but this is explicit + fast).
   if (drop.type === 'call') return drop;
@@ -1958,7 +1962,7 @@ export async function decryptDrop(drop: Drop, currentUserId: string): Promise<Dr
     // For non-encrypted files with R2 URL, fetch the data
     if (drop.type === 'file' && drop.fileUrl && !drop.fileData) {
       try {
-        const response = await fetch(drop.fileUrl);
+        const response = await fetch(drop.fileUrl, { signal });
         if (!response.ok) {
           console.error('Failed to fetch file from R2');
           return drop;
@@ -2012,7 +2016,7 @@ export async function decryptDrop(drop: Drop, currentUserId: string): Promise<Dr
     if (drop.type === 'file') {
       if (drop.fileUrl) {
         // NEW: Fetch from R2
-        const response = await fetch(drop.fileUrl);
+        const response = await fetch(drop.fileUrl, { signal });
         if (!response.ok) {
           console.error('Failed to fetch encrypted file from R2');
           return drop;
@@ -2047,7 +2051,7 @@ export async function decryptDrop(drop: Drop, currentUserId: string): Promise<Dr
     let imageData: string | undefined;
     if (drop.type === 'text' && drop.imageUrl) {
       try {
-        const imgResponse = await fetch(drop.imageUrl);
+        const imgResponse = await fetch(drop.imageUrl, { signal });
         if (imgResponse.ok) {
           const encryptedImageData = await imgResponse.text();
           const imgIv = drop.imageIv;
@@ -2070,6 +2074,9 @@ export async function decryptDrop(drop: Drop, currentUserId: string): Promise<Dr
     };
   } catch (error) {
     console.error('Failed to decrypt drop:', error);
+    // Stage B: an aborted job must propagate (the store discards it via its
+    // generation check) instead of masquerading as a false-success decrypt.
+    if (signal?.aborted) throw error;
     return { ...drop, encrypted: false };
   }
 }
