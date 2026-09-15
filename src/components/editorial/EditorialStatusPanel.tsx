@@ -111,6 +111,18 @@ function MascotTile({ theme, small }: { theme: 'light' | 'dark' | 'minimal'; sma
   useEffect(() => {
     themeRef.current = theme;
 
+    // MF-4 fix: measure the tile's REAL inner box (the 12l border eats 2px of
+    // it, border-box) and size the backing store to THAT in device pixels, so
+    // the canvas shows 1:1 with the screen's pixels with no hidden resample.
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    const flipCanvas = flipRef.current;
+    if (flipCanvas) {
+      const box = flipCanvas.parentElement?.clientWidth || (smallRef.current ? 14 : 18);
+      const sizePx = Math.max(1, Math.round(box * dpr));
+      flipCanvas.width = sizePx;
+      flipCanvas.height = sizePx;
+    }
+
     const applyFlip = () => {
       const canvas = flipRef.current;
       if (!canvas) return;
@@ -122,6 +134,8 @@ function MascotTile({ theme, small }: { theme: 'light' | 'dark' | 'minimal'; sma
       if (!img.complete || !img.naturalWidth) return; // strip still loading — next tick redraws
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
       // every tick copies one frame straight into the canvas — fresh pixels 40
       // times per second, so the browser cannot leave a stale frame stuck on
       // screen the way it did with the sliding-strip imgs (the MF-2 freeze)
