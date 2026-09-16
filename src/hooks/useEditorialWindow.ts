@@ -105,6 +105,10 @@ export function useEditorialWindow(
   // holds the previous publication for correction planning.
   const geoRef = useRef<Geometry | null>(null);
   const prevGeoRef = useRef<Geometry | null>(null);
+  // The scope whose geometry prevGeoRef holds. A workspace switch must never
+  // anchor old-scope rows in the new geometry (Order 20): the correction
+  // effect re-baselines the whole correction state when the scope changes.
+  const scopeRef = useRef(scope);
 
   // Geometry is computed IN RENDER from the current ids + learned heights, so
   // a commit never carries tops that disagree with its own ids. `version` is
@@ -241,30 +245,54 @@ export function useEditorialWindow(
   // The single correction writer: after a commit that changed the geometry,
   // read the LATEST actual offset, keep the surviving anchor's viewport
   // offset stable, and write at most one clamped correction before paint.
+  // prevGeoRef is advanced BEFORE any guard (Order 20, fixes WV-3: the old
+  // code wrote it only after the null guard, so it stayed null forever and
+  // no correction ever ran). Every real geometry change ends in a coverage
+  // reconciliation: the anchor correction (or the data change itself) can
+  // move the reading point outside the mounted slice, and the correction's
+  // acked scroll echo skips range work by design, so this effect is the only
+  // place coverage can follow the committed geometry.
   useLayoutEffect(() => {
     geoRef.current = geo;
     const prev = prevGeoRef.current;
-    if (prev === geo || prev === null || geo.ids.length === 0) return;
     prevGeoRef.current = geo;
+    if (prev === geo || prev === null || geo.ids.length === 0) return;
     const el = scrollerRef.current;
     if (!el) return;
+    if (scope !== scopeRef.current) {
+      // Workspace switch: re-baseline the whole correction state. Old-scope
+      // rows never anchor the new geometry; queued facts measured the old
+      // DOM, so they are dropped; coverage re-derives from the actual offset.
+      scopeRef.current = scope;
+      trackerRef.current = new CorrectionTracker();
+      pendingRef.current.clear();
+      lastOffsetRef.current = el.scrollTop;
+      recomputeRange(false);
+      return;
+    }
     const st = el.scrollTop;
     const clientH = el.clientHeight;
     // Bottom intent: the reader held the bottom of the OLD extent — keep the
-    // bottom pinned while last-row measurements settle. Released by any
-    // upward input, which is ordinary native scrolling (no write involved).
+    // bottom pinned while last-row measurements settle. Upward input beyond
+    // the 4px band releases it through ordinary native scrolling.
     const atBottom = st > 0 && st + clientH >= prev.total - 4;
     let target: number | null = null;
     const plan = planAnchorCorrection(prev, geo, st, clientH);
     if (plan) target = plan.target;
     if (atBottom) target = Math.max(0, geo.total - clientH);
-    if (target === null) return;
-    const maxScroll = Math.max(0, geo.total - clientH);
-    const clamped = Math.min(maxScroll, Math.max(0, target));
-    if (Math.abs(clamped - st) <= 1) return;
-    el.scrollTop = clamped;
-    trackerRef.current.arm(el.scrollTop);
-  }, [geo]);
+    if (target !== null) {
+      const maxScroll = Math.max(0, geo.total - clientH);
+      const clamped = Math.min(maxScroll, Math.max(0, target));
+      if (Math.abs(clamped - st) > 1) {
+        el.scrollTop = clamped;
+        trackerRef.current.arm(el.scrollTop);
+      }
+    }
+    // Coverage reconciliation. Plain setState from a layout effect still
+    // commits before paint; flushSync is illegal inside a lifecycle. The
+    // recompute never writes geometry: it only chooses the mounted slice.
+    recomputeRange(false);
+  }, [geo, scope, recomputeRange]);
 
   // Drag edge autoscroll (Order 18 Stage D): one controller-owned scheduler;
   // dnd-kit's own autoscroll is disabled for the windowed branch. While a
