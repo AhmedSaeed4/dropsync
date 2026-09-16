@@ -24,7 +24,7 @@ import { Drop, Workspace } from '@/types';
 import { EditorialDropItem } from './EditorialDropItem';
 import { isReminderFiredShared, isReminderGlowingForViewer } from '@/lib/drops';
 import { MemberInfo } from '@/lib/workspaces';
-import { classifyNewIds } from '@/lib/editorialWindowModel';
+import { classifyNewIds, eligibleDragIds } from '@/lib/editorialWindowModel';
 import { useEditorialWindow } from '@/hooks/useEditorialWindow';
 
 // Stage E's add/remove classification memory (the heightStore pattern:
@@ -191,12 +191,11 @@ export const EditorialWindowList = memo(function EditorialWindowList({
     knownScope = scope;
   });
 
-  // The sortable set is the FULL eligible sequence (same expression as the
+  // The sortable set is the FULL eligible sequence (same predicate as the
   // legacy list), so a drag's landing merges against the complete order even
   // though only window rows are mounted.
-  const sortableIds = enableDrag
-    ? filteredDrops.filter((d) => !d.pinned && !isReminderFiredShared(d, now) && d.type !== 'call').map((d) => d.id)
-    : [];
+  const sortableIds = enableDrag ? eligibleDragIds(filteredDrops, (d) => isReminderFiredShared(d, now)) : [];
+  const sortableIdSet = new Set(sortableIds);
 
   const cardPropsFor = (drop: Drop): ComponentProps<typeof EditorialDropItem> => {
     const moveIdx = manualIndexById.get(drop.id);
@@ -219,7 +218,7 @@ export const EditorialWindowList = memo(function EditorialWindowList({
       members: workspaceMembers,
       isReopenCallId,
       hoverable,
-      showMoveControls: moveIdx !== undefined,
+      showMoveControls: moveIdx !== undefined && !enableDrag,
       canMoveUp: moveIdx !== undefined && moveIdx > 0,
       canMoveDown: moveIdx !== undefined && moveIdx < manualCount - 1,
       onMoveUp: moveUp,
@@ -238,6 +237,18 @@ export const EditorialWindowList = memo(function EditorialWindowList({
           {win.rows.map(({ id, top }) => {
             const drop = dropById.get(id);
             if (!drop) return null;
+            // WV-4 (Order 21): tier rows (live calls, fired reminders, pinned)
+            // are NOT sortable nodes - the legacy branch renders them outside
+            // its SortableContext. They keep their window slot (the plain
+            // branch's wrapper shape) but supply no grip and can never be a
+            // drag source or a collision target.
+            if (!sortableIdSet.has(id)) {
+              return (
+                <div key={id} data-row-id={id} style={{ position: 'absolute', top, left: 12, right: 12 }}>
+                  <EditorialDropItem {...cardPropsFor(drop)} />
+                </div>
+              );
+            }
             return <SortableWindowRow key={id} top={top} {...cardPropsFor(drop)} />;
           })}
         </SortableContext>

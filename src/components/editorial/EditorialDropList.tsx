@@ -21,6 +21,7 @@ import { getCategoryCollapsed, setCategoryCollapsed, getDropSortPrefs, setDropSo
 import type { DropSortMode } from '@/lib/auth';
 import { EditorialWindowList } from './EditorialWindowList';
 import { useWideEditorial } from '@/hooks/useEditorialWindow';
+import { eligibleDragIds } from '@/lib/editorialWindowModel';
 
 interface EditorialDropListProps {
   drops: Drop[];
@@ -676,16 +677,6 @@ export function EditorialDropList({
   // 'up')}) so React.memo holds — the item supplies its own drop.id.
   const moveUp = useCallback((id: string) => moveDropSlot(id, 'up'), [moveDropSlot]);
   const moveDown = useCallback((id: string) => moveDropSlot(id, 'down'), [moveDropSlot]);
-  const handleDragEnd = useCallback((event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-    const ids = currentManualIds();
-    const oldIndex = ids.indexOf(active.id as string);
-    const newIndex = ids.indexOf(over.id as string);
-    if (oldIndex < 0 || newIndex < 0) return;
-    commitManualOrder(arrayMove(ids, oldIndex, newIndex));
-  }, [currentManualIds, commitManualOrder]);
-
   // Filter drops by category/search/mention, then sort into 3 SHARED tiers:
   //   FIRED reminders (earliest-fire-first) > pinned (newest-first) > unpinned (selected sort).
   // `now` is captured INSIDE the memo: a due reminder jumps tiers on the 30s re-sort tick, which
@@ -725,6 +716,26 @@ export function EditorialDropList({
     );
     return [...live, ...fired, ...pinned, ...unpinned];
   }, [visibleDrops, selectedCategory, searchQuery, mentionFilter, sortMode, manualOrder]);
+
+  // Drag landing for Manual mode (the wide window branch and the legacy
+  // narrow branch share this handler). Lives AFTER the filteredDrops memo it
+  // guards - its deps array reads filteredDrops.
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    // WV-4 (Order 21): only rows in the drag-eligible set - the same
+    // predicate both sortable branches register - may start or receive a
+    // move, so a leaked grip or a drop onto a tier row can never persist a
+    // manual-order change. `now` is fresh here: a reminder that fired
+    // mid-drag makes its row ineligible at the commit too.
+    const eligible = new Set(eligibleDragIds(filteredDrops, (d) => isReminderFiredShared(d, new Date())));
+    if (!eligible.has(active.id as string) || !eligible.has(over.id as string)) return;
+    const ids = currentManualIds();
+    const oldIndex = ids.indexOf(active.id as string);
+    const newIndex = ids.indexOf(over.id as string);
+    if (oldIndex < 0 || newIndex < 0) return;
+    commitManualOrder(arrayMove(ids, oldIndex, newIndex));
+  }, [currentManualIds, commitManualOrder, filteredDrops]);
 
   // Fresh `now` for the render-side fired filters + the per-viewer glow prop. Recomputed each render;
   // the 30s tick (drops ref change) drives re-renders so a due reminder updates glow/order in-window.

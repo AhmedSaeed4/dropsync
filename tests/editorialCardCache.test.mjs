@@ -426,3 +426,84 @@ test('thumbnails: chained on a ready file, deduped, failures not retried, one at
   cache.requestThumbnail('personal', 'v3', payloadRevision(v3), 'DATAURL3');
   assert.equal(thumbs.calls.length, 3, 'no retry after a thumbnail failure');
 });
+
+// ---- Order 21 (WV-5): edit-during-flight overlap shapes ----
+
+test('edit during an in-flight decrypt: the new revision queues and is never stranded', async () => {
+  const cache = createEditorialCardCache(60);
+  const runner = makeDecryptRunner();
+  cache.setRunners({ decrypt: runner.runner });
+  cache.requestDecrypt('personal', 'a', textDrop('a', 'C', 'i1'), 'u1'); // permit 1
+  const v1 = textDrop('t1', 'C1', 'iv1');
+  cache.requestDecrypt('personal', 't1', v1, 'u1'); // permit 2: v1 in flight
+  const v2 = textDrop('t1', 'C2', 'iv2'); // the edit lands mid-flight
+  cache.requestDecrypt('personal', 't1', v2, 'u1');
+  assert.equal(runner.calls.length, 2, 'the new revision WAITS for a permit');
+
+  runner.settle('t1', plainOf(v1, { content: 'P1' })); // v1 result: stale on arrival
+  await flush();
+  assert.equal(runner.calls.length, 3, 'v2 must start when the permit frees');
+  assert.equal(cache.snapshot('personal', 't1', payloadRevision(v2)).textReady, false, 'the v1 result never lands on v2');
+  assert.equal(cache.snapshot('personal', 't1', payloadRevision(v1)), EMPTY_CARD_RESOURCE, 'old revision never reused');
+
+  runner.settle('t1', plainOf(v2, { content: 'P2' }));
+  await flush();
+  const snap = cache.snapshot('personal', 't1', payloadRevision(v2));
+  assert.equal(snap.text, 'P2');
+  assert.equal(snap.textReady, true);
+});
+
+test('a queued decrypt for a superseded revision is replaced by the newest demand', async () => {
+  const cache = createEditorialCardCache(60);
+  const runner = makeDecryptRunner();
+  cache.setRunners({ decrypt: runner.runner });
+  cache.requestDecrypt('personal', 'a', textDrop('a', 'C', 'i1'), 'u1'); // permit 1
+  cache.requestDecrypt('personal', 'b', textDrop('b', 'C', 'i2'), 'u1'); // permit 2
+  const v1 = textDrop('t1', 'C1', 'iv1');
+  cache.requestDecrypt('personal', 't1', v1, 'u1'); // queued
+  const v2 = textDrop('t1', 'C2', 'iv2');
+  cache.requestDecrypt('personal', 't1', v2, 'u1'); // queued: latest wins
+
+  runner.settle('a', plainOf(textDrop('a', 'C', 'i1'), { content: 'PA' }));
+  await flush();
+  assert.equal(runner.calls.length, 3, 'exactly ONE t1 job runs - the newest revision');
+  runner.settle('t1', plainOf(v2, { content: 'P2' }));
+  await flush();
+  assert.equal(cache.snapshot('personal', 't1', payloadRevision(v2)).text, 'P2');
+  runner.settle('b', plainOf(textDrop('b', 'C', 'i2'), { content: 'PB' }));
+  await flush();
+  assert.equal(runner.calls.length, 3, 'no leftover superseded job ever runs');
+});
+
+test('edit during thumbnail generation: the new revision queues, the old result is discarded', async () => {
+  const cache = createEditorialCardCache(60);
+  const decrypts = makeDecryptRunner();
+  const thumbs = makeThumbRunner();
+  cache.setRunners({ decrypt: decrypts.runner, thumbnail: thumbs.runner });
+
+  const v1 = { id: 'f1', type: 'file', encrypted: true, fileData: 'ENC1', iv: 'iv1', mimeType: 'video/mp4' };
+  cache.requestDecrypt('personal', 'f1', v1, 'u1');
+  decrypts.settle('f1', plainOf(v1, { fileData: 'DATA1' }));
+  await flush();
+  cache.requestThumbnail('personal', 'f1', payloadRevision(v1), 'DATA1');
+  assert.equal(thumbs.calls.length, 1);
+
+  const v2 = { id: 'f1', type: 'file', encrypted: true, fileData: 'ENC2', iv: 'iv2', mimeType: 'video/mp4' };
+  cache.requestDecrypt('personal', 'f1', v2, 'u1');
+  decrypts.settle('f1', plainOf(v2, { fileData: 'DATA2' }));
+  await flush();
+  assert.equal(cache.snapshot('personal', 'f1', payloadRevision(v2)).fileReady, true);
+  cache.requestThumbnail('personal', 'f1', payloadRevision(v2), 'DATA2');
+  assert.equal(thumbs.calls.length, 1, 'the new thumbnail WAITS for the single permit');
+
+  thumbs.settle('DATA1', 'data:image/jpeg;base64,OLD');
+  await flush();
+  assert.equal(thumbs.calls.length, 2, 'v2 generates when the permit frees');
+  assert.equal(cache.snapshot('personal', 'f1', payloadRevision(v2)).thumbnailReady, false, 'the old result never lands on v2');
+  thumbs.settle('DATA2', 'data:image/jpeg;base64,NEW');
+  await flush();
+  const snap = cache.snapshot('personal', 'f1', payloadRevision(v2));
+  assert.equal(snap.thumbnail, 'data:image/jpeg;base64,NEW');
+  assert.equal(snap.thumbnailReady, true);
+  assert.equal(cache.snapshot('personal', 'f1', payloadRevision(v1)), EMPTY_CARD_RESOURCE, 'old revision never reused');
+});

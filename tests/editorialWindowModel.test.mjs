@@ -9,6 +9,7 @@ import {
   computeGeometry,
   CorrectionTracker,
   edgeScrollDelta,
+  eligibleDragIds,
   EDITORIAL_WINDOW_EST_ROW_H,
   EDITORIAL_WINDOW_GAP_PX,
   EDITORIAL_WINDOW_ROW_BUDGET,
@@ -228,4 +229,26 @@ test('mutation classification: scroll mounts never animate; adds, undo and scope
   assert.deepEqual([...classifyNewIds(new Set(['a', 'b']), false, ['a', 'b', 'x'])].sort(), ['x']);
   // workspace switch: everything animates in (legacy re-key parity)
   assert.deepEqual([...classifyNewIds(new Set(['a', 'b']), true, ['p', 'q'])].sort(), ['p', 'q']);
+});
+
+// ---- Order 21 (WV-4): drag eligibility ----
+
+test('eligibleDragIds: pinned, fired, and call rows are excluded; order kept', () => {
+  const drops = [
+    { id: 'live', type: 'call' },
+    { id: 'fired', type: 'text' },
+    { id: 'pin', type: 'text', pinned: true },
+    { id: 'plain', type: 'text' },
+    { id: 'vid', type: 'file' },
+  ];
+  const fired = (d) => d.id === 'fired'; // injected predicate (the app isFired reads Drop fields)
+  assert.deepEqual(eligibleDragIds(drops, fired), ['plain', 'vid']);
+});
+
+test('eligibleDragIds: empty input and all-ineligible input', () => {
+  assert.deepEqual(eligibleDragIds([], () => false), []);
+  assert.deepEqual(
+    eligibleDragIds([{ id: 'x', type: 'call' }, { id: 'y', type: 'text', pinned: true }], () => true),
+    []
+  );
 });

@@ -304,3 +304,17 @@ export function classifyNewIds(
   for (const id of current) if (!prev.has(id)) out.add(id);
   return out;
 }
+
+// ---- Order 21 (WV-4) ----
+
+// The drag-eligible id sequence for Manual mode, shared by every sortable
+// surface (the wide window branch's items and the drag-end guard in
+// EditorialDropList): pinned rows, fired-reminder rows, and live-call rows
+// are never draggable and never valid landing targets. isFired is injected
+// so this module stays import-free (the app's fired test reads Drop fields).
+export function eligibleDragIds<T extends { id: string; pinned?: boolean; type?: string }>(
+  drops: T[],
+  isFired: (drop: T) => boolean
+): string[] {
+  return drops.filter((d) => !d.pinned && !isFired(d) && d.type !== 'call').map((d) => d.id);
+}

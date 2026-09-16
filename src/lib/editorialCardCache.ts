@@ -230,9 +230,11 @@ export function createEditorialCardCache(rowBudget: number): EditorialCardCache 
 
   const keyOf = (scope: string, dropId: string): string => `${scope}\u0000${dropId}`;
   // In-flight keys put the SCOPE LAST so revokeScope's endsWith abort-match
-  // finds every job belonging to the revoked scope.
-  const flightKey = (kind: string, scope: string, dropId: string): string =>
-    `${kind}\u0000${dropId}\u0000${scope}`;
+  // finds every job belonging to the revoked scope. The REVISION sits between
+  // the drop id and the scope (WV-5, Order 21): an in-flight job for an OLD
+  // revision must not silently swallow a demand for a NEW one.
+  const flightKey = (kind: string, scope: string, dropId: string, rev: string): string =>
+    `${kind}\u0000${dropId}\u0000${rev}\u0000${scope}`;
 
   function entryFor(scope: string, dropId: string, rev: string): Entry | undefined {
     const e = scopes.get(scope)?.get(dropId);
@@ -260,7 +262,7 @@ export function createEditorialCardCache(rowBudget: number): EditorialCardCache 
       if (!scopeAlive(job.scope, job.scopeGen) || job.sessionGen !== sessionGen || !runners.decrypt) continue;
       const runner = runners.decrypt;
       const controller = new AbortController();
-      const k = flightKey('d', job.scope, job.dropId);
+      const k = flightKey('d', job.scope, job.dropId, job.rev);
       inFlight.set(k, controller);
       decryptRunning += 1;
       runner(job.drop, job.userId, controller.signal)
@@ -293,7 +295,7 @@ export function createEditorialCardCache(rowBudget: number): EditorialCardCache 
       if (!scopeAlive(job.scope, job.scopeGen) || job.sessionGen !== sessionGen || !runners.thumbnail) continue;
       const runner = runners.thumbnail;
       const controller = new AbortController();
-      const k = flightKey('t', job.scope, job.dropId);
+      const k = flightKey('t', job.scope, job.dropId, job.rev);
       inFlight.set(k, controller);
       thumbnailRunning += 1;
       runner(job.fileData, controller.signal)
@@ -394,8 +396,15 @@ export function createEditorialCardCache(rowBudget: number): EditorialCardCache 
         (isFile && entry.file?.state === 'error') ||
         (hasAttachedImage && entry.image?.state === 'error');
       if (anyError) return; // failed work is not retried automatically
-      if (inFlight.has(flightKey('d', scope, dropId))) return; // already running
+      if (inFlight.has(flightKey('d', scope, dropId, rev))) return; // this revision is already running
       if (decryptQueue.some((j) => j.scope === scope && j.dropId === dropId && j.rev === rev)) return;
+      // WV-5 (Order 21): a demand arriving while an OLDER revision runs must
+      // queue - the running job can no longer fill the entry it replaced.
+      // Latest-wins: a still-queued job for this drop from a superseded
+      // revision is dropped, so the queue holds at most one job per drop.
+      for (let i = decryptQueue.length - 1; i >= 0; i--) {
+        if (decryptQueue[i].scope === scope && decryptQueue[i].dropId === dropId) decryptQueue.splice(i, 1);
+      }
       const job = { scope, dropId, rev, drop, userId, sessionGen, scopeGen: scopeGenerations.get(scope) ?? 0 };
       decryptQueue.push(job);
       while (decryptQueue.length > rowBudget) decryptQueue.shift(); // oldest dropped, newest win
@@ -404,8 +413,14 @@ export function createEditorialCardCache(rowBudget: number): EditorialCardCache 
     requestThumbnail(scope: string, dropId: string, revision: string, fileData: string): void {
       const entry = entryFor(scope, dropId, revision);
       if (entry?.thumbnail) return; // ready or already errored: no auto retry
-      if (inFlight.has(flightKey('t', scope, dropId))) return; // already running
+      if (inFlight.has(flightKey('t', scope, dropId, revision))) return; // this revision is already running
       if (thumbnailQueue.some((j) => j.scope === scope && j.dropId === dropId && j.rev === revision)) return;
+      // WV-5 (Order 21): same repair as decrypt - a demand during an older
+      // revision's flight queues, and a superseded queued thumbnail is
+      // replaced (at most one queued job per drop).
+      for (let i = thumbnailQueue.length - 1; i >= 0; i--) {
+        if (thumbnailQueue[i].scope === scope && thumbnailQueue[i].dropId === dropId) thumbnailQueue.splice(i, 1);
+      }
       thumbnailQueue.push({
         scope, dropId, rev: revision, fileData, sessionGen, scopeGen: scopeGenerations.get(scope) ?? 0,
       });
