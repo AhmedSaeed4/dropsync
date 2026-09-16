@@ -430,6 +430,11 @@ export function EditorialDropList({
   const finePointer = useFinePointer();
   const dndSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
+  // Wide windowed drag (Order 18 Stage D): tracks the active drag id so the
+  // renderer can keep the source row's slot mounted (no overlay) and run the
+  // controller-owned edge autoscroll. Set/cleared by the wide DndContext only.
+  const [activeDragId, setActiveDragId] = useState<string | null>(null);
+
   const handlePinDrop = useCallback(async (drop: Drop) => {
     if (drop.pinned) {
       await unpinDrop(drop.id);
@@ -1232,30 +1237,66 @@ export function EditorialDropList({
               </p>
             </div>
           ) : isWide ? (
-            /* Wide desktop: the visible-window renderer (D17, Stage A). Drag
-               and add/remove animations stay legacy-only until Stages D/E. */
-            <EditorialWindowList
-              filteredDrops={filteredDrops}
-              manualIndexById={manualIndexById}
-              manualCount={manualCount}
-              selectedIds={selectedIds}
-              toggleSelect={toggleSelect}
-              selectionMode={selectionMode}
-              theme={theme}
-              currentUserId={currentUserId}
-              currentWorkspace={currentWorkspace}
-              onDelete={handleDeleteWithUndo}
-              onPin={handlePinDrop}
-              onPreview={onPreview}
-              onEdit={onEdit}
-              allDrops={allDrops}
-              onJoinCall={onJoinCall}
-              workspaceMembers={workspaceMembers}
-              isReopenCallId={isReopenCallId}
-              hoverable={hoverable}
-              moveUp={moveUp}
-              moveDown={moveDown}
-            />
+            /* Wide desktop: the visible-window renderer (D17; Stages D+E).
+               Manual sort + fine pointer runs the sortable window branch -
+               dnd-kit's own autoscroll is disabled there; the controller's
+               edge scheduler owns scrolling. Otherwise the window branch
+               mirrors the legacy animation gating exactly (animate =
+               unfiltered + motion allowed). */
+            enableDrag ? (
+              <DndContext sensors={dndSensors} collisionDetection={closestCenter} autoScroll={false} onDragStart={(e) => setActiveDragId(String(e.active.id))} onDragEnd={(e) => { setActiveDragId(null); handleDragEnd(e); }} onDragCancel={() => setActiveDragId(null)}>
+                <EditorialWindowList
+                  filteredDrops={filteredDrops}
+                  manualIndexById={manualIndexById}
+                  manualCount={manualCount}
+                  selectedIds={selectedIds}
+                  toggleSelect={toggleSelect}
+                  selectionMode={selectionMode}
+                  theme={theme}
+                  currentUserId={currentUserId}
+                  currentWorkspace={currentWorkspace}
+                  onDelete={handleDeleteWithUndo}
+                  onPin={handlePinDrop}
+                  onPreview={onPreview}
+                  onEdit={onEdit}
+                  allDrops={allDrops}
+                  onJoinCall={onJoinCall}
+                  workspaceMembers={workspaceMembers}
+                  isReopenCallId={isReopenCallId}
+                  hoverable={hoverable}
+                  moveUp={moveUp}
+                  moveDown={moveDown}
+                  enableDrag
+                  animate={false}
+                  activeDragId={activeDragId}
+                />
+              </DndContext>
+            ) : (
+                <EditorialWindowList
+                  filteredDrops={filteredDrops}
+                  manualIndexById={manualIndexById}
+                  manualCount={manualCount}
+                  selectedIds={selectedIds}
+                  toggleSelect={toggleSelect}
+                  selectionMode={selectionMode}
+                  theme={theme}
+                  currentUserId={currentUserId}
+                  currentWorkspace={currentWorkspace}
+                  onDelete={handleDeleteWithUndo}
+                  onPin={handlePinDrop}
+                  onPreview={onPreview}
+                  onEdit={onEdit}
+                  allDrops={allDrops}
+                  onJoinCall={onJoinCall}
+                  workspaceMembers={workspaceMembers}
+                  isReopenCallId={isReopenCallId}
+                  hoverable={hoverable}
+                  moveUp={moveUp}
+                  moveDown={moveDown}
+                  enableDrag={false}
+                  animate={animateDrops}
+                />
+            )
           ) : enableDrag ? (
             <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
               <div className="p-3 space-y-2">

@@ -5,13 +5,16 @@ import assert from 'node:assert/strict';
 import {
   applyMeasurements,
   bufferedRange,
+  classifyNewIds,
   computeGeometry,
   CorrectionTracker,
+  edgeScrollDelta,
   EDITORIAL_WINDOW_EST_ROW_H,
   EDITORIAL_WINDOW_GAP_PX,
   EDITORIAL_WINDOW_ROW_BUDGET,
   EDITORIAL_WINDOW_STAGE_PAD_PX,
   mergeFullOrder,
+  mergeRetainedRows,
   planAnchorCorrection,
   rowAtOffset,
   visibleRange,
@@ -176,4 +179,53 @@ test('estimate constant sanity', () => {
   assert.equal(EDITORIAL_WINDOW_GAP_PX, 8);
   assert.equal(EDITORIAL_WINDOW_STAGE_PAD_PX, 12);
   assert.equal(typeof EDITORIAL_WINDOW_ROW_BUDGET, 'number');
+});
+
+// ---- Order 18 (Stages D+E) ----
+
+test('edge autoscroll: zero in the middle, linear ramp in the zones, saturated outside', () => {
+  const top = 100;
+  const bottom = 600; // a 500px-tall scroller rect
+  assert.equal(edgeScrollDelta(350, top, bottom), 0);
+  assert.equal(edgeScrollDelta(top + 24, top, bottom), -9); // half a zone deep = half speed
+  assert.equal(edgeScrollDelta(top, top, bottom), -18); // at the edge = max speed
+  assert.equal(edgeScrollDelta(top - 10, top, bottom), -18); // held past the edge = saturated
+  assert.equal(edgeScrollDelta(top + 48, top, bottom), 0); // the zone boundary is outside the zone
+  assert.equal(edgeScrollDelta(bottom - 24, top, bottom), 9);
+  assert.equal(edgeScrollDelta(bottom, top, bottom), 18);
+  assert.equal(edgeScrollDelta(bottom + 10, top, bottom), 18);
+});
+
+test('retained rows: the drag source stays mounted at its model top after the window slid past', () => {
+  const geo = computeGeometry(Array.from({ length: 40 }, (_, i) => `r${i}`), () => undefined);
+  const slice = [];
+  for (let i = 10; i <= 20; i++) slice.push({ id: `r${i}`, top: geo.tops[i] });
+  // dragging r2, far above the slice: appended at its model top, strict order kept
+  const merged = mergeRetainedRows(slice, new Set(['r2']), geo);
+  assert.equal(merged.length, 12);
+  assert.equal(merged[0].id, 'r2');
+  assert.equal(merged[0].top, geo.tops[2]);
+  assert.deepEqual(merged.slice(1).map((r) => r.id), slice.map((r) => r.id));
+  // retained id already inside the slice: no duplicate, same array
+  assert.equal(mergeRetainedRows(slice, new Set(['r15']), geo), slice);
+  // retained id missing from the geometry (deleted mid-drag): skipped
+  assert.equal(mergeRetainedRows(slice, new Set(['ghost']), geo), slice);
+  // no retention: same array
+  assert.equal(mergeRetainedRows(slice, undefined, geo), slice);
+  // above AND below retained: still one strictly ordered list
+  const both = mergeRetainedRows(slice, new Set(['r2', 'r35']), geo);
+  assert.deepEqual(both.map((r) => r.id), ['r2', ...slice.map((r) => r.id), 'r35']);
+});
+
+test('mutation classification: scroll mounts never animate; adds, undo and scope switches do', () => {
+  const full = ['a', 'b', 'c', 'd'];
+  // initial load animates nothing
+  assert.equal(classifyNewIds(null, false, full).size, 0);
+  // scroll mount: the window's row ids were all in the previous commit
+  const prev = new Set(full);
+  assert.equal(classifyNewIds(prev, false, ['b', 'c']).size, 0);
+  // genuine add / undo-restore
+  assert.deepEqual([...classifyNewIds(new Set(['a', 'b']), false, ['a', 'b', 'x'])].sort(), ['x']);
+  // workspace switch: everything animates in (legacy re-key parity)
+  assert.deepEqual([...classifyNewIds(new Set(['a', 'b']), true, ['p', 'q'])].sort(), ['p', 'q']);
 });

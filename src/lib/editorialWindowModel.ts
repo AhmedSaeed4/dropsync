@@ -238,3 +238,69 @@ export function mergeFullOrder(fullIds: string[], movingId: string, targetId: st
   next.splice(to, 0, movingId);
   return next;
 }
+
+// ---- Order 18 (Stages D+E) pure decision helpers ----
+
+// Drag edge autoscroll (plan §1.8: one controller-owned scheduler;
+// dnd-kit's own autoscroll is disabled for the windowed branch). px to add
+// to scrollTop this frame for a pointer at clientY against the scroller's
+// visible rect. 0 in the middle; linear ramp across each edge zone;
+// saturated at the max speed when the pointer is held past the edge.
+// Negative = scroll up.
+export const EDITORIAL_DRAG_EDGE_ZONE_PX = 48;
+export const EDITORIAL_DRAG_EDGE_MAX_SPEED_PX = 18;
+
+export function edgeScrollDelta(clientY: number, rectTop: number, rectBottom: number): number {
+  const fromTop = clientY - rectTop;
+  const fromBottom = rectBottom - clientY;
+  if (fromTop < fromBottom) {
+    if (fromTop >= EDITORIAL_DRAG_EDGE_ZONE_PX) return 0;
+    const t = Math.max(0, fromTop) / EDITORIAL_DRAG_EDGE_ZONE_PX;
+    return -Math.round(EDITORIAL_DRAG_EDGE_MAX_SPEED_PX * (1 - t));
+  }
+  if (fromBottom >= EDITORIAL_DRAG_EDGE_ZONE_PX) return 0;
+  const t = Math.max(0, fromBottom) / EDITORIAL_DRAG_EDGE_ZONE_PX;
+  return Math.round(EDITORIAL_DRAG_EDGE_MAX_SPEED_PX * (1 - t));
+}
+
+// Retained rows (Stage D): rows that must stay mounted even after the window
+// slid past them - the active drag's source slot (plan §1.8: keep the
+// source's slot stable; no overlay needed). Appends every retained id the
+// base slice does not already show, at its model top, and returns the rows
+// in strict model order. Retained ids missing from the geometry (deleted
+// mid-drag) are skipped, so the sortable node unmounts and the drag ends.
+export function mergeRetainedRows(
+  rows: Array<{ id: string; top: number }>,
+  retainedIds: ReadonlySet<string> | undefined,
+  geo: Geometry
+): Array<{ id: string; top: number }> {
+  if (!retainedIds || retainedIds.size === 0) return rows;
+  const present = new Set(rows.map((r) => r.id));
+  const extra: Array<{ id: string; top: number }> = [];
+  retainedIds.forEach((id) => {
+    if (present.has(id)) return;
+    const idx = geo.indexById.get(id);
+    if (idx !== undefined) extra.push({ id, top: geo.tops[idx] });
+  });
+  if (extra.length === 0) return rows;
+  return [...rows, ...extra].sort((a, b) => a.top - b.top);
+}
+
+// Add/remove classification (Stage E, plan §1.8: a mounted-set change is
+// not an add/delete). The ids of the CURRENT commit that are genuinely new
+// since the previous one: nothing on first observation (initial load),
+// everything on a workspace switch (the legacy list re-keyed its children),
+// otherwise the diff. Scroll mounts are never new - their ids were in the
+// previous commit's full list - so they render at their final position
+// with no fade/scale.
+export function classifyNewIds(
+  prev: ReadonlySet<string> | null,
+  scopeChanged: boolean,
+  current: readonly string[]
+): Set<string> {
+  if (scopeChanged) return new Set(current);
+  if (!prev) return new Set();
+  const out = new Set<string>();
+  for (const id of current) if (!prev.has(id)) out.add(id);
+  return out;
+}

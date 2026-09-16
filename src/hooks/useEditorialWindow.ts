@@ -22,8 +22,10 @@ import {
   bufferedRange,
   computeGeometry,
   CorrectionTracker,
+  edgeScrollDelta,
   EDITORIAL_WINDOW_ROW_BUDGET,
   type Geometry,
+  mergeRetainedRows,
   planAnchorCorrection,
   visibleRange,
 } from '@/lib/editorialWindowModel';
@@ -61,12 +63,17 @@ export interface EditorialWindowState {
   rows: Array<{ id: string; top: number }>;
   // Full logical extent in px = the stage's explicit height.
   totalHeight: number;
+  // Drag edge autoscroll (Order 18 Stage D): feed the pointer's clientY
+  // while a drag is active; null stops. Writes clamped scrollTop on a
+  // rAF loop; the native scroll handler does all window bookkeeping.
+  edgeScroll: (clientY: number | null) => void;
 }
 
 export function useEditorialWindow(
   scope: string,
   ids: string[],
-  stageRef: RefObject<HTMLDivElement | null>
+  stageRef: RefObject<HTMLDivElement | null>,
+  retainedIds?: ReadonlySet<string>
 ): EditorialWindowState {
   const store = storeFor(scope);
   // Event-side indirection so the rAF flush always hits the current scope's
@@ -106,7 +113,7 @@ export function useEditorialWindow(
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const geo = useMemo(() => computeGeometry(ids, (id) => store.get(id)), [ids, store, version]);
 
-  const rows = useMemo(() => {
+  const baseRows = useMemo(() => {
     const out: Array<{ id: string; top: number }> = [];
     const start = Math.max(0, rangeState.start);
     const end = Math.min(geo.ids.length - 1, rangeState.end);
@@ -116,6 +123,10 @@ export function useEditorialWindow(
     }
     return out;
   }, [geo, rangeState]);
+
+  // Retained rows (Order 18 Stage D): the active drag's source slot stays
+  // mounted at its model top even when the window slid past it.
+  const rows = useMemo(() => mergeRetainedRows(baseRows, retainedIds, geo), [baseRows, retainedIds, geo]);
 
   const flush = useCallback(() => {
     flushQueuedRef.current = false;
@@ -255,17 +266,56 @@ export function useEditorialWindow(
     trackerRef.current.arm(el.scrollTop);
   }, [geo]);
 
+  // Drag edge autoscroll (Order 18 Stage D): one controller-owned scheduler;
+  // dnd-kit's own autoscroll is disabled for the windowed branch. While a
+  // drag is active, every frame derives the px delta from the pure model and
+  // writes a clamped scrollTop; the native scroll handler does all window
+  // bookkeeping. null stops the loop; unmount stops it via the teardown.
+  const edgeScrollActiveRef = useRef(false);
+  const edgeScrollRafRef = useRef<number | null>(null);
+  const edgeScrollYRef = useRef<number | null>(null);
+  const edgeScroll = useCallback((clientY: number | null) => {
+    if (clientY === null) {
+      edgeScrollActiveRef.current = false;
+      edgeScrollYRef.current = null;
+      if (edgeScrollRafRef.current !== null) {
+        cancelAnimationFrame(edgeScrollRafRef.current);
+        edgeScrollRafRef.current = null;
+      }
+      return;
+    }
+    edgeScrollYRef.current = clientY;
+    if (edgeScrollActiveRef.current) return;
+    edgeScrollActiveRef.current = true;
+    const tick = () => {
+      if (!edgeScrollActiveRef.current) return;
+      const el = scrollerRef.current;
+      const y = edgeScrollYRef.current;
+      if (el && y !== null) {
+        const rect = el.getBoundingClientRect();
+        const delta = edgeScrollDelta(y, rect.top, rect.bottom);
+        if (delta !== 0) {
+          const maxScroll = Math.max(0, el.scrollHeight - el.clientHeight);
+          el.scrollTop = Math.min(maxScroll, Math.max(0, el.scrollTop + delta));
+        }
+      }
+      edgeScrollRafRef.current = requestAnimationFrame(tick);
+    };
+    edgeScrollRafRef.current = requestAnimationFrame(tick);
+  }, []);
+
   // Full teardown: observers, queued facts, no recurring idle work remains.
   useEffect(() => {
     const observers = rowObserversRef.current;
     const pending = pendingRef.current;
     return () => {
+      edgeScroll(null);
       observers.forEach((entry) => entry.ro.disconnect());
       observers.clear();
       pending.clear();
       trackerRef.current = new CorrectionTracker();
     };
-  }, []);
+  }, [edgeScroll]);
 
-  return { rows, totalHeight: geo.total };
+  return { rows, totalHeight: geo.total, edgeScroll };
 }
