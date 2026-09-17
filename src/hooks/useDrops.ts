@@ -11,11 +11,21 @@ function dropsTickSignature(drops: Drop[], now: Date): string {
   return drops.map((d) => `${d.id}:${isReminderFiredShared(d, now) ? 1 : 0}`).join("|");
 }
 
-export function useDrops(workspaceId: string | null = null) {
+export function useDrops(
+  workspaceId: string | null = null,
+  options?: { onAccessDenied?: (workspaceId: string | null) => void }
+) {
   const { user } = useAuth();
   const [drops, setDrops] = useState<Drop[]>([]);
   const [loading, setLoading] = useState(true);
   const lastTickSigRef = useRef("");
+  // Stage B: the access-denied callback lives in a ref written by an EFFECT
+  // (never during render) so a changing options object never resubscribes
+  // the drops listener.
+  const optionsRef = useRef(options);
+  useEffect(() => {
+    optionsRef.current = options;
+  });
 
   useEffect(() => {
     if (!user) {
@@ -34,7 +44,7 @@ export function useDrops(workspaceId: string | null = null) {
       setDrops(newDrops);
       lastTickSigRef.current = dropsTickSignature(newDrops, new Date());
       setLoading(false);
-    });
+    }, (deniedWorkspaceId) => optionsRef.current?.onAccessDenied?.(deniedWorkspaceId));
 
     return () => unsubscribe();
   }, [user, workspaceId]);

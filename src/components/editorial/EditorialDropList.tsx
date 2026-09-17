@@ -19,6 +19,9 @@ import HoldToDeleteButton from './HoldToDeleteButton';
 import { MemberInfo } from '@/lib/workspaces';
 import { getCategoryCollapsed, setCategoryCollapsed, getDropSortPrefs, setDropSortMode, setDropOrder } from '@/lib/auth';
 import type { DropSortMode } from '@/lib/auth';
+import { EditorialWindowList } from './EditorialWindowList';
+import { useWideEditorial } from '@/hooks/useEditorialWindow';
+import { eligibleDragIds } from '@/lib/editorialWindowModel';
 
 interface EditorialDropListProps {
   drops: Drop[];
@@ -294,6 +297,9 @@ export function EditorialDropList({
   onExportWorkspace,
   onExportPersonal,
 }: EditorialDropListProps) {
+  // Wide-desktop visible window (Round 9 D17): picks the windowed renderer at
+  // >=1400px. False through SSR/hydration; the wide branch mounts right after.
+  const isWide = useWideEditorial();
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
@@ -356,7 +362,12 @@ export function EditorialDropList({
   }, []);
 
   const selectAll = () => {
-    if (selectedIds.size === filteredDrops.length) {
+    // Wide window (D17): membership-based all-selected so off-window rows of
+    // the full filtered list count; legacy keeps the size-equality behavior.
+    const allSelected = isWide
+      ? filteredDrops.length > 0 && filteredDrops.every(d => selectedIds.has(d.id))
+      : selectedIds.size === filteredDrops.length;
+    if (allSelected) {
       setSelectedIds(new Set());
     } else {
       setSelectedIds(new Set(filteredDrops.map(d => d.id)));
@@ -419,6 +430,11 @@ export function EditorialDropList({
   // Desktop drag-to-reorder (fine pointer); touch devices keep the ↑/↓ buttons.
   const finePointer = useFinePointer();
   const dndSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  // Wide windowed drag (Order 18 Stage D): tracks the active drag id so the
+  // renderer can keep the source row's slot mounted (no overlay) and run the
+  // controller-owned edge autoscroll. Set/cleared by the wide DndContext only.
+  const [activeDragId, setActiveDragId] = useState<string | null>(null);
 
   const handlePinDrop = useCallback(async (drop: Drop) => {
     if (drop.pinned) {
@@ -661,16 +677,6 @@ export function EditorialDropList({
   // 'up')}) so React.memo holds — the item supplies its own drop.id.
   const moveUp = useCallback((id: string) => moveDropSlot(id, 'up'), [moveDropSlot]);
   const moveDown = useCallback((id: string) => moveDropSlot(id, 'down'), [moveDropSlot]);
-  const handleDragEnd = useCallback((event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-    const ids = currentManualIds();
-    const oldIndex = ids.indexOf(active.id as string);
-    const newIndex = ids.indexOf(over.id as string);
-    if (oldIndex < 0 || newIndex < 0) return;
-    commitManualOrder(arrayMove(ids, oldIndex, newIndex));
-  }, [currentManualIds, commitManualOrder]);
-
   // Filter drops by category/search/mention, then sort into 3 SHARED tiers:
   //   FIRED reminders (earliest-fire-first) > pinned (newest-first) > unpinned (selected sort).
   // `now` is captured INSIDE the memo: a due reminder jumps tiers on the 30s re-sort tick, which
@@ -710,6 +716,26 @@ export function EditorialDropList({
     );
     return [...live, ...fired, ...pinned, ...unpinned];
   }, [visibleDrops, selectedCategory, searchQuery, mentionFilter, sortMode, manualOrder]);
+
+  // Drag landing for Manual mode (the wide window branch and the legacy
+  // narrow branch share this handler). Lives AFTER the filteredDrops memo it
+  // guards - its deps array reads filteredDrops.
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    // WV-4 (Order 21): only rows in the drag-eligible set - the same
+    // predicate both sortable branches register - may start or receive a
+    // move, so a leaked grip or a drop onto a tier row can never persist a
+    // manual-order change. `now` is fresh here: a reminder that fired
+    // mid-drag makes its row ineligible at the commit too.
+    const eligible = new Set(eligibleDragIds(filteredDrops, (d) => isReminderFiredShared(d, new Date())));
+    if (!eligible.has(active.id as string) || !eligible.has(over.id as string)) return;
+    const ids = currentManualIds();
+    const oldIndex = ids.indexOf(active.id as string);
+    const newIndex = ids.indexOf(over.id as string);
+    if (oldIndex < 0 || newIndex < 0) return;
+    commitManualOrder(arrayMove(ids, oldIndex, newIndex));
+  }, [currentManualIds, commitManualOrder, filteredDrops]);
 
   // Fresh `now` for the render-side fired filters + the per-viewer glow prop. Recomputed each render;
   // the 30s tick (drops ref change) drives re-renders so a due reminder updates glow/order in-window.
@@ -1110,7 +1136,7 @@ export function EditorialDropList({
                   onClick={selectAll}
                   className={`text-xs ${font} ${tc.muted} ${tc.inactivePillHoverBg} px-3 py-1.5 ${tc.roundedClass} border ${tc.border} transition-colors`}
                 >
-                  {selectedIds.size === filteredDrops.length ? 'Deselect' : 'Select all'}
+                  {(isWide ? filteredDrops.length > 0 && filteredDrops.every(d => selectedIds.has(d.id)) : selectedIds.size === filteredDrops.length) ? 'Deselect' : 'Select all'}
                 </button>
                 <button
                   onClick={cancelSelection}
@@ -1122,7 +1148,10 @@ export function EditorialDropList({
                   <>
                     <button
                       onClick={() => {
-                        const selectedDrops = drops.filter(d => selectedIds.has(d.id));
+                        // Wide window (D17): resolve against the FULL filtered
+                        // list; legacy keeps the raw-list behavior byte-for-byte.
+                        const source = isWide ? filteredDrops : drops;
+                        const selectedDrops = source.filter(d => selectedIds.has(d.id));
                         setBulkMoveDrops(selectedDrops);
                       }}
                       className={`text-xs ${font} px-3 py-1.5 ${tc.roundedClass} ${tc.activePillBg} ${tc.activePillText} hover:opacity-90 transition-opacity ml-auto flex items-center gap-1`}
@@ -1218,6 +1247,67 @@ export function EditorialDropList({
                   : 'No drops in this category'}
               </p>
             </div>
+          ) : isWide ? (
+            /* Wide desktop: the visible-window renderer (D17; Stages D+E).
+               Manual sort + fine pointer runs the sortable window branch -
+               dnd-kit's own autoscroll is disabled there; the controller's
+               edge scheduler owns scrolling. Otherwise the window branch
+               mirrors the legacy animation gating exactly (animate =
+               unfiltered + motion allowed). */
+            enableDrag ? (
+              <DndContext sensors={dndSensors} collisionDetection={closestCenter} autoScroll={false} onDragStart={(e) => setActiveDragId(String(e.active.id))} onDragEnd={(e) => { setActiveDragId(null); handleDragEnd(e); }} onDragCancel={() => setActiveDragId(null)}>
+                <EditorialWindowList
+                  filteredDrops={filteredDrops}
+                  manualIndexById={manualIndexById}
+                  manualCount={manualCount}
+                  selectedIds={selectedIds}
+                  toggleSelect={toggleSelect}
+                  selectionMode={selectionMode}
+                  theme={theme}
+                  currentUserId={currentUserId}
+                  currentWorkspace={currentWorkspace}
+                  onDelete={handleDeleteWithUndo}
+                  onPin={handlePinDrop}
+                  onPreview={onPreview}
+                  onEdit={onEdit}
+                  allDrops={allDrops}
+                  onJoinCall={onJoinCall}
+                  workspaceMembers={workspaceMembers}
+                  isReopenCallId={isReopenCallId}
+                  hoverable={hoverable}
+                  moveUp={moveUp}
+                  moveDown={moveDown}
+                  enableDrag
+                  animate={false}
+                  activeDragId={activeDragId}
+                />
+              </DndContext>
+            ) : (
+                <EditorialWindowList
+                  filteredDrops={filteredDrops}
+                  manualIndexById={manualIndexById}
+                  manualCount={manualCount}
+                  selectedIds={selectedIds}
+                  toggleSelect={toggleSelect}
+                  selectionMode={selectionMode}
+                  theme={theme}
+                  currentUserId={currentUserId}
+                  currentWorkspace={currentWorkspace}
+                  onDelete={handleDeleteWithUndo}
+                  onPin={handlePinDrop}
+                  onPreview={onPreview}
+                  onEdit={onEdit}
+                  allDrops={allDrops}
+                  onJoinCall={onJoinCall}
+                  workspaceMembers={workspaceMembers}
+                  isReopenCallId={isReopenCallId}
+                  hoverable={hoverable}
+                  moveUp={moveUp}
+                  moveDown={moveDown}
+                  enableDrag={false}
+                  animate={animateDrops}
+                />
+            )
           ) : enableDrag ? (
             <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
               <div className="p-3 space-y-2">

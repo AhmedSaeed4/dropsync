@@ -577,7 +577,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
         </div>
 
         {/* Right column: Drops + Saved Paths */}
-        <div className={`shrink-0 wide:overflow-y-auto editorial-scroll-hide wide:min-h-0 transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] w-full ${showChat ? 'wide:w-[480px] wide:min-w-[480px]' : 'wide:w-[520px] wide:min-w-[520px]'}`}>
+        <div className={`shrink-0 wide:overflow-y-auto editorial-scroll-hide wide:min-h-0 transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] w-full wide:[overflow-anchor:none] ${showChat ? 'wide:w-[480px] wide:min-w-[480px]' : 'wide:w-[520px] wide:min-w-[520px]'}`}>
           <div>
             <MemoEditorialDropList
               drops={drops}

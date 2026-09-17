@@ -10,6 +10,7 @@ import { DropMentionContent } from '../DropMentionContent';
 import { useState, useEffect, useRef, memo } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useVideoThumbnail } from '@/hooks/useVideoThumbnail';
+import { useEditorialCardResources } from '@/hooks/useEditorialCardResources';
 import { getEditorialThemeColors } from './editorialTheme';
 import { DropContextMenu, useContextMenu } from '../DropContextMenu';
 import { LockedHintTooltip } from '../LockedHintTooltip';
@@ -51,6 +52,13 @@ interface EditorialDropItemProps {
   members?: MemberInfo[];
   isReopenCallId?: string;
   hoverable?: boolean;
+  // Virtual window mode (Round 9 Stage A): the row wrapper measures the real
+  // intrinsic size, so the card must not report a content-visibility
+  // placeholder - this mode drops the skip-render hint. Legacy keeps it.
+  virtualMode?: boolean;
+  // Stage B (Order 17): the access scope key for the page-visit resource
+  // store ('personal' or the workspace id). Virtual cards only.
+  resourceScope?: string;
 }
 
 function isTextFile(drop: Drop): boolean {
@@ -184,6 +192,8 @@ export const EditorialDropItem = memo(function EditorialDropItem({
   members = [],
   isReopenCallId,
   hoverable = false,
+  virtualMode = false,
+  resourceScope,
 }: EditorialDropItemProps) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -237,6 +247,9 @@ export const EditorialDropItem = memo(function EditorialDropItem({
   //   cached, no flicker. Editing the drop changes the signature → fresh
   //   decrypt so the list shows new content without needing a remount.
   useEffect(() => {
+    // Stage B (Order 17): virtual cards read the scoped page-visit resource
+    // store instead - this legacy path (incl. its preview priming) is skipped.
+    if (virtualMode) return;
     async function decrypt() {
       if (!drop.encrypted) {
         setDecryptedContent(drop.content || '');
@@ -284,35 +297,50 @@ export const EditorialDropItem = memo(function EditorialDropItem({
       }
     }
     decrypt();
-  }, [drop, currentUserId, inView]);
+  }, [drop, currentUserId, inView, virtualMode]);
 
   // Cancel a pending hover pre-stage when the card unmounts.
   useEffect(() => () => {
     if (hoverTimerRef.current !== null) clearTimeout(hoverTimerRef.current);
   }, []);
 
+  // Stage B (Order 17): virtual cards read their decrypted parts (and their
+  // video thumbnail, below) from the scoped page-visit resource store, so a
+  // revisited drop renders instantly instead of flashing back to locked.
+  const resources = useEditorialCardResources(virtualMode, resourceScope ?? 'personal', drop, currentUserId);
+
   const displayContent = drop.encrypted
-    ? (decryptError ? '[Encrypted - cannot decrypt]' : decryptedContent)
+    ? (virtualMode
+        ? (resources.textError ? '[Encrypted - cannot decrypt]' : (resources.text ?? ''))
+        : (decryptError ? '[Encrypted - cannot decrypt]' : decryptedContent))
     : (drop.content || '');
 
-  const displayFileData = drop.encrypted ? decryptedFileData : (drop.fileData || '');
-  const displayImageData = decryptedImageData;
+  const displayFileData = drop.encrypted
+    ? (virtualMode ? (resources.file ?? '') : decryptedFileData)
+    : (drop.fileData || '');
+  const displayImageData = virtualMode ? (resources.image ?? '') : decryptedImageData;
 
   // True once an encrypted drop's decryption has finished populating state
   // (content/file/image present, or it errored). Unencrypted drops are always
   // ready. Used so we don't show a misleading "0 chars" before decryption
   // has filled in displayContent (which is '' for encrypted-until-viewed drops).
   const contentReady = !drop.encrypted
-    || decryptedContent !== ''
-    || decryptedFileData !== ''
-    || decryptedImageData !== ''
-    || decryptError;
+    || (virtualMode
+      ? (resources.ready || resources.failed)
+      : (decryptedContent !== ''
+        || decryptedFileData !== ''
+        || decryptedImageData !== ''
+        || decryptError));
 
-  // Video thumbnail
-  const { thumbnailUrl: videoThumbnail, isGenerating: isGeneratingThumbnail } = useVideoThumbnail(
-    isVideo ? displayFileData : null,
+  // Video thumbnail. Legacy cards generate their own on first paint; virtual
+  // cards read the store's retained thumbnail instead (Stage C), so their
+  // legacy hook is disabled with null. (The unused isGenerating name stays:
+  // pre-existing lint debt.)
+  const { thumbnailUrl: legacyThumbnail, isGenerating: isGeneratingThumbnail } = useVideoThumbnail(
+    !virtualMode && isVideo ? displayFileData : null,
     drop.mimeType
   );
+  const videoThumbnail = virtualMode ? (resources.thumbnail ?? null) : legacyThumbnail;
 
   // YouTube thumbnail detection
   const youtubeVideoId = drop.type === 'text' ? getYouTubeVideoId(displayContent) : null;
@@ -498,7 +526,7 @@ export const EditorialDropItem = memo(function EditorialDropItem({
         }
       }}
       {...contextMenuProps}
-      className={`relative select-none ${tc.cardBg} ${tc.roundedClass} border ${tc.border} transition-all cursor-pointer group overflow-hidden [content-visibility:auto] [contain-intrinsic-size:auto_160px] ${
+      className={`relative select-none ${tc.cardBg} ${tc.roundedClass} border ${tc.border} transition-all cursor-pointer group overflow-hidden ${virtualMode ? '' : '[content-visibility:auto] [contain-intrinsic-size:auto_160px] '}${
         tc.hoverBorder
       } ${selectionMode && selected ? 'opacity-60' : ''}`}
     >
