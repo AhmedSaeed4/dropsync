@@ -12,7 +12,7 @@ import {
   Timestamp,
   where,
 } from 'firebase/firestore';
-import { ZipWriterStream, type FileEntry } from '@zip.js/zip.js';
+import { ZipWriterStream, type FileEntry } from '@zip.js/zip.js/lib/zip-native.js';
 import { auth, db } from './firebase';
 import { decryptData, encryptData } from './crypto';
 import {

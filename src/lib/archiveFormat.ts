@@ -1,13 +1,20 @@
 'use client';
 
 import {
+  BlobReader,
   BlobWriter,
+  configure,
   TextWriter,
   ZipReader,
   type Entry,
   type FileEntry,
-} from '@zip.js/zip.js';
+} from '@zip.js/zip.js/lib/zip-native.js';
 import { decryptData } from './crypto';
+
+// AB-1: run the zip codec inline (no web workers), matching the desktop app.
+// AB-2: decode with the bundled pure-JS zlib — Chromium's native deflate
+// decoder fails on real archives that Firefox and the desktop decode fine.
+configure({ useWebWorkers: false, useCompressionStream: false });
 
 export const ARCHIVE_ENVELOPE_VERSION = 1;
 export const ARCHIVE_EXTENSION = '.dropsync';
@@ -610,7 +617,19 @@ export async function loadArchive<T>(
   );
   let reader: ZipReader<Uint8Array> | undefined;
   try {
-    reader = new ZipReader<Uint8Array>(zipStream, {
+    // AB-1: Chromium intermittently fails zip.js's internal stream buffering
+    // (`new Response(stream).blob()`) on large archives, so collect the
+    // decrypted bytes into one seekable Blob ourselves before parsing.
+    const zipChunks: Uint8Array[] = [];
+    await zipStream.pipeTo(
+      new WritableStream<Uint8Array>({
+        write(chunk) {
+          zipChunks.push(chunk);
+        },
+      }),
+      { signal }
+    );
+    reader = new ZipReader<Uint8Array>(new BlobReader(new Blob(zipChunks as BlobPart[])), {
       checkAmbiguity: true,
       strictness: 'strict',
     });
@@ -666,6 +685,8 @@ export async function loadArchive<T>(
     await reader?.close().catch(() => {});
     if (error instanceof ArchiveCancelledError) throw error;
     if (error instanceof ArchiveValidationError) throw error;
+    // The real cause is logged for diagnosis; the user keeps the plain message.
+    console.warn('[archive] load failed:', error);
     throw new Error('The archive password is wrong, or the archive is damaged.');
   }
 }
