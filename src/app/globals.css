@@ -727,13 +727,14 @@ html {
   animation: typing-fade-out 0.18s ease-out forwards;
 }
 
-/* Clickable links inside drop text and chat — the coral-signature look (Round 11,
-   owner-picked Option B): at rest the link keeps the surrounding ink with a quiet
-   underline; on hover the words turn the app coral, the underline deepens, and a small
-   ↗ hint appears. Theme-agnostic by design — the resting underline derives from
-   currentColor, so one class serves every layout and theme (classic, editorial, mobile).
-   The single app-wide --coral is used on every theme, matching the scrollbar-hover
-   precedent. Applied by DropMentionContent/LinkedText (message text) and the markdown
+/* Clickable links inside drop text and chat (Round 11, owner-picked Option B; hover
+   color re-picked 2026-09-20): at rest the link keeps the surrounding ink with a quiet
+   underline; on hover the words turn CRIMSON red, the underline deepens, and a small
+   ↗ hint appears. The resting look derives from currentColor, so one class serves every
+   layout and theme (classic, editorial, mobile); the hover shade is per-theme —
+   page.tsx publishes --link-hover on document.body (light #C81E3C / dark #FF5C74 /
+   minimal #A81730; the var fallback below is the light shade). The app-wide --coral is
+   untouched. Applied by DropMentionContent/LinkedText (message text) and the markdown
    link override in the chat panels (AI assistant text). */
 .ds-link {
   color: inherit;
@@ -745,8 +746,8 @@ html {
   cursor: pointer;
 }
 .ds-link:hover {
-  color: var(--coral);
-  text-decoration-color: var(--coral);
+  color: var(--link-hover, #C81E3C);
+  text-decoration-color: var(--link-hover, #C81E3C);
   text-decoration-thickness: 2px;
 }
 .ds-link:active { opacity: .6; }
