@@ -94,6 +94,17 @@ const THEME_STORAGE_KEY = 'dropsync_theme';
 // document.body.style ONLY — NEVER document.documentElement (layout.tsx <html> has no
 // suppressHydrationWarning → a pre-hydration mutation there would cause a hydration mismatch).
 const PREPAINT_BG = `(function(){try{var t=localStorage.getItem('dropsync_theme');var bg=(t==='dark')?'#000000':'#F5F2ED';document.body.style.background=bg;document.body.style.color=(t==='dark')?'#ffffff':'#1a1a1a';}catch(e){}})();`;
+// Link hover color by theme (Round 11 owner pick "Crimson" — 2026-09-20): a deep
+// editorial red with a fine-tuned shade per theme, matching the preview page the owner
+// chose from. Published on document.body.style by the body-bg effect below (the
+// sanctioned body-only mutation channel, page.tsx:94) and read by globals.css
+// `.ds-link:hover` via var(--link-hover). Links only — the app-wide --coral is
+// untouched.
+const LINK_HOVER_BY_THEME: Record<Theme, string> = {
+  light: '#C81E3C',
+  dark: '#FF5C74',
+  minimal: '#A81730',
+};
 const LAYOUT_STORAGE_KEY = 'dropsync_layout';
 
 // One-shot reassurance banner shown on the login screen after a user declines the Terms (misclick
@@ -438,7 +449,12 @@ export default function Home() {
   // keep their cream body.
   useEffect(() => {
     document.body.style.backgroundColor = theme === 'dark' ? '#000000' : '';
-    return () => { document.body.style.backgroundColor = ''; };
+    // Crimson hover shade rides the same theme change (see LINK_HOVER_BY_THEME above).
+    document.body.style.setProperty('--link-hover', LINK_HOVER_BY_THEME[theme]);
+    return () => {
+      document.body.style.backgroundColor = '';
+      document.body.style.removeProperty('--link-hover');
+    };
   }, [theme]);
 
   // Load layout from localStorage on mount
