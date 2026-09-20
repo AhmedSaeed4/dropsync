@@ -1,7 +1,10 @@
 'use client';
 
+import type { ReactNode } from 'react';
 import { Drop } from '@/types';
 import { parseMessageContent } from '@/lib/dropTagUtils';
+import { parseLinks } from '@/lib/linkify';
+import { Tooltip } from './Tooltip';
 
 interface DropMentionContentProps {
   // Decrypted text body — may contain #[Name](id) drop tokens and @[Name](uid) @member tokens.
@@ -27,11 +30,49 @@ interface DropMentionContentProps {
  * identical. The caller supplies theme-specific class strings; this component owns the
  * parse → map → chip logic.
  */
+// Shared segment renderer: plain text → <span>, recognized URL → a coral-signature link
+// (Round 11, Option B). stopPropagation matches the mention chips: a link click opens the
+// LINK in a new tab, never the card/modal/row it sits inside. Links are real <a> elements
+// built from parsed segments — raw text is never injected as HTML. On hover the link shows
+// the app's standard dark tooltip bubble (the DropZone lock's Tooltip), replacing the
+// browser-default box; break-all lets a long URL still wrap inside the tooltip's
+// inline-flex wrapper.
+function linkTip(href: string): string {
+  const bare = href.replace(/^https?:\/\//i, '');
+  return bare.length > 48 ? `${bare.slice(0, 48)}…` : bare;
+}
+
+function renderLinkified(text: string): ReactNode[] {
+  return parseLinks(text).map((seg, j) =>
+    seg.type === 'link' ? (
+      <Tooltip key={j} content={linkTip(seg.href ?? seg.text)}>
+        <a
+          href={seg.href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="ds-link break-all"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {seg.text}
+        </a>
+      </Tooltip>
+    ) : (
+      <span key={j}>{seg.text}</span>
+    )
+  );
+}
+
+/** Plain-text renderer with the same clickable links DropMentionContent gives its text
+ *  parts — for message bodies with no mention chips (the AI-chat user bubbles). */
+export function LinkedText({ text }: { text: string }) {
+  return <>{renderLinkified(text)}</>;
+}
+
 export function DropMentionContent({ content, allDrops = [], onPreview, foundClassName, deletedClassName, userMentionClassName = '' }: DropMentionContentProps) {
   return (
     <>
       {parseMessageContent(content).map((part, i) => {
-        if (part.type === 'text') return <span key={i}>{part.value}</span>;
+        if (part.type === 'text') return <span key={i}>{renderLinkified(part.value ?? '')}</span>;
         if (part.uid !== undefined) {
           // @member chip — styled inline, non-interactive (no target to open). Renders the baked name.
           return <span key={i} className={userMentionClassName}>{part.name}</span>;

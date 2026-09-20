@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useMemo } from 'react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import { ThinkingOrb } from 'thinking-orbs';
 import { auth } from '@/lib/firebase';
@@ -30,7 +30,13 @@ import { Toast } from '../Toast';
 import { Drop, GroupChatMessage } from '@/types';
 import { getEditorialThemeColors } from './editorialTheme';
 import { EditorialDropPickerRow } from './EditorialDropPickerRow';
-import { DropMentionContent } from '../DropMentionContent';
+import { DropMentionContent, LinkedText } from '../DropMentionContent';
+
+// Coral-signature treatment for markdown links in AI assistant text (Round 11): opens in
+// a new tab and matches every other app link instead of the browser-default blue.
+const markdownLink: Components['a'] = ({ href, children }) => (
+  <a href={href} target="_blank" rel="noopener noreferrer" className="ds-link">{children}</a>
+);
 import { MessageContextMenu } from '@/components/MessageContextMenu';
 import { ReplyQuoteBlock, ReplyPreviewBar } from '../ReplyQuoteBlock';
 import { useMessageScroll } from '@/hooks/useMessageScroll';
@@ -1083,10 +1089,10 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
                 )}
                 {msg.role === 'assistant' ? (
                   <div className={`break-words [&_p]:mb-1 [&_p:last-child]:mb-0 [&_pre]:overflow-x-auto [&_pre]:max-w-full [&_code]:break-all ${tc.fontClass}`}>
-                    <ReactMarkdown remarkPlugins={[remarkBreaks]}>{msg.content}</ReactMarkdown>
+                    <ReactMarkdown remarkPlugins={[remarkBreaks]} components={{ a: markdownLink }}>{msg.content}</ReactMarkdown>
                   </div>
                 ) : (
-                  <div className={`whitespace-pre-wrap break-words ${tc.fontClass}`}>{msg.content}</div>
+                  <div className={`whitespace-pre-wrap break-words ${tc.fontClass}`}><LinkedText text={msg.content} /></div>
                 )}
               </div>
             </div>

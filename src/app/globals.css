@@ -726,3 +726,42 @@ html {
 .animate-typing-fade-out {
   animation: typing-fade-out 0.18s ease-out forwards;
 }
+
+/* Clickable links inside drop text and chat — the coral-signature look (Round 11,
+   owner-picked Option B): at rest the link keeps the surrounding ink with a quiet
+   underline; on hover the words turn the app coral, the underline deepens, and a small
+   ↗ hint appears. Theme-agnostic by design — the resting underline derives from
+   currentColor, so one class serves every layout and theme (classic, editorial, mobile).
+   The single app-wide --coral is used on every theme, matching the scrollbar-hover
+   precedent. Applied by DropMentionContent/LinkedText (message text) and the markdown
+   link override in the chat panels (AI assistant text). */
+.ds-link {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  transition: color .18s ease, text-decoration-color .18s ease, text-decoration-thickness .18s ease, opacity .12s ease;
+  cursor: pointer;
+}
+.ds-link:hover {
+  color: var(--coral);
+  text-decoration-color: var(--coral);
+  text-decoration-thickness: 2px;
+}
+.ds-link:active { opacity: .6; }
+.ds-link::after {
+  content: "↗";
+  display: inline-block;
+  font-size: .72em;
+  line-height: 1;
+  margin-left: 3px;
+  opacity: 0;
+  transform: translate(-3px, 3px);
+  transition: opacity .18s ease, transform .18s ease;
+}
+.ds-link:hover::after { opacity: .85; transform: translate(0, 0); }
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-link, .ds-link::after { transition: none; }
+}

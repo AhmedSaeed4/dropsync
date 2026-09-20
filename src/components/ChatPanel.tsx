@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useMemo } from 'react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import { ThinkingOrb } from 'thinking-orbs';
 import { auth } from '@/lib/firebase';
@@ -29,7 +29,13 @@ import { useVoiceTranscribe } from '@/hooks/useVoiceTranscribe';
 import { Toast } from '@/components/Toast';
 import { Drop, GroupChatMessage } from '@/types';
 import { DropPickerRow } from './DropPickerRow';
-import { DropMentionContent } from './DropMentionContent';
+import { DropMentionContent, LinkedText } from './DropMentionContent';
+
+// Coral-signature treatment for markdown links in AI assistant text (Round 11): opens in
+// a new tab and matches every other app link instead of the browser-default blue.
+const markdownLink: Components['a'] = ({ href, children }) => (
+  <a href={href} target="_blank" rel="noopener noreferrer" className="ds-link">{children}</a>
+);
 import { MessageContextMenu } from '@/components/MessageContextMenu';
 import { ReplyQuoteBlock, ReplyPreviewBar } from '@/components/ReplyQuoteBlock';
 import { useMessageScroll } from '@/hooks/useMessageScroll';
@@ -1047,7 +1053,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
               {/* Agent box made INVISIBLE on purpose (container kept): ink only, no bg/border.
                   Revert = swap the ink class back to s.assistantBubble. */}
               <div className={`max-w-[90%] px-3 py-2 text-xs leading-relaxed ${theme === 'dark' ? 'text-white' : 'text-[#1A1A1A]'} ${s.roundedClass}`}>
-                <ReactMarkdown>{WELCOME}</ReactMarkdown>
+                <ReactMarkdown components={{ a: markdownLink }}>{WELCOME}</ReactMarkdown>
               </div>
             </div>
           )}
@@ -1094,10 +1100,10 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
                 )}
                 {msg.role === 'assistant' ? (
                   <div className="break-words [&_p]:mb-1 [&_p:last-child]:mb-0 [&_pre]:overflow-x-auto [&_pre]:max-w-full [&_code]:break-all">
-                    <ReactMarkdown remarkPlugins={[remarkBreaks]}>{msg.content}</ReactMarkdown>
+                    <ReactMarkdown remarkPlugins={[remarkBreaks]} components={{ a: markdownLink }}>{msg.content}</ReactMarkdown>
                   </div>
                 ) : (
-                  <div className="whitespace-pre-wrap break-words">{msg.content}</div>
+                  <div className="whitespace-pre-wrap break-words"><LinkedText text={msg.content} /></div>
                 )}
               </div>
             </div>
@@ -1155,7 +1161,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
               {/* Streaming twin of the invisible agent box above (ink only, no bg/border). */}
               <div className={`relative max-w-[90%] px-3 py-2 text-xs leading-relaxed overflow-x-auto opacity-80 ${theme === 'dark' ? 'text-white' : 'text-[#1A1A1A]'} ${s.roundedClass}`}>
                 <div className="break-words [&_p]:mb-1 [&_p:last-child]:mb-0 [&_pre]:overflow-x-auto [&_pre]:max-w-full [&_code]:break-all">
-                  <ReactMarkdown remarkPlugins={[remarkBreaks]}>{smooth.revealed}</ReactMarkdown>
+                  <ReactMarkdown remarkPlugins={[remarkBreaks]} components={{ a: markdownLink }}>{smooth.revealed}</ReactMarkdown>
                 </div>
               </div>
             </div>
