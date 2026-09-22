@@ -70,6 +70,10 @@ export async function POST(request: NextRequest) {
     if (!members.includes(uid)) {
       return NextResponse.json({ error: 'Not a workspace member' }, { status: 403 });
     }
+    // ROUND 12: no new mention pointers or pushes for a dying workspace.
+    if (wsData.deleting === true) {
+      return NextResponse.json({ written: 0, sent: 0, suppressed: true });
+    }
     const workspaceName: string = wsData.name || 'workspace';
 
     // ---- Read the message doc — PLAINTEXT FIELDS ONLY. NEVER read content/iv. ----

@@ -81,6 +81,9 @@ export async function POST(request: NextRequest) {
     if (!workspaceSnap.exists || !Array.isArray(workspaceMembers) || !workspaceMembers.includes(uid)) {
       return NextResponse.json({ error: 'Not a member of this workspace' }, { status: 403 });
     }
+    if (workspaceSnap.get('deleting') === true) {
+      return NextResponse.json({ error: 'This workspace is being deleted' }, { status: 409 });
+    }
 
     // ---- ground-truth: the host must be connected in LiveKit ----
     const roomName =
@@ -127,6 +130,9 @@ export async function POST(request: NextRequest) {
           return { kind: 'notfound' as const };
         }
         if (isPendingCallStale(snap.data(), nowMs)) return { kind: 'stale' as const };
+        // Commit-time deleting gate (the pre-check can race the begin transaction).
+        const wsTxSnap = await txn.get(db.collection('workspaces').doc(data.workspaceId as string));
+        if (!wsTxSnap.exists || wsTxSnap.get('deleting') === true) return { kind: 'stale' as const };
         const trustedByUid = await getTrustedStatusMapInTransaction(txn, db, [uid]);
         const trustedForCall = trustedByUid.get(uid) === true;
         const usageStates = await getCallUsageStatesInTransaction(txn, db, [uid], nowMs);

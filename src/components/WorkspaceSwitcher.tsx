@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { Workspace } from '@/types';
+import { DeletingWorkspaceRow } from '@/components/DeletingWorkspaceRow';
 import { getWorkspaceMembers, MemberInfo } from '@/lib/workspaces';
 
 interface WorkspaceSwitcherProps {
@@ -182,6 +183,20 @@ export function WorkspaceSwitcher({
               const isExpanded = expandedWorkspaceId === workspace.id;
               const members = membersMap[workspace.id];
               const hasMention = mentionedWorkspaceIds?.has(workspace.id) ?? false;
+
+              // ROUND 12 (D-d): a workspace mid background deletion renders the shared
+              // LOCKED row — shimmer name, no actions, progress tooltip, Retry when paused.
+              if (workspace.deleting === true) {
+                return (
+                  <DeletingWorkspaceRow
+                    key={workspace.id}
+                    workspace={workspace}
+                    theme={isDark ? 'dark' : isMinimal ? 'minimal' : 'light'}
+                    variant="classic"
+                    isOwnerView={isOwner}
+                  />
+                );
+              }
 
               return (
                 <div key={workspace.id}>

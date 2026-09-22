@@ -11,6 +11,8 @@ import {
   getCallTrustedReliefUids,
   getCallUsageStatesInTransaction,
   getTrustedStatusMapInTransaction,
+  ackAttemptInTransaction,
+  readAttemptInTransaction,
   reconcileTrustedCallTransitionInTransaction,
   reserveCallUsageInTransaction,
   settleCallUsageInTransaction,
@@ -80,6 +82,7 @@ export async function POST(request: NextRequest) {
         if (!lastSeen || typeof lastSeen.toMillis !== 'function') return { cascade: false, expired: false, roomName };
         if (nowMs - lastSeen.toMillis() <= CALL_PRESENCE_STALE_MS) return { cascade: false, expired: false, roomName }; // not stale yet
 
+        const reapAttemptSnap = await readAttemptInTransaction(txn, db, callDropId, roomName);
         const callData = callSnap.data() || {};
         const trustedByUid = await getTrustedStatusMapInTransaction(txn, db, uids);
         const usageStates = await getCallUsageStatesInTransaction(txn, db, uids, nowMs);
@@ -99,6 +102,16 @@ export async function POST(request: NextRequest) {
             nowMs,
             usageStates,
           );
+          ackAttemptInTransaction(txn, db, callDropId, roomName, reapAttemptSnap, {
+            reason: 'reap-stale-last',
+            settled: true,
+            chargeInputs: {
+              uids,
+              joinedAtByUid,
+              trustedReliefUids,
+              chargeEndMs: nowMs,
+            },
+          });
           txn.delete(presenceRef);
           txn.delete(callRef);
           return { cascade: true, expired: false, roomName };

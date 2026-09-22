@@ -89,6 +89,10 @@ export async function POST(request: NextRequest) {
       if (!members.includes(uid)) {
         return NextResponse.json({ error: 'Not a workspace member' }, { status: 403 });
       }
+      // ROUND 12: no share mutations for a dying workspace.
+      if (wsDoc.get('deleting') === true) {
+        return NextResponse.json({ error: 'This workspace is being deleted' }, { status: 409 });
+      }
     } else {
       // Personal drop — verify ownership.
       if (dropData.userId !== uid) {

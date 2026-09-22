@@ -10,7 +10,7 @@ import {
   where,
   onSnapshot,
   getDoc,
-  getDocs,
+  runTransaction,
   serverTimestamp,
   Timestamp
 } from 'firebase/firestore';
@@ -18,7 +18,6 @@ import { db } from './firebase';
 import { Workspace } from '@/types';
 import { createWorkspaceKey, removeMemberFromWorkspaceKey } from './keys';
 import { getProfile } from './profiles';
-import { deleteSharesForDrop } from './shares';
 
 const WORKSPACES_COLLECTION = 'workspaces';
 
@@ -87,8 +86,18 @@ export async function createWorkspace(userId: string, name: string): Promise<Wor
       createdAt: serverTimestamp(),
     });
 
-    // Create workspace encryption key
-    await createWorkspaceKey(docRef.id, userId);
+    // Create workspace encryption key — and CONSUME the boolean (ROUND 12 part C): a failed
+    // key init surfaces as a visible failure (no silent keyless workspace, no silent
+    // success). The parent doc is removed best-effort; no deletion job exists here.
+    const keyOk = await createWorkspaceKey(docRef.id, userId);
+    if (!keyOk) {
+      try {
+        await deleteDoc(docRef);
+      } catch {
+        /* best-effort rollback */
+      }
+      return null;
+    }
 
     return {
       id: docRef.id,
@@ -159,38 +168,51 @@ export async function joinWorkspace(userId: string, inviteCode: string): Promise
   }
 }
 
-// Leave a workspace
+// Leave a workspace. ROUND 12 (A2): read-then-act in ONE transaction — the owner leg
+// (solo delete / ownership transfer) REFUSES a deleting workspace (D-l: the deletion job
+// finishes instead; no successor handoff), and no caller can act on a stale pre-read.
+// The caller propagates the false result.
 export async function leaveWorkspace(userId: string, workspaceId: string, newOwnerId?: string): Promise<boolean> {
   try {
     const workspaceRef = doc(db, WORKSPACES_COLLECTION, workspaceId);
-    const snapshot = await getDoc(workspaceRef);
 
-    if (!snapshot.exists()) return false;
+    const outcome = await runTransaction(db, async (tx) => {
+      const snapshot = await tx.get(workspaceRef);
+      if (!snapshot.exists) return { ok: false as const };
+      const data = snapshot.data() as { ownerId?: string; members?: string[]; deleting?: boolean };
+      const members: string[] = Array.isArray(data.members) ? data.members : [];
+      const updatedMembers = members.filter((id: string) => id !== userId);
 
-    const data = snapshot.data();
-    const updatedMembers = data.members.filter((id: string) => id !== userId);
-
-    // If owner leaves, transfer ownership or delete if last member
-    if (data.ownerId === userId) {
-      if (updatedMembers.length === 0) {
-        // Delete workspace if no members left
-        await deleteDoc(workspaceRef);
+      if (data.ownerId === userId) {
+        if (data.deleting === true) {
+          // The deleting owner cannot leave/transfer a dying workspace.
+          return { ok: false as const };
+        }
+        if (updatedMembers.length === 0) {
+          // Last member: delete the workspace (the ordinary non-deleting solo path).
+          tx.delete(workspaceRef);
+        } else {
+          // Transfer ownership: prefer the caller's chosen successor (must be a remaining
+          // member), else fall back to the first remaining member.
+          const successor = newOwnerId && updatedMembers.includes(newOwnerId)
+            ? newOwnerId
+            : updatedMembers[0];
+          tx.update(workspaceRef, {
+            members: updatedMembers,
+            ownerId: successor
+          });
+        }
       } else {
-        // Transfer ownership: prefer the caller's chosen successor (must be a remaining
-        // member), else fall back to the first remaining member.
-        const successor = newOwnerId && updatedMembers.includes(newOwnerId)
-          ? newOwnerId
-          : updatedMembers[0];
-        await updateDoc(workspaceRef, {
-          members: updatedMembers,
-          ownerId: successor
+        // Member self-leave (legal even while deleting — walking out of a dying workspace
+        // is allowed; the rules admit the members-only diff).
+        tx.update(workspaceRef, {
+          members: updatedMembers
         });
       }
-    } else {
-      await updateDoc(workspaceRef, {
-        members: updatedMembers
-      });
-    }
+      return { ok: true as const };
+    });
+
+    if (!outcome.ok) return false;
 
     // Remove member's access to workspace encryption key
     await removeMemberFromWorkspaceKey(workspaceId, userId);
@@ -250,6 +272,8 @@ export function createWorkspacesListener(
     where('members', 'array-contains', userId)
   );
 
+  // ROUND 12: metadata-aware (progress writes and server reconciliation land as metadata
+  // changes too) and the frozen job fields ride along so the UI can render the locked row.
   return onSnapshot(q, (snapshot) => {
     const workspaces: Workspace[] = [];
 
@@ -262,6 +286,13 @@ export function createWorkspacesListener(
         members: data.members,
         inviteCode: data.inviteCode,
         createdAt: data.createdAt?.toDate() || new Date(),
+        deleting: data.deleting === true ? true : undefined,
+        deletingStartedAt: typeof data.deletingStartedAt === 'number' ? data.deletingStartedAt : undefined,
+        deletingOwner: typeof data.deletingOwner === 'string' ? data.deletingOwner : undefined,
+        deletingOwnerName: typeof data.deletingOwnerName === 'string' ? data.deletingOwnerName : undefined,
+        deletingRecipients: Array.isArray(data.deletingRecipients) ? data.deletingRecipients as string[] : undefined,
+        deleteDone: typeof data.deleteDone === 'number' ? data.deleteDone : undefined,
+        deleteTotal: typeof data.deleteTotal === 'number' ? data.deleteTotal : undefined,
       });
     });
 
@@ -273,100 +304,6 @@ export function createWorkspacesListener(
     console.error('Workspaces listener error:', error);
     callback([]);
   });
-}
-
-// Delete a workspace (owner only)
-export async function deleteWorkspace(userId: string, workspaceId: string): Promise<boolean> {
-  try {
-    const workspaceRef = doc(db, WORKSPACES_COLLECTION, workspaceId);
-    const snapshot = await getDoc(workspaceRef);
-
-    if (!snapshot.exists()) return false;
-
-    const data = snapshot.data();
-
-    // Only owner can delete
-    if (data.ownerId !== userId) return false;
-
-    // Delete all drops in the workspace first
-    const dropsQuery = query(
-      collection(db, 'drops'),
-      where('workspaceId', '==', workspaceId)
-    );
-    const dropsSnapshot = await getDocs(dropsQuery);
-
-    // Delete drops from R2 and Firestore (mirror deleteDrop)
-    const { deleteFromR2 } = await import('./drops');
-    for (const dropDoc of dropsSnapshot.docs) {
-      const dropData = dropDoc.data();
-      if (dropData.r2Key) {
-        try {
-          await deleteFromR2(dropData.r2Key, workspaceId);
-        } catch (error) {
-          console.error('Failed to delete R2 file:', error);
-        }
-      }
-      if (dropData.imageR2Key) {
-        try {
-          await deleteFromR2(dropData.imageR2Key, workspaceId);
-        } catch (error) {
-          console.error('Failed to delete image from R2:', error);
-        }
-      }
-      // Delete associated share links FIRST — while the drop doc still exists (see deleteDrop).
-      await deleteSharesForDrop(dropDoc.id);
-      await deleteDoc(doc(db, 'drops', dropDoc.id));
-    }
-
-    // Delete this workspace's categories (best-effort — never block deletion on a cleanup
-    // failure). Only workspace-scoped categories are touched; personal categories
-    // (workspaceId == null) are never deleted.
-    try {
-      const catsQuery = query(collection(db, 'categories'), where('workspaceId', '==', workspaceId));
-      const catsSnapshot = await getDocs(catsQuery);
-      for (const catDoc of catsSnapshot.docs) {
-        try {
-          await deleteDoc(catDoc.ref);
-        } catch (error) {
-          console.error('Failed to delete category:', error);
-        }
-      }
-    } catch (error) {
-      console.error('Failed to query categories for cleanup:', error);
-    }
-
-    // Best-effort: delete this workspace's encryption key SERVER-SIDE via the Admin SDK (the client
-    // cannot — firestore.rules has no `allow delete` on workspaceKeys). MUST run BEFORE the workspace-
-    // doc delete below, while the route can still re-verify ownership. A failure logs and falls
-    // through to today's behavior (workspace still deletes; the key may orphan — inert, as before).
-    try {
-      const idToken = await getAuth().currentUser?.getIdToken();
-      if (idToken) {
-        const ctrl = new AbortController();
-        const t = setTimeout(() => ctrl.abort(), 4000);
-        try {
-          await fetch('/api/cleanup-workspace-key', {
-            method: 'POST',
-            headers: { Authorization: 'Bearer ' + idToken, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ workspaceId }),
-            signal: ctrl.signal,
-          });
-        } finally {
-          clearTimeout(t);
-        }
-      }
-    } catch (e) {
-      console.error('Failed to clean workspace key server-side:', e);
-    }
-
-    // Delete the workspace
-    await deleteDoc(workspaceRef);
-
-    return true;
-  } catch (error) {
-    console.error('Error deleting workspace:', error);
-    return false;
-  }
 }
 
 // Get workspace by ID

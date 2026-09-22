@@ -98,6 +98,9 @@ export async function POST(request: NextRequest) {
   if (!workspaceSnap.exists || !Array.isArray(workspaceMembers) || !workspaceMembers.includes(uid)) {
     return NextResponse.json({ error: 'Not a member of this workspace' }, { status: 403 });
   }
+  if (workspaceSnap.get('deleting') === true) {
+    return NextResponse.json({ error: 'This workspace is being deleted' }, { status: 409 });
+  }
 
   // The room name is the generation-unique livekitRoomName when present (new calls); legacy calls
   // fall back to the deterministic doc id. Either way, the token's room grant matches the room the

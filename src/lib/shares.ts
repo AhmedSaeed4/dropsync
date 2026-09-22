@@ -238,6 +238,29 @@ export async function deleteSharesForDrop(dropId: string): Promise<void> {
   }
 }
 
+// ROUND 12: the CHECKED variant for the deletion loop — the server now fails the request
+// when any share asset fails to delete (per-item acknowledgment), so a false return means
+// PAUSE AND RETRY, never silent evidence loss. Never throws.
+export async function deleteSharesForDropChecked(dropId: string): Promise<boolean> {
+  try {
+    const currentUser = auth.currentUser;
+    if (!currentUser) return false;
+
+    const idToken = await currentUser.getIdToken();
+
+    const res = await fetch(`/api/share?dropId=${encodeURIComponent(dropId)}`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${idToken}`,
+      },
+    });
+    return res.ok;
+  } catch (error) {
+    console.error('Error deleting shares for drop:', error);
+    return false;
+  }
+}
+
 // Fetch the latest active (non-expired) share for a drop, or null. Mirrors deleteSharesForDrop
 // exactly in structure (auth.currentUser guard; getIdToken; Bearer fetch; parse; catch + log;
 // never throws). Used by createShare() to decide whether to REUSE an existing link or create a

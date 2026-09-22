@@ -254,7 +254,8 @@ function generateWorkspaceSecret(): string {
 // Generate and store a workspace key
 export async function createWorkspaceKey(
   workspaceId: string,
-  creatorId: string
+  creatorId: string,
+  importJobId?: string
 ): Promise<boolean> {
   try {
     // Generate workspace AES key
@@ -280,6 +281,7 @@ export async function createWorkspaceKey(
       encryptedKey: encryptedData.encrypted,
       iv: encryptedData.iv,
       keySecret: secret,
+      ...(importJobId ? { importJobId } : {}),
       createdAt: new Date(),
     });
 

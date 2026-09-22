@@ -30,8 +30,12 @@ interface Props {
   isKicking: boolean;
   onKick: (memberUid: string) => void;
   currentUserId: string | null;
-  onDelete: () => void;
+  onDelete: (forceEndAck?: boolean) => void;
   onLeaveAndTransfer: (newOwnerId: string) => void;
+  // ROUND 12 (D-m): true when START answered confirmation-required (a call exists). The
+  // confirm view swaps to "end the call and delete?" — the button re-invokes onDelete
+  // with the force-end acknowledgment.
+  forceEndPending?: boolean;
   onImport?: () => void;
   onClose: () => void;
   variant: 'classic' | 'editorial';
@@ -51,6 +55,7 @@ export default function WorkspaceOptionsModal({
   onImport,
   onClose,
   variant,
+  forceEndPending = false,
 }: Props) {
   const isPersonal = scope === 'personal';
   const [members, setMembers] = useState<MemberInfo[] | null>(null);
@@ -262,7 +267,21 @@ export default function WorkspaceOptionsModal({
         </div>
 
         <div className={isEditorial ? 'p-5' : 'p-4'}>
-          {confirming ? (
+          {forceEndPending && confirming === 'delete' ? (
+            <>
+              <p className={`${bodyText} mb-4`}>
+                {`A call is in progress in "${workspace.name}". End the call for everyone and delete the workspace? This cannot be undone.`}
+              </p>
+              <div className="flex gap-2 mt-4">
+                <button onClick={() => setConfirming(null)} disabled={busy} className={`flex-1 ${actionBtnChrome('cancel')}`}>
+                  {L('Back', 'BACK')}
+                </button>
+                <button onClick={() => onDelete(true)} disabled={isDeleting} className={`flex-1 ${confirmBtnChrome('delete')}`}>
+                  {isDeleting ? (<><div className={spinner} />{L('Ending call…', 'ENDING_CALL...')}</>) : L('End call & delete', 'END_CALL_&_DELETE')}
+                </button>
+              </div>
+            </>
+          ) : confirming ? (
             <>
               <p className={`${bodyText} mb-4`}>
                 {confirming === 'delete'
@@ -278,7 +297,7 @@ export default function WorkspaceOptionsModal({
                 <button
                   onClick={
                     confirming === 'delete'
-                      ? onDelete
+                      ? () => onDelete(false)
                       : confirming === 'transfer'
                         ? () => selectedMemberId && onLeaveAndTransfer(selectedMemberId)
                         : () => kickTargetId && onKick(kickTargetId)

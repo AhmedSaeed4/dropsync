@@ -65,6 +65,10 @@ export async function POST(request: NextRequest) {
     if (!members.includes(uid)) {
       return NextResponse.json({ error: 'Not a workspace member' }, { status: 403 });
     }
+    // ROUND 12: no seen-by privacy reads for a dying workspace (the deleting owner may ask).
+    if (wsDoc.get('deleting') === true && wsDoc.get('deletingOwner') !== uid) {
+      return NextResponse.json({ error: 'This workspace is being deleted' }, { status: 409 });
+    }
 
     // ---- READ the message doc's plaintext metadata (createdAt + senderId). The route never reads,
     // decrypts, logs, or returns the encrypted content/iv (the Admin SDK fetches the whole doc into

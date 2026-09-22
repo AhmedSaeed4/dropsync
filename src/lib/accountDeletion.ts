@@ -1,10 +1,13 @@
 import { auth, db } from './firebase';
-import { deleteDoc, doc, collection, query, where, getDocs, updateDoc, QueryDocumentSnapshot } from 'firebase/firestore';
+import { deleteDoc, doc, collection, query, where, getDoc, getDocs, updateDoc, QueryDocumentSnapshot } from 'firebase/firestore';
 import { deleteConversation } from './chat';
 import { deleteMasterKey } from './crypto';
 import { deleteFromR2 } from './drops';
 import { PROFILES_COLLECTION, getProfile } from './profiles';
 import { deleteSharesForDrop } from './shares';
+import { acquireAccountBarrier, completeAccountBarrier, abortAccountBarrier } from './accountBarriers';
+import { cancelImportFence, ackImportItems } from './importFenceClient';
+import { runDeletionJob, isDeletionPaused } from './workspaceDeletion';
 
 const USERS_COLLECTION = 'users';
 const USER_KEYS_COLLECTION = 'userKeys';
@@ -143,6 +146,101 @@ async function deleteDropWithAttachments(dropDoc: QueryDocumentSnapshot) {
   await deleteDoc(dropDoc.ref);
 }
 
+// ROUND 12 (F5): the solo-workspace key cleanup is CHECKED + retried — the workspace-doc
+// delete waits for a confirmed ack instead of swallowing failures (an orphaned key was the
+// old best-effort hole). On persistent failure the caller aborts the whole flow
+// (resumable). The TRANSFER branch never calls this — the key is deliberately RETAINED
+// (the workspace survives with its new owner).
+async function cleanupWorkspaceKeyChecked(workspaceId: string): Promise<boolean> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const idToken = await auth.currentUser?.getIdToken();
+      if (!idToken) return false;
+      const res = await fetch('/api/cleanup-workspace-key', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + idToken, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspaceId }),
+      });
+      if (res.ok) {
+        const json = (await res.json().catch(() => ({}))) as { ok?: boolean };
+        if (json.ok === true) return true;
+      }
+    } catch (error) {
+      console.error('Workspace key cleanup attempt failed:', error);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
+  }
+  return false;
+}
+
+// ROUND 12 (part L / D-l, finish-the-job-first): adopt and finish every background
+// deletion job this user owns (runDeletionJob is idempotent + authoritative-requery).
+// Returns the ids that did NOT finish (empty = drained). Deliberately ONE filter
+// (array-contains — auto-indexed); ownership + deleting are filtered client-side to
+// avoid an unprovisioned composite index.
+async function drainOwnedDeletionJobs(userId: string): Promise<string[]> {
+  const ownedSnap = await getDocs(
+    query(collection(db, WORKSPACES_COLLECTION), where('members', 'array-contains', userId))
+  );
+  const unfinished: string[] = [];
+  for (const wsDoc of ownedSnap.docs) {
+    const data = wsDoc.data();
+    if (data.deleting !== true || data.ownerId !== userId) continue;
+    await runDeletionJob(wsDoc.id);
+    if (isDeletionPaused(wsDoc.id)) {
+      unfinished.push(wsDoc.id);
+      continue;
+    }
+    const after = await getDoc(doc(db, WORKSPACES_COLLECTION, wsDoc.id));
+    if (after.exists()) unfinished.push(wsDoc.id);
+  }
+  return unfinished;
+}
+
+// ROUND 12 (part J): drain every OPEN import fence — roll its registered items back (the
+// DURABLE LEDGER is the authority, not localStorage), close it cancelled (override — the
+// account flow is not a competing producer that must respect the lease), ack the ledger in
+// bounded chunks. A 'fresh' workspace PARENT is deliberately NOT deleted here: it is owned
+// + solo, so the normal workspace stage below consumes it (parent + key together). Returns
+// false only when the listing itself failed.
+async function drainOpenImportFences(userId: string): Promise<boolean> {
+  try {
+    const fencesSnap = await getDocs(
+      query(collection(db, 'importFences'), where('userId', '==', userId))
+    );
+    for (const fenceDoc of fencesSnap.docs) {
+      const f = fenceDoc.data();
+      if (f.state !== 'open') continue;
+      const jobId = typeof f.jobId === 'string' ? f.jobId : '';
+      if (!jobId) continue;
+      const wsId = typeof f.workspaceId === 'string' ? f.workspaceId : null;
+      const itemsSnap = await getDocs(collection(db, 'importFences', fenceDoc.id, 'items'));
+      const ackIds: string[] = [];
+      for (const itemDoc of itemsSnap.docs) {
+        const kind = itemDoc.get('kind');
+        const refId = itemDoc.get('refId');
+        if (typeof kind !== 'string' || typeof refId !== 'string') continue;
+        try {
+          if (kind === 'r2') await deleteFromR2(refId, wsId);
+          else if (kind === 'drop') await deleteDoc(doc(db, DROPS_COLLECTION, refId));
+          else if (kind === 'category') await deleteDoc(doc(db, CATEGORIES_COLLECTION, refId));
+        } catch (error) {
+          console.error('Import fence drain item failed:', error);
+        }
+        ackIds.push(`${kind}:${refId}`);
+      }
+      await cancelImportFence(jobId, true);
+      for (let i = 0; i < ackIds.length; i += 100) {
+        await ackImportItems(jobId, ackIds.slice(i, i + 100));
+      }
+    }
+    return true;
+  } catch (error) {
+    console.error('Import fence drain failed:', error);
+    return false;
+  }
+}
+
 /**
  * Delete user account and all associated data
  */
@@ -153,11 +251,41 @@ export async function deleteAccount(
 ): Promise<{ success: boolean; error?: string }> {
   try {
     let currentStep = 0;
-    const totalSteps = 9; // 9 onProgress steps (FCM tokens now cleaned server-side in Step 4)
+    const totalSteps = 10; // 10 onProgress steps (ROUND 12: + the drain step; FCM cleaned server-side in Step 5)
     const firebaseUser = auth.currentUser;
 
     if (!firebaseUser || firebaseUser.uid !== userId) {
       return { success: false, error: 'User not authenticated' };
+    }
+
+    // Step 0 (ROUND 12 part K): acquire the barrier. `finalizing` = a previous attempt
+    // already committed the finalizer — resume the committed tail; nothing else remains.
+    // Every early failure below ABORTS the barrier so the living owner is never locked out.
+    const barrier = await acquireAccountBarrier();
+    if (!barrier.ok || !barrier.state) {
+      return { success: false, error: 'Could not start account deletion — check your connection and try again.' };
+    }
+    if (barrier.state === 'finalizing') {
+      onProgress?.({ step: 'Deleting account', current: totalSteps, total: totalSteps });
+      await firebaseUser.delete();
+      return { success: true };
+    }
+
+    // Step 0.5 (ROUND 12 part L / D-l, finish-the-job-first): adopt and complete every
+    // background deletion this user owns. Unfinished work ABORTS with a resumable message.
+    onProgress?.({ step: 'Finishing in-progress deletions', current: ++currentStep, total: totalSteps });
+    const unfinishedJobs = await drainOwnedDeletionJobs(userId);
+    if (unfinishedJobs.length > 0) {
+      await abortAccountBarrier();
+      return { success: false, error: 'A workspace is still being deleted — wait for it to finish, then try again.' };
+    }
+
+    // Step 0.6 (ROUND 12 part J): roll back and close every OPEN import fence. The durable
+    // ledger is the authority; failure aborts (resumable) — an open producer epoch must not
+    // outlive the account.
+    if (!(await drainOpenImportFences(userId))) {
+      await abortAccountBarrier();
+      return { success: false, error: 'Could not finish cleaning up an interrupted import — please try again.' };
     }
 
     // Step 1: Delete personal drops (workspaceId: null)
@@ -173,7 +301,10 @@ export async function deleteAccount(
       await deleteDropWithAttachments(dropDoc);
     }
 
-    // Step 2: Handle workspaces
+    // Step 2: Handle workspaces. ROUND 12: each doc is RE-READ fresh before its mutation —
+    // the drain above is the authority for deleting workspaces, and a re-read that still
+    // shows `deleting` (a race the barrier makes impossible; belt-and-braces) surfaces a
+    // clean resumable error instead of a raw permission-denied.
     onProgress?.({ step: 'Processing workspaces', current: ++currentStep, total: totalSteps });
     const workspacesQuery = query(
       collection(db, WORKSPACES_COLLECTION),
@@ -182,15 +313,20 @@ export async function deleteAccount(
     const workspacesSnap = await getDocs(workspacesQuery);
 
     for (const workspaceDoc of workspacesSnap.docs) {
-      const data = workspaceDoc.data();
       const workspaceRef = doc(db, WORKSPACES_COLLECTION, workspaceDoc.id);
+      const freshSnap = await getDoc(workspaceRef);
+      if (!freshSnap.exists()) continue; // finished deleting between the query and now
+      const data = freshSnap.data() ?? {};
+      if (data.deleting === true) {
+        await abortAccountBarrier();
+        return { success: false, error: 'A workspace is still being deleted — wait for it to finish, then try again.' };
+      }
 
       // (best-effort, FOLDED into this workspace loop — no second query) Delete this user's group-chat
-      // read cursor workspaces/{wsId}/readState/{uid} NOW, while they are still a member (the rule at
-      // firestore.rules:213-220 requires current membership for the write). Firestore does NOT cascade-
-      // delete subcollections, so the members-removal / workspace-delete below would otherwise orphan
-      // this doc. deleteDoc on a missing readState doc is a no-op. Rule: allow write (covers delete) if
-      // auth.uid == userId && current member → ALLOWED. MUST run before the mutation in this iteration.
+      // read cursor workspaces/{wsId}/readState/{uid} NOW, while they are still a member (the rule
+      // requires current membership for the write). Firestore does NOT cascade-delete subcollections,
+      // so the members-removal / workspace-delete below would otherwise orphan this doc. deleteDoc on
+      // a missing readState doc is a no-op. MUST run before the mutation in this iteration.
       try {
         await deleteDoc(doc(db, WORKSPACES_COLLECTION, workspaceDoc.id, 'readState', userId));
       } catch (error) {
@@ -199,7 +335,8 @@ export async function deleteAccount(
 
       if (data.ownerId === userId) {
         // User is owner
-        const otherMembers = data.members.filter((id: string) => id !== userId);
+        const members = Array.isArray(data.members) ? data.members : [];
+        const otherMembers = members.filter((id: string) => id !== userId);
 
         if (otherMembers.length === 0) {
           // No other members - delete workspace and its drops
@@ -211,33 +348,19 @@ export async function deleteAccount(
           for (const dropDoc of workspaceDropsSnap.docs) {
             await deleteDropWithAttachments(dropDoc);
           }
-          // Best-effort: delete this workspace's encryption key SERVER-SIDE via the Admin SDK (the
-          // client cannot — firestore.rules has no `allow delete` on workspaceKeys). MUST run BEFORE
-          // the workspace-doc delete below, while the route can still re-verify ownership. A failure
-          // logs and falls through to today's behavior (workspace still deletes; the key may orphan —
-          // inert, as before). Uses the in-scope current user's token (same one Step 4's FCM cleanup
-          // uses); workspaceDoc.id is this owned workspace's id.
-          try {
-            const idToken = await firebaseUser.getIdToken();
-            const ctrl = new AbortController();
-            const t = setTimeout(() => ctrl.abort(), 4000);
-            try {
-              await fetch('/api/cleanup-workspace-key', {
-                method: 'POST',
-                headers: { Authorization: 'Bearer ' + idToken, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ workspaceId: workspaceDoc.id }),
-                signal: ctrl.signal,
-              });
-            } finally {
-              clearTimeout(t);
-            }
-          } catch (e) {
-            console.error('Failed to clean workspace key server-side:', e);
+          // ROUND 12 (F5): the key cleanup is CHECKED + retried and the workspace-doc
+          // delete WAITS for the confirmed ack — a swallowed failure could orphan the key.
+          // (On the transfer branch below the key is deliberately RETAINED.)
+          const keyCleaned = await cleanupWorkspaceKeyChecked(workspaceDoc.id);
+          if (!keyCleaned) {
+            await abortAccountBarrier();
+            return { success: false, error: "Couldn't delete a workspace encryption key — please try again." };
           }
           // Delete workspace
           await deleteDoc(workspaceRef);
         } else {
-          // Transfer ownership to selected member or first remaining member
+          // Transfer ownership to selected member or first remaining member. The key is
+          // deliberately RETAINED (ROUND 12 F5): the workspace survives with its new owner.
           const newOwnerId = selectedOwners[workspaceDoc.id] || otherMembers[0];
           await updateDoc(workspaceRef, {
             ownerId: newOwnerId,
@@ -245,8 +368,12 @@ export async function deleteAccount(
           });
         }
       } else {
-        // User is a member - remove from members array
-        const updatedMembers = data.members.filter((id: string) => id !== userId);
+        // User is a member - remove from members array. (If this workspace is deleting the
+        // guard above already returned; ordinary leaves ride the frozen job fields
+        // unchanged, which the rules admit.)
+        const members = Array.isArray(data.members) ? data.members : [];
+        if (!members.includes(userId)) continue; // already out (race with a concurrent leave)
+        const updatedMembers = members.filter((id: string) => id !== userId);
         await updateDoc(workspaceRef, {
           members: updatedMembers,
         });
@@ -258,7 +385,7 @@ export async function deleteAccount(
     // tidy-up). Plaintext personal AI history was previously never touched on account deletion. Reuses
     // deleteConversation (already wipes a conversation's messages then its doc). The chats/{uid} parent
     // is usually an implied, doc-less path segment, so deleting it is a harmless no-op. Rule: read/write/
-    // delete on chats + its subcollections allowed when auth.uid == userId (firestore.rules:292-308) → ALLOWED.
+    // delete on chats + its subcollections allowed when auth.uid == userId → ALLOWED.
     onProgress?.({ step: 'Deleting AI chat history', current: ++currentStep, total: totalSteps });
     try {
       const conversationsSnap = await getDocs(collection(db, 'chats', userId, 'conversations'));
@@ -276,11 +403,10 @@ export async function deleteAccount(
     }
 
     // Step 4 (best-effort): Delete ALL this user's FCM push tokens SERVER-SIDE. The client cannot —
-    // the fcmTokens subcollection read is rule-locked (`allow read: if false`, firestore.rules:80), so
-    // we POST to /api/cleanup-fcm-tokens, which uses the Admin SDK (bypasses rules) and deletes only
-    // the VERIFIED caller's own tokens (uid from verifyIdToken — never from the body). MUST run BEFORE
-    // firebaseUser.delete() (Step 9): after it the Auth user is gone, so getIdToken() throws (no
-    // token to send) → the cleanup can't run. Best-effort: try/catch, never aborts deletion.
+    // the fcmTokens subcollection read is rule-locked, so we POST to /api/cleanup-fcm-tokens, which
+    // uses the Admin SDK (bypasses rules) and deletes only the VERIFIED caller's own tokens (uid from
+    // verifyIdToken — never from the body). MUST run BEFORE the finalizer + firebaseUser.delete():
+    // after the Auth deletion getIdToken() throws (no token to send). Best-effort: try/catch.
     onProgress?.({ step: 'Cleaning push tokens', current: ++currentStep, total: totalSteps });
     try {
       const idToken = await firebaseUser.getIdToken();
@@ -293,10 +419,8 @@ export async function deleteAccount(
     }
 
     // Step 5 (best-effort): Delete the user's PERSONAL categories (categories where workspaceId == null
-    // && createdBy == uid). workspaces.ts:310-312 notes personal categories are never deleted on
-    // workspace teardown — this fixes that for ACCOUNT deletion. Workspace-scoped categories are
-    // excluded by the workspaceId == null filter → untouched (they belong to the workspace). Rule:
-    // read/delete allowed for the creator on personal categories (firestore.rules:275-276, :284-285) → ALLOWED.
+    // && createdBy == uid). Workspace-scoped categories are excluded by the workspaceId == null filter
+    // → untouched (they belong to the workspace).
     onProgress?.({ step: 'Deleting personal categories', current: ++currentStep, total: totalSteps });
     try {
       const personalCatsQuery = query(
@@ -333,12 +457,29 @@ export async function deleteAccount(
     onProgress?.({ step: 'Cleaning up local data', current: ++currentStep, total: totalSteps });
     await deleteMasterKey(userId);
 
-    // Step 9: Delete Firebase Auth user
+    // Step 9 (ROUND 12 part K, F1): the FINALIZER — barrier-complete commits `finalizing`
+    // atomically and MUST be the last token-bearing call before the Auth deletion. On a
+    // refusal (another device's abort) or a network failure the flow HALTS: without a
+    // committed finalizer the Auth deletion must never run. A lost response recovers on
+    // the next attempt (acquire → finalizing → the resume tail in Step 0).
     onProgress?.({ step: 'Deleting account', current: ++currentStep, total: totalSteps });
+    const completion = await completeAccountBarrier();
+    if (!completion.ok) {
+      return {
+        success: false,
+        error: completion.refused
+          ? 'Account deletion was cancelled on another device.'
+          : 'Could not finish account deletion — please try again.',
+      };
+    }
     await firebaseUser.delete();
 
     return { success: true };
   } catch (error: unknown) {
+    // ROUND 12: any unexpected failure best-effort releases the barrier so the living
+    // owner can retry. (Abort refuses once `finalizing` committed — a harmless no-op; the
+    // resume tail above owns that state.)
+    await abortAccountBarrier();
     const errorCode = (error as { code?: string })?.code;
     let errorMessage = 'Failed to delete account';
 

@@ -101,7 +101,8 @@ interface ClassicLayoutProps {
   handleDeleteCategory: (id: string, name: string) => void;
   handleCreateWorkspace: (name: string) => Promise<void>;
   handleJoinWorkspace: (code: string) => Promise<{ success: boolean; error?: string }>;
-  handleDeleteWorkspace: () => void;
+  handleDeleteWorkspace: (forceEndAck?: boolean) => void;
+  forceEndPending: boolean;
   handleLeaveWorkspace: () => void;
   handleLeaveAndTransfer: (newOwnerId: string) => void;
   handlePreview: (drop: Drop) => void;
@@ -182,7 +183,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
     drops, dropsLoading, refreshDrops,
     categories, handleCreateCategory, handleDeleteCategory,
     handleCreateWorkspace, handleJoinWorkspace,
-    handleDeleteWorkspace, handleLeaveWorkspace, handleLeaveAndTransfer,
+    handleDeleteWorkspace, forceEndPending, handleLeaveWorkspace, handleLeaveAndTransfer,
     handlePreview, handleOpenRootDrop, handleOpenMentionedDrop, handlePreviewBack,
     handleClosePreview, clearPreviewTrail, dropTrailLength,
     handleShowVerifyModal, handleCheckVerification,
@@ -628,6 +629,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
           onDelete={handleDeleteWorkspace}
           onLeaveAndTransfer={handleLeaveAndTransfer}
           onImport={onImportWorkspace ? () => { setWorkspaceToDelete(null); onImportWorkspace(); } : undefined}
+          forceEndPending={forceEndPending}
           onClose={() => setWorkspaceToDelete(null)}
         />
       )}

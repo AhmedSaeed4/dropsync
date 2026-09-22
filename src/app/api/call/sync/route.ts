@@ -37,6 +37,13 @@ export async function POST(request: NextRequest) {
     ) {
       return NextResponse.json({ error: 'Not an active call participant' }, { status: 403 });
     }
+    const syncWorkspaceId = typeof callSnap.data()?.workspaceId === 'string' ? callSnap.data()?.workspaceId : '';
+    if (syncWorkspaceId) {
+      const syncWsSnap = await db.collection('workspaces').doc(syncWorkspaceId).get();
+      if (syncWsSnap.get('deleting') === true) {
+        return NextResponse.json({ error: 'This workspace is being deleted' }, { status: 409 });
+      }
+    }
 
     const nowMs = Date.now();
     let state = await refreshCallLimitState(db, callDropId, nowMs);

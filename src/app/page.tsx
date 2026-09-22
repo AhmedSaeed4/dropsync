@@ -56,6 +56,7 @@ import { CURRENT_TERMS_VERSION } from '@/lib/termsVersion';
 import { TermsConsentGate } from '@/components/TermsConsentGate';
 import { WorkspaceArchiveModal } from '@/components/WorkspaceArchiveModal';
 import WorkspaceOptionsModal from '@/components/WorkspaceOptionsModal';
+import { startWorkspaceDeletion, runDeletionJob, resumeDeletionJobs, subscribeDeletionNotices } from '@/lib/workspaceDeletion';
 import {
   exportWorkspaceArchive,
   hasLiveWorkspaceArchiveOverlap,
@@ -186,19 +187,82 @@ export default function Home() {
     create: createWorkspace,
     join: joinWorkspace,
     leave: leaveWorkspace,
-    deleteWS,
     kick,
     loading: workspacesLoading
   } = useWorkspaces(user?.uid || null, {
     // Server-side removal notice: fires when a workspace the user belonged to disappears and it
     // was NOT a locally-initiated leave/delete (i.e. the owner kicked them, or the owner deleted
     // the workspace). Honest in both cases. Empty initial list → no false fire on load/refresh.
-    onWorkspaceRemoved: (ws) => {
+    onWorkspaceRemoved: (ws, reason) => {
       // Stage B: confirmed access loss - drop the scope's cached payloads.
       editorialCardCache.revokeScope(ws.id);
+      if (reason === 'deleted') {
+        // ROUND 12: the workspace finished deleting. The owner who began it gets a quiet
+        // completion note; members get the goodbye via their deletion notice (queued +
+        // visibility-gated below) — never the wrong "you were removed" text.
+        if (ws.deletingOwner && ws.deletingOwner === (user?.uid ?? null)) {
+          setRemovedNotice(`"${ws.name}" was deleted.`);
+        }
+        return;
+      }
       setRemovedNotice(`You no longer have access to "${ws.name}".`);
     },
   });
+
+  // ---- ROUND 12: background deletion wiring ----
+  const [forceEndPending, setForceEndPending] = useState(false);
+  const goodbyeQueueRef = useRef<{ noticeId: string; text: string; ack: () => Promise<void> }[]>([]);
+  const [activeGoodbye, setActiveGoodbye] = useState<{ noticeId: string; text: string; ack: () => Promise<void> } | null>(null);
+  const resumedIdsRef = useRef<Set<string>>(new Set());
+
+  // Resume MY running jobs — each workspace at most ONCE per session (part E). NOT a
+  // whole-list one-shot: that burned its only attempt on the stale pre-auth emission
+  // (uid restored while workspaces is still []), stranding the job after a mid-deletion
+  // refresh. The once-set also keeps a PAUSED job from auto-retrying on later
+  // emissions — the Retry button is the only restart after a pause.
+  useEffect(() => {
+    const uid = user?.uid || null;
+    if (!uid || workspacesLoading) return;
+    const fresh = workspaces.filter(
+      (w) => w.deleting === true && w.deletingOwner === uid && !resumedIdsRef.current.has(w.id),
+    );
+    if (fresh.length === 0) return;
+    fresh.forEach((w) => resumedIdsRef.current.add(w.id));
+    resumeDeletionJobs(fresh, uid);
+  }, [user?.uid, workspacesLoading, workspaces]);
+
+  // Goodbye notices: queue arrivals, show ONE at a time, ONLY while the tab is visible —
+  // a hidden tab keeps the queue (and the notice docs) intact for the next visit.
+  const advanceGoodbye = useCallback(() => {
+    if (document.visibilityState !== 'visible') return;
+    const next = goodbyeQueueRef.current.shift();
+    setActiveGoodbye(next ?? null);
+  }, []);
+
+  useEffect(() => {
+    const uid = user?.uid || null;
+    if (!uid) return;
+    return subscribeDeletionNotices(uid, (notice) => {
+      goodbyeQueueRef.current.push({
+        noticeId: notice.noticeId,
+        text: `${notice.workspaceName} was deleted by its owner`,
+        ack: notice.ack,
+      });
+      setActiveGoodbye((current) => {
+        if (current) return current;
+        if (document.visibilityState !== 'visible') return null; // stays queued
+        return goodbyeQueueRef.current.shift() ?? null;
+      });
+    });
+  }, [user?.uid]);
+
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === 'visible') advanceGoodbye();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [advanceGoodbye]);
 
   // Pass currentWorkspaceId to useDrops
   const { drops, loading: dropsLoading, refreshDrops } = useDrops(currentWorkspaceId, {
@@ -514,20 +578,28 @@ export default function Home() {
     return { success: false, error: result.error };
   };
 
-  const handleDeleteWorkspace = async () => {
+  // ROUND 12 (parts D/F): begin the BACKGROUND job. D-m lives here — the server answers
+  // confirmation-required when a call exists; the modal then shows "end the call and
+  // delete?" and re-invokes this with forceEndAck. On success the modal closes, the
+  // owner is switched to Personal, and the runner loop starts in the background. A
+  // failure keeps the modal open (retryable) exactly as before.
+  const handleDeleteWorkspace = async (forceEndAck = false) => {
     if (workspaceToDelete) {
       setIsDeletingWorkspace(true);
       try {
-        const ok = await deleteWS(workspaceToDelete.id);
-        if (ok) {
+        const result = await startWorkspaceDeletion(workspaceToDelete.id, { forceEndAck });
+        if (result.status === 'confirmation-required') {
+          setForceEndPending(true); // the modal swaps to the D-m confirm view
+          return;
+        }
+        setForceEndPending(false);
+        if (result.ok) {
           setWorkspaceToDelete(null);
           setWorkspaceDeleteError(null);
+          runDeletionJob(workspaceToDelete.id);
+          if (currentWorkspaceId === workspaceToDelete.id) switchWorkspace(null); // D-h
+          setRemovedNotice(`Deleting "${workspaceToDelete.name}" — you can keep working.`);
         } else {
-          // Failed: surface it and KEEP the modal open so the user can retry (the cleanup route is
-          // idempotent, so retry self-heals). The spinner is cleared in `finally` below — required,
-          // not a leak: WorkspaceOptionsModal disables every button while isDeleting (busy) is true,
-          // so leaving it up would brick the modal and block the very retry we want. The error Toast
-          // portals to document.body, so it renders above the still-open modal.
           setWorkspaceDeleteError("Couldn't delete the workspace — please try again.");
         }
       } finally {
@@ -552,8 +624,14 @@ export default function Home() {
     if (workspaceToDelete) {
       setIsLeavingWorkspace(true);
       try {
-        await leaveWorkspace(workspaceToDelete.id, newOwnerId);
-        setWorkspaceToDelete(null);
+        const ok = await leaveWorkspace(workspaceToDelete.id, newOwnerId);
+        if (ok) {
+          setWorkspaceToDelete(null);
+        } else {
+          // ROUND 12 (A2): a refused transfer (e.g. the workspace began deleting) surfaces
+          // instead of silently closing the modal.
+          setWorkspaceDeleteError("Couldn't leave and transfer — the workspace may be deleting.");
+        }
       } finally {
         setIsLeavingWorkspace(false);
       }
@@ -2754,6 +2832,7 @@ export default function Home() {
     categories, handleCreateCategory, handleDeleteCategory: stableDeleteCategory,
     handleCreateWorkspace, handleJoinWorkspace,
     handleDeleteWorkspace, handleLeaveWorkspace, handleLeaveAndTransfer,
+    forceEndPending,
     onKick: handleKickMember, isKicking: isKickingMember,
     handlePreview, handleOpenRootDrop: stableOpenRootDrop, handleOpenMentionedDrop, handlePreviewBack,
     handleClosePreview, clearPreviewTrail, dropTrailLength: dropTrail.length,
@@ -2855,6 +2934,19 @@ export default function Home() {
           theme={theme}
           editorial={layoutMode === 'editorial'}
           onDone={handleRemovedNoticeDone}
+        />
+      )}
+      {activeGoodbye && (
+        <Toast
+          message={activeGoodbye.text}
+          duration={6}
+          theme={theme}
+          editorial={layoutMode === 'editorial'}
+          onDone={() => {
+            void activeGoodbye.ack();
+            setActiveGoodbye(null);
+            advanceGoodbye();
+          }}
         />
       )}
       {archiveNotice && (

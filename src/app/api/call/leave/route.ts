@@ -12,6 +12,8 @@ import {
   getCallUsageStatesInTransaction,
   getLiveKitRoomService,
   getTrustedStatusMapInTransaction,
+  ackAttemptInTransaction,
+  readAttemptInTransaction,
   reconcileTrustedCallTransitionInTransaction,
   releaseReservationForCallInTransaction,
   reserveCallUsageInTransaction,
@@ -76,6 +78,7 @@ export async function POST(request: NextRequest) {
         if (expectedRoomName != null && expectedRoomName !== roomName) {
           return { callEnded: false, cascade: false, expired: false, noOp: true, roomName, pendingLeave: false };
         }
+        const leaveAttemptSnap = await readAttemptInTransaction(txn, db, callDropId, roomName);
         // NEVER-CONFIRMED pending call: the host cancels (or their join failed) before promotion.
         // Release the reservation with ZERO charge and delete the pending doc + its room — this is
         // the PR #203 cleanup path, made safe for the pending lifecycle.
@@ -86,6 +89,10 @@ export async function POST(request: NextRequest) {
           // Raw read: normalization drops reservedCallId for a stale pending, which would skip the
           // release and leave the persisted reservation blocking the host when the slot is reused.
           await releaseReservationForCallInTransaction(txn, db, uid, callDropId);
+          ackAttemptInTransaction(txn, db, callDropId, roomName, leaveAttemptSnap, {
+            reason: 'pending-host-leave',
+            settled: false,
+          });
           txn.delete(callRef);
           return { callEnded: true, cascade: true, expired: false, noOp: false, roomName, pendingLeave: true };
         }
@@ -123,6 +130,16 @@ export async function POST(request: NextRequest) {
             nowMs,
             usageStates,
           );
+          ackAttemptInTransaction(txn, db, callDropId, roomName, leaveAttemptSnap, {
+            reason: 'last-leaver',
+            settled: true,
+            chargeInputs: {
+              uids,
+              joinedAtByUid,
+              trustedReliefUids,
+              chargeEndMs: nowMs,
+            },
+          });
           txn.delete(callRef);
           return { callEnded: true, cascade: true, expired: false, noOp: false, roomName, pendingLeave: false };
         }

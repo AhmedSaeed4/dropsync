@@ -12,6 +12,8 @@ import {
   getLiveKitRoomService,
   getLiveKitRoomParticipantCount,
   getTrustedStatusMapInTransaction,
+  ackAttemptInTransaction,
+  readAttemptInTransaction,
   isPendingCallStale,
   refreshCallLimitState,
   releaseReservationForCallInTransaction,
@@ -94,25 +96,42 @@ async function endAbandonedCall(
     const participantUids = Array.isArray(current?.callParticipantUids)
       ? current.callParticipantUids.filter((uid): uid is string => typeof uid === 'string')
       : [];
+    const abandonedAttemptSnap = await readAttemptInTransaction(txn, db, callDoc.id, roomName);
     const trustedByUid = await getTrustedStatusMapInTransaction(txn, db, participantUids);
     const usageStates = await getCallUsageStatesInTransaction(txn, db, participantUids, nowMs);
     if (neverJoined) {
       // Batch release (all reads before all writes — Firestore transaction contract).
       await releaseReservationsForCallInTransaction(txn, db, participantUids, callDoc.id);
+      ackAttemptInTransaction(txn, db, callDoc.id, roomName, abandonedAttemptSnap, {
+        reason: 'never-joined-ghost',
+        settled: false,
+      });
       txn.delete(callDoc.ref);
       return true;
     }
+    const abandonedJoinedAt = getCallParticipantJoinedAtMap(current || {}, participantUids);
+    const abandonedRelief = new Set(getCallTrustedReliefUids(current || {}, participantUids, trustedByUid));
     await settleCallUsageInTransaction(
       txn,
       db,
       participantUids,
       trustedByUid,
       callDoc.id,
-      getCallParticipantJoinedAtMap(current || {}, participantUids),
-      new Set(getCallTrustedReliefUids(current || {}, participantUids, trustedByUid)),
+      abandonedJoinedAt,
+      abandonedRelief,
       nowMs,
       usageStates,
     );
+    ackAttemptInTransaction(txn, db, callDoc.id, roomName, abandonedAttemptSnap, {
+      reason: 'room_abandoned',
+      settled: true,
+      chargeInputs: {
+        uids: participantUids,
+        joinedAtByUid: abandonedJoinedAt,
+        trustedReliefUids: [...abandonedRelief],
+        chargeEndMs: nowMs,
+      },
+    });
     txn.update(callDoc.ref, {
       callState: 'ended',
       callEndReason: 'room_abandoned',
@@ -183,6 +202,10 @@ async function sweepStalePendingCalls(db: Firestore, nowMs: number): Promise<num
         // release and leave a persisted reservation that resurrects when the slot is reused.
         await releaseReservationForCallInTransaction(txn, db, hostUid, callDoc.id);
       }
+      ackAttemptInTransaction(txn, db, callDoc.id, roomName, await readAttemptInTransaction(txn, db, callDoc.id, roomName), {
+        reason: 'stale-pending-swept',
+        settled: false,
+      });
       txn.delete(callDoc.ref);
       return true;
     });

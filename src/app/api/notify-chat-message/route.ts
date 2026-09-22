@@ -77,6 +77,11 @@ export async function POST(request: NextRequest) {
     if (!members.includes(uid)) {
       return NextResponse.json({ error: 'Not a workspace member' }, { status: 403 });
     }
+    // ROUND 12: no new pushes for a dying workspace (messages are already rules-denied; this
+    // closes the fire-and-forget tail).
+    if (wsData.deleting === true) {
+      return NextResponse.json({ sent: 0, suppressed: true });
+    }
     const workspaceName: string = wsData.name || 'workspace';
 
     // ---- RECIPIENTS: every member EXCEPT the sender. The verified caller (uid) is the sender;
