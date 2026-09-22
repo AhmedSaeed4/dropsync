@@ -110,6 +110,7 @@ export async function POST(request: NextRequest) {
         deletingOwner: uid,
         deletingOwnerName: data.ownerId === uid ? data.name : '',
         deletingRecipients: recipients,
+        deleteDone: 0,
       });
       tx.set(db.collection('deletionJobs').doc(workspaceId), {
         ownerId: uid,

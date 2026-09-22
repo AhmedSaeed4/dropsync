@@ -235,9 +235,13 @@ service cloud.firestore {
             (
               resource.data.deleting == true
               && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deleteDone'])
-              && 'deleteDone' in resource.data
               && 'deleteDone' in request.resource.data
-              && request.resource.data.deleteDone >= resource.data.deleteDone
+              && (
+                   ('deleteDone' in resource.data
+                     ? request.resource.data.deleteDone >= resource.data.deleteDone
+                     : (request.resource.data.deleteDone is number
+                        && request.resource.data.deleteDone >= 0))
+                 )
             )
           )
         )
