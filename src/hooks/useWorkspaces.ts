@@ -1,17 +1,19 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { createWorkspacesListener, createWorkspace, joinWorkspace, leaveWorkspace, deleteWorkspace, kickWorkspaceMember } from '@/lib/workspaces';
+import { createWorkspacesListener, createWorkspace, joinWorkspace, leaveWorkspace, kickWorkspaceMember } from '@/lib/workspaces';
+import { startWorkspaceDeletion } from '@/lib/workspaceDeletion';
 import { Workspace } from '@/types';
 
 const CURRENT_WORKSPACE_KEY = 'dropsync_current_workspace';
 
 export interface UseWorkspacesOptions {
   // Fired when a workspace the user belonged to disappears from the listener AND it was NOT a
-  // locally-initiated leave/delete (i.e. the user was removed by the owner, or the workspace was
-  // deleted by its owner). Receives the workspace as it was last seen (id + name used for the
-  // notice). Stored in a ref so the listener never re-subscribes when this callback changes.
-  onWorkspaceRemoved?: (workspace: Workspace) => void;
+  // locally-initiated leave/delete. ROUND 12 adds the reason: 'removed' = the old kick/remove
+  // case; 'deleted' = a workspace that was mid-deletion finished (its SEAL removed the doc —
+  // members show the goodbye notice, the owner sees the job complete). Stored in a ref so the
+  // listener never re-subscribes when this callback changes.
+  onWorkspaceRemoved?: (workspace: Workspace, reason: 'removed' | 'deleted') => void;
 }
 
 export function useWorkspaces(userId: string | null, options?: UseWorkspacesOptions) {
@@ -30,6 +32,8 @@ export function useWorkspaces(userId: string | null, options?: UseWorkspacesOpti
   // Workspace ids the LOCAL user removed themselves (via leave/delete). Suppresses the removal
   // notice for those — only server-side removals (kick / owner-delete) should toast.
   const locallyRemovedRef = useRef<Set<string>>(new Set());
+  // ROUND 12: mirror of the latest workspaces emission for the switchWorkspace entry check.
+  const workspacesRef = useRef<Workspace[]>([]);
 
   // Load saved workspace from localStorage
   useEffect(() => {
@@ -58,7 +62,9 @@ export function useWorkspaces(userId: string | null, options?: UseWorkspacesOpti
         for (const p of prev) {
           const stillPresent = userWorkspaces.some((w) => w.id === p.id);
           if (!stillPresent && !locallyRemovedRef.current.has(p.id)) {
-            onRemovedRef.current?.(p);
+            // ROUND 12: a workspace that was mid-deletion did not "remove" anyone — its SEAL
+            // completed. The owner's own deletion lands here too (cross-session resume).
+            onRemovedRef.current?.(p, p.deleting === true ? 'deleted' : 'removed');
           }
         }
       }
@@ -68,22 +74,33 @@ export function useWorkspaces(userId: string | null, options?: UseWorkspacesOpti
       // possible; without this cleanup, a leave→rejoin→kick sequence would be permanently silenced.
       userWorkspaces.forEach((w) => locallyRemovedRef.current.delete(w.id));
       prevWorkspacesRef.current = userWorkspaces;
+      workspacesRef.current = userWorkspaces;
 
       setWorkspaces(userWorkspaces);
       setLoading(false);
 
-      // If current workspace no longer exists, reset to personal
-      if (currentWorkspaceId && !userWorkspaces.find(w => w.id === currentWorkspaceId)) {
-        setCurrentWorkspaceId(null);
-        localStorage.removeItem(CURRENT_WORKSPACE_KEY);
+      // If current workspace no longer exists, OR its restored selection resolves to a
+      // DELETING workspace, reset to personal (ROUND 12: the locked row is never enterable).
+      if (currentWorkspaceId) {
+        const current = userWorkspaces.find(w => w.id === currentWorkspaceId);
+        if (!current || current.deleting === true) {
+          setCurrentWorkspaceId(null);
+          localStorage.removeItem(CURRENT_WORKSPACE_KEY);
+        }
       }
     });
 
     return unsubscribe;
   }, [userId, currentWorkspaceId]);
 
-  // Switch to a workspace
+  // Switch to a workspace. ROUND 12 entry contract: a DELETING workspace is never enterable —
+  // not by click, not by a late continuation. (Callers that switch after an await re-validate
+  // in page.tsx; this is the last line of defense.)
   const switchWorkspace = useCallback((workspaceId: string | null) => {
+    if (workspaceId) {
+      const target = workspacesRef.current.find(w => w.id === workspaceId);
+      if (target?.deleting === true) return; // locked row — never switch
+    }
     setCurrentWorkspaceId(workspaceId);
     if (workspaceId) {
       localStorage.setItem(CURRENT_WORKSPACE_KEY, workspaceId);
@@ -118,16 +135,16 @@ export function useWorkspaces(userId: string | null, options?: UseWorkspacesOpti
     return result;
   }, [userId, currentWorkspaceId, switchWorkspace]);
 
-  // Delete a workspace (owner only)
+  // Start BACKGROUND deletion (ROUND 12): begin the job, walk away instantly. The row stays
+  // visible-but-locked; the runner loop (started in page.tsx on begin + on mount for resume)
+  // does the work. A false return keeps the modal open for retry.
   const deleteWS = useCallback(async (workspaceId: string) => {
     if (!userId) return false;
-    locallyRemovedRef.current.add(workspaceId);
-    const result = await deleteWorkspace(userId, workspaceId);
-    if (!result) locallyRemovedRef.current.delete(workspaceId);
-    if (result && currentWorkspaceId === workspaceId) {
-      switchWorkspace(null);
+    const result = await startWorkspaceDeletion(workspaceId);
+    if (result.ok && currentWorkspaceId === workspaceId) {
+      switchWorkspace(null); // D-h: the owner lands on Personal immediately
     }
-    return result;
+    return result.ok;
   }, [userId, currentWorkspaceId, switchWorkspace]);
 
   // Owner kicks (removes) another member. The OWNER stays in the workspace — do NOT reset

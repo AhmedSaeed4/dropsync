@@ -108,6 +108,10 @@ export async function POST(request: NextRequest) {
         ) {
           return { kind: 'notmember' as const };
         }
+        // Commit-time deleting gate: no new participants for a dying workspace.
+        if (currentWorkspaceSnap.get('deleting') === true) {
+          return { kind: 'notmember' as const };
+        }
         const rawDeadline = snap.data()?.callLimitDeadlineAt;
         const currentDeadlineMs =
           rawDeadline && typeof rawDeadline.toMillis === 'function' ? rawDeadline.toMillis() : null;

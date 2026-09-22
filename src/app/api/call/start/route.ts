@@ -13,9 +13,12 @@ import {
   getLiveKitRoomService,
   getTrustedStatusMapInTransaction,
   isPendingCallStale,
+  markCallAttemptPhase,
+  registerCallAttempt,
   releaseReservationWrite,
   reserveCallUsageInTransaction,
   refreshCallLimitState,
+  resolveCallAttemptStandalone,
 } from '../_lib';
 
 // Mirror /api/transcribe: Node runtime, 30s headroom under Vercel's timeout, always dynamic. The
@@ -141,14 +144,49 @@ export async function POST(request: NextRequest) {
     // Generation-unique LiveKit room name (a delayed webhook for an OLD room can never resolve to
     // the NEW call — the doc lookup keys on livekitRoomName, and the SID guard is a second gate).
     // The Firestore doc id stays deterministic (`call-{workspaceId}`): one call per workspace.
-    const roomName = `call-${workspaceId}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    // ROUND 12 (the C6 creation fence): the attempt is REGISTERED — transactionally reading the
+    // workspace (a deleting scope cannot register) and the caller's barrier — BEFORE the external
+    // createRoom is issued. attemptKey = the generation suffix of the room name.
+    const attemptKey = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    const roomName = `call-${workspaceId}-${attemptKey}`;
+    const registration = await registerCallAttempt(db, {
+      callDropId: callDocId,
+      attemptKey,
+      workspaceId,
+      roomName,
+      registeredBy: uid,
+    });
+    if (!registration.ok) {
+      const message =
+        registration.error === 'Workspace is deleting'
+          ? 'This workspace is being deleted'
+          : registration.error === 'Account deletion is in progress'
+            ? 'Account deletion is in progress'
+            : 'Failed to start call';
+      return NextResponse.json({ error: message }, { status: 409 });
+    }
     let livekitRoomSid: string;
     try {
       const room = await roomService.createRoom({ name: roomName });
       if (!room.sid) throw new Error('LiveKit returned no room SID');
       livekitRoomSid = room.sid;
+      const created = await markCallAttemptPhase(db, callDocId, attemptKey, 'roomCreated');
+      if (created.refused) {
+        // A cancellation landed between registration and the phase write: the room we just
+        // created is now a cleanup obligation — delete it and leave the record for the
+        // resolution window (never resolve it as if nothing happened).
+        try {
+          await roomService.deleteRoom(roomName);
+        } catch (cleanupError) {
+          console.warn('call/start refused-phase room cleanup failed:', cleanupError);
+        }
+        return NextResponse.json({ error: 'This call can no longer start' }, { status: 409 });
+      }
     } catch (err) {
       console.error('call/start room creation failed:', err);
+      // Creation failed: record the phase (a refused write means cancelled — the room may or
+      // may not exist; the resolution window owns that uncertainty).
+      await markCallAttemptPhase(db, callDocId, attemptKey, 'creationFailed');
       try {
         const current = await callRef.get();
         const currentRoomName = typeof current.data()?.livekitRoomName === 'string' ? current.data()?.livekitRoomName : null;
@@ -304,6 +342,7 @@ export async function POST(request: NextRequest) {
       } catch (cleanupError) {
         console.warn('call/start failed-room cleanup failed:', cleanupError);
       }
+      await resolveCallAttemptStandalone(db, callDocId, attemptKey, 'start-transaction-failed', true);
       return NextResponse.json({ error: 'Failed to start call' }, { status: 500 });
     }
 
@@ -313,6 +352,7 @@ export async function POST(request: NextRequest) {
       } catch (cleanupError) {
         console.warn('call/start limited-room cleanup failed:', cleanupError);
       }
+      await resolveCallAttemptStandalone(db, callDocId, attemptKey, 'limited', true);
       return NextResponse.json(
         { error: CALL_LIMIT_MESSAGE, resetAt: decision.resetAtMs },
         { status: 429 },
@@ -324,6 +364,7 @@ export async function POST(request: NextRequest) {
       await roomService.deleteRoom(roomName).catch((cleanupError) => {
         console.warn('call/start lost-claim room cleanup skipped:', cleanupError);
       });
+      await resolveCallAttemptStandalone(db, callDocId, attemptKey, 'lost-slot', true);
     }
 
     if (decision.kind === 'busy') {
@@ -341,6 +382,10 @@ export async function POST(request: NextRequest) {
         roomService.deleteRoom(decision.staleRoomName).catch((cleanupError) => {
           console.warn('call/start stale-room cleanup skipped:', cleanupError);
         });
+        const staleKey = decision.staleRoomName.startsWith(`${callDocId}-`)
+          ? decision.staleRoomName.slice(callDocId.length + 1)
+          : 'legacy';
+        await resolveCallAttemptStandalone(db, callDocId, staleKey, 'replaced', true);
       }
       // Clean up an orphaned pending call from a previous never-confirmed start (lazy-release
       // counterpart): delete its doc + room. Best-effort — the daily sweep is the backstop. The
@@ -366,6 +411,10 @@ export async function POST(request: NextRequest) {
             if (!deleted) return; // promoted or replaced meanwhile — leave it to the sweep
             await cascadeCallSubcollectionsIfGeneration(db, orphanedId, orphanRoom).catch(() => {});
             if (roomService) await roomService.deleteRoom(orphanRoom).catch(() => {});
+            const orphanKey = orphanRoom.startsWith(`${orphanedId}-`)
+              ? orphanRoom.slice(orphanedId.length + 1)
+              : 'legacy';
+            await resolveCallAttemptStandalone(db, orphanedId, orphanKey, 'orphaned-pending', true);
           } catch {
             /* best-effort — the daily sweep covers any missed orphan */
           }

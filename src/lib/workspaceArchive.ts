@@ -1,7 +1,6 @@
 'use client';
 
 import {
-  addDoc,
   collection,
   deleteDoc,
   doc,
@@ -25,7 +24,6 @@ import {
   ARCHIVE_MAX_MANIFEST_BYTES,
   ARCHIVE_MAX_UNCOMPRESSED_BYTES,
   ARCHIVE_MIME,
-  ArchiveCancelledError,
   ArchiveExpiredDropError,
   ArchiveValidationError,
   archiveTypeMismatchMessage,
@@ -65,7 +63,16 @@ import {
   uploadBinaryFileToR2,
   uploadToR2,
 } from './drops';
-import { deleteWorkspace } from './workspaces';
+import { startWorkspaceDeletion, runDeletionJob } from './workspaceDeletion';
+import {
+  ackImportItems,
+  cancelImportFence,
+  completeImportFence,
+  heartbeatImportFence,
+  openImportFence,
+  recordImportDispositions,
+  registerImportItems,
+} from './importFenceClient';
 import { Drop, Workspace, Category, ExpirationOption, YouTubeVideoLabel } from '@/types';
 import { isPasswordCategories, normalizeYoutubeLabels } from './youtubeLabels';
 import type { MemberInfo } from './workspaces';
@@ -83,9 +90,13 @@ export const WORKSPACE_ARCHIVE_KDF_ITERATIONS = ARCHIVE_KDF_ITERATIONS;
 
 const MAX_WORKSPACE_NAME_LENGTH = 120;
 const MAX_REMAINING_SECONDS = 24 * 60 * 60;
-const IMPORT_JOURNAL_KEY = 'dropsync_archive_import_journal';
+// ROUND 12 (part J): journals are PER-JOB — concurrent imports in two tabs no longer
+// clobber one shared slot. The durable fence ledger (server) is the authority; this
+// localStorage journal is the ordinary crash-recovery fast path.
+const IMPORT_JOURNAL_PREFIX = 'dropsync_archive_import_journal_';
 
 interface ImportJournal {
+  jobId: string;
   userId: string;
   workspaceId: string;
   createdWorkspace: boolean;
@@ -196,35 +207,70 @@ export interface WorkspaceArchiveDrop {
 
 function saveImportJournal(journal: ImportJournal): void {
   try {
-    localStorage.setItem(IMPORT_JOURNAL_KEY, JSON.stringify(journal));
+    localStorage.setItem(IMPORT_JOURNAL_PREFIX + journal.jobId, JSON.stringify(journal));
   } catch {
-    // Private browsing or disabled storage only removes crash recovery; normal rollback remains active.
+    // Private browsing or disabled storage only removes crash recovery; the durable fence
+    // ledger + the account-deletion drain remain the backstops.
   }
 }
 
-function clearImportJournal(): void {
+function clearImportJournal(jobId: string): void {
   try {
-    localStorage.removeItem(IMPORT_JOURNAL_KEY);
+    localStorage.removeItem(IMPORT_JOURNAL_PREFIX + jobId);
   } catch {
     // Best effort.
   }
 }
 
 export async function recoverInterruptedWorkspaceArchiveImport(userId: string): Promise<void> {
-  let journal: ImportJournal | null = null;
+  // ROUND 12: EVERY journal (per-job now), not one shared slot.
+  const journalKeys: string[] = [];
   try {
-    const raw = localStorage.getItem(IMPORT_JOURNAL_KEY);
-    if (raw) journal = JSON.parse(raw) as ImportJournal;
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(IMPORT_JOURNAL_PREFIX)) journalKeys.push(key);
+    }
   } catch {
-    clearImportJournal();
-    return;
+    return; // storage unavailable — the durable fence ledger is the account-deletion backstop
   }
-  if (!journal || journal.userId !== userId) return;
-  for (const key of journal.createdR2Keys || []) await deleteFromR2(key, journal.workspaceId || null).catch(() => {});
-  for (const dropId of journal.createdDropIds || []) await deleteDoc(doc(db, 'drops', dropId)).catch(() => {});
-  for (const categoryId of journal.createdCategoryIds || []) await deleteDoc(doc(db, 'categories', categoryId)).catch(() => {});
-  if (journal.createdWorkspace && journal.workspaceId) await deleteWorkspace(userId, journal.workspaceId).catch(() => {});
-  clearImportJournal();
+  for (const storageKey of journalKeys) {
+    let journal: ImportJournal | null = null;
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (raw) journal = JSON.parse(raw) as ImportJournal;
+    } catch {
+      localStorage.removeItem(storageKey);
+      continue;
+    }
+    if (!journal || journal.userId !== userId) continue;
+    for (const key of journal.createdR2Keys || []) await deleteFromR2(key, journal.workspaceId || null).catch(() => {});
+    for (const dropId of journal.createdDropIds || []) await deleteDoc(doc(db, 'drops', dropId)).catch(() => {});
+    for (const categoryId of journal.createdCategoryIds || []) await deleteDoc(doc(db, 'categories', categoryId)).catch(() => {});
+    // ROUND 12: the fresh-parent rollback rides the background deletion START path (the
+    // old synchronous deleteWorkspace is gone; the runner finalizes parent + key
+    // server-side). forceEndAck — there is never a call in a rolled-back import.
+    if (journal.createdWorkspace && journal.workspaceId) {
+      const started = await startWorkspaceDeletion(journal.workspaceId, { forceEndAck: true });
+      if (started.ok) await runDeletionJob(journal.workspaceId).catch(() => {});
+    }
+    // ROUND 12 (part J): close any fence this crashed job left OPEN and ack the ledger
+    // (journal-derived ids — over-acking is an idempotent no-op delete).
+    if (journal.jobId) {
+      await cancelImportFence(journal.jobId, true);
+      const ackIds = [
+        ...(journal.createdWorkspace && journal.workspaceId
+          ? ['workspace:' + journal.workspaceId, 'key:' + journal.workspaceId]
+          : []),
+        ...(journal.createdCategoryIds || []).map((id) => 'category:' + id),
+        ...(journal.createdDropIds || []).map((id) => 'drop:' + id),
+        ...(journal.createdR2Keys || []).map((key) => 'r2:' + key),
+      ];
+      for (let i = 0; i < ackIds.length; i += 100) {
+        await ackImportItems(journal.jobId, ackIds.slice(i, i + 100));
+      }
+    }
+    localStorage.removeItem(storageKey);
+  }
 }
 
 function normalizeWorkspaceName(name: string): string {
@@ -614,7 +660,9 @@ export async function exportWorkspaceArchive(options: WorkspaceArchiveExportOpti
 async function ensureImportCategories(
   workspaceId: string,
   userId: string,
-  manifest: WorkspaceArchiveManifest
+  manifest: WorkspaceArchiveManifest,
+  registerItems: (items: { kind: string; id: string }[]) => Promise<void>,
+  importJobId: string
 ): Promise<{ map: Map<string, string>; createdIds: string[] }> {
   const categoriesSnapshot = await getDocs(query(collection(db, 'categories'), where('workspaceId', '==', workspaceId)));
   const map = new Map<string, string>();
@@ -626,10 +674,17 @@ async function ensureImportCategories(
   for (const category of manifest.categories) {
     const normalized = category.name.toLowerCase().trim();
     if (!normalized || normalized === 'password' || normalized === 'link' || map.has(normalized)) continue;
-    const categoryRef = await addDoc(collection(db, 'categories'), {
+    // ROUND 12 (F2/F3): PRE-ALLOCATE the id and REGISTER it before the create — a crash
+    // between registration and commit leaves a known possibly-uncommitted rollback item,
+    // never invisible work — and the create names the import epoch, so the rules admit it
+    // only while the fence is OPEN.
+    const categoryRef = doc(collection(db, 'categories'));
+    await registerItems([{ kind: 'category', id: categoryRef.id }]);
+    await setDoc(categoryRef, {
       name: category.name.trim(),
       workspaceId,
       createdBy: userId,
+      importJobId,
       createdAt: Timestamp.fromDate(parseDate(category.createdAt, 'category.createdAt') || new Date()),
     });
     createdIds.push(categoryRef.id);
@@ -661,7 +716,14 @@ export async function hasLiveWorkspaceArchiveOverlap(workspaceId: string, archiv
   return existingDrops.some((drop) => drop.importedFromArchiveId === archiveId && !isExpired(drop));
 }
 
-async function createImportWorkspace(userId: string, name: string, createdAt: Date): Promise<Workspace> {
+async function createImportWorkspace(
+  userId: string,
+  name: string,
+  createdAt: Date,
+  workspaceId: string,
+  jobId: string,
+  registerItems: (items: { kind: string; id: string }[]) => Promise<void>
+): Promise<Workspace> {
   const inviteChars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   const inviteLimit = Math.floor(256 / inviteChars.length) * inviteChars.length;
   let inviteCode = '';
@@ -669,20 +731,27 @@ async function createImportWorkspace(userId: string, name: string, createdAt: Da
     const random = crypto.getRandomValues(new Uint8Array(1))[0];
     if (random < inviteLimit) inviteCode += inviteChars[random % inviteChars.length];
   }
-  const workspaceRef = doc(collection(db, 'workspaces'));
+  // ROUND 12 (F2/F3): the caller PRE-ALLOCATED this id and opened the fence against it
+  // (fresh mode asserts the id is absent server-side). Register before each write; both
+  // creates name the import epoch, so the rules admit them only while the fence is OPEN.
+  // A key failure no longer deletes the parent inline — the outer rollback owns cleanup
+  // via the START path.
+  const workspaceRef = doc(db, 'workspaces', workspaceId);
+  await registerItems([{ kind: 'workspace', id: workspaceId }]);
   await setDoc(workspaceRef, {
     name,
     ownerId: userId,
     members: [userId],
     inviteCode,
     createdAt: Timestamp.fromDate(createdAt),
+    importJobId: jobId,
   });
-  const keyCreated = await createWorkspaceKey(workspaceRef.id, userId);
-  if (!keyCreated || !(await hasWorkspaceKey(workspaceRef.id))) {
-    await deleteDoc(workspaceRef).catch(() => {});
+  await registerItems([{ kind: 'key', id: workspaceId }]);
+  const keyCreated = await createWorkspaceKey(workspaceId, userId, jobId);
+  if (!keyCreated || !(await hasWorkspaceKey(workspaceId))) {
     throw new Error('The destination workspace encryption key could not be created.');
   }
-  return { id: workspaceRef.id, name, ownerId: userId, members: [userId], inviteCode, createdAt };
+  return { id: workspaceId, name, ownerId: userId, members: [userId], inviteCode, createdAt };
 }
 
 async function uploadArchiveEntryAsBinary(
@@ -729,12 +798,17 @@ export async function importWorkspaceArchive(options: WorkspaceArchiveImportOpti
   if (!auth.currentUser || auth.currentUser.uid !== userId) throw new Error('You must be signed in to import a workspace backup.');
 
   const loaded = await loadArchive(file, password, signal);
+  // ROUND 12 (part J): this import's producer epoch. Every create below names it, the
+  // fence gates its admission, the ledger records every registered item, and the
+  // completion record over the FULL manifest closes the fence.
+  const jobId = crypto.randomUUID();
   let destinationWorkspace: Workspace | null = null;
   let createdWorkspace = false;
   const createdDropIds: string[] = [];
   const createdR2Keys: string[] = [];
   const createdCategoryIds: string[] = [];
   const journal: ImportJournal = {
+    jobId,
     userId,
     workspaceId: '',
     createdWorkspace: false,
@@ -750,12 +824,45 @@ export async function importWorkspaceArchive(options: WorkspaceArchiveImportOpti
   let downgradedForeverCount = 0;
   let unpinnedCount = 0;
 
+  // The EXACT set of successfully-registered ledger ids (registration is all-or-nothing
+  // per chunk server-side, so this mirror never drifts from the durable ledger).
+  const registeredItems: string[] = [];
+  const registerItems = async (items: { kind: string; id: string }[]): Promise<void> => {
+    for (let i = 0; i < items.length; i += 100) {
+      if (!(await registerImportItems(jobId, items.slice(i, i + 100)))) {
+        throw new Error('The import was interrupted — its import fence could not be updated.');
+      }
+    }
+    for (const item of items) registeredItems.push(`${item.kind}:${item.id}`);
+  };
+  // ROUND 12: heartbeat every 5 minutes keeps the 15-minute fence lease fresh (the
+  // account-drain cancel respects the lease unless overriding). Only a CONFIRMED closed
+  // fence (409) stops the producer; a transient network error retries next tick — the
+  // rules at the Firestore boundary are the real cancellation enforcement.
+  let fenceLost = false;
+  let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  const stopHeartbeat = () => {
+    if (heartbeatTimer !== null) {
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+  };
+
   try {
     if (destination.mode === 'new') {
+      // ROUND 12 (part J): PRE-ALLOCATE the workspace id — the fence opens pointing at it
+      // (fresh mode asserts the id is absent server-side).
+      const preallocatedId = doc(collection(db, 'workspaces')).id;
+      if (!(await openImportFence(jobId, preallocatedId, 'fresh'))) {
+        throw new Error('Could not start the import — an account deletion may be in progress, or this job is already running.');
+      }
       destinationWorkspace = await createImportWorkspace(
         userId,
         normalizeWorkspaceName(destination.workspaceName),
-        parseDate(loaded.manifest.sourceWorkspace.createdAt, 'sourceWorkspace.createdAt') || new Date()
+        parseDate(loaded.manifest.sourceWorkspace.createdAt, 'sourceWorkspace.createdAt') || new Date(),
+        preallocatedId,
+        jobId,
+        registerItems
       );
       createdWorkspace = true;
     } else {
@@ -773,7 +880,15 @@ export async function importWorkspaceArchive(options: WorkspaceArchiveImportOpti
         inviteCode: targetData.inviteCode,
         createdAt: targetData.createdAt?.toDate?.() || new Date(),
       };
+      if (!(await openImportFence(jobId, destination.workspaceId, 'merge'))) {
+        throw new Error('Could not start the import — the workspace may be deleting, or an account deletion may be in progress.');
+      }
     }
+    heartbeatTimer = setInterval(() => {
+      void heartbeatImportFence(jobId)
+        .then((result) => { if (result === 'closed') fenceLost = true; })
+        .catch(() => {});
+    }, 5 * 60 * 1000);
 
     const importNow = new Date();
     journal.workspaceId = destinationWorkspace.id;
@@ -781,7 +896,13 @@ export async function importWorkspaceArchive(options: WorkspaceArchiveImportOpti
     persistJournal();
     const workspaceKey = await getWorkspaceKey(destinationWorkspace.id, userId);
     if (!workspaceKey) throw new Error('The destination workspace encryption key is unavailable.');
-    const categoryResult = await ensureImportCategories(destinationWorkspace.id, userId, loaded.manifest);
+    const categoryResult = await ensureImportCategories(
+      destinationWorkspace.id,
+      userId,
+      loaded.manifest,
+      registerItems,
+      jobId
+    );
     createdCategoryIds.push(...categoryResult.createdIds);
     persistJournal();
 
@@ -791,11 +912,15 @@ export async function importWorkspaceArchive(options: WorkspaceArchiveImportOpti
     for (const archiveDrop of loaded.manifest.drops) {
       sourceToNewId.set(archiveDrop.sourceId, doc(collection(db, 'drops')).id);
     }
+    // ROUND 12 (F2): EVERY drop id is registered BEFORE any drop is written — a crash
+    // leaves a known possibly-uncommitted rollback item, never invisible work.
+    await registerItems(Array.from(sourceToNewId.values()).map((id) => ({ kind: 'drop', id })));
 
     const totalBytes = Math.max(loaded.totalPayloadBytes, 1);
     let processedBytes = 0;
     for (const archiveDrop of loaded.manifest.drops) {
       throwIfAborted(signal);
+      if (fenceLost) throw new Error('The import was cancelled before it finished.');
       const newDropId = sourceToNewId.get(archiveDrop.sourceId);
       if (!newDropId) throw new Error(`Missing destination ID for "${archiveDrop.name}".`);
       const categories = archiveDrop.categories
@@ -856,6 +981,7 @@ export async function importWorkspaceArchive(options: WorkspaceArchiveImportOpti
         reminderSetByUid: archiveDrop.reminderSetByUid,
         reminderDismissedBy: archiveDrop.reminderDismissedBy,
         importedFromArchiveId: loaded.manifest.archiveId,
+        importJobId: jobId,
       };
       const importedLabels = normalizeYoutubeLabels(archiveDrop.youtubeVideoLabels);
       if (archiveDrop.type === 'text' && !archiveDrop.isDrawing && !isPasswordCategories(categories) && importedLabels.length > 0) {
@@ -881,6 +1007,7 @@ export async function importWorkspaceArchive(options: WorkspaceArchiveImportOpti
           const upload = await uploadToR2(encryptedImage.encrypted);
           createdR2Keys.push(upload.key);
           persistJournal();
+          await registerItems([{ kind: 'r2', id: upload.key }]);
           docData.imageUrl = upload.url;
           docData.imageR2Key = upload.key;
           docData.imageSize = imageBytes.byteLength;
@@ -909,6 +1036,10 @@ export async function importWorkspaceArchive(options: WorkspaceArchiveImportOpti
           );
           createdR2Keys.push(upload.key);
           persistJournal();
+          // R2 uploads are not Firestore replays — their fence obligation is the ledger
+          // plus cleanup acknowledgment (part J), so registering AFTER the upload is the
+          // contract (the journal already pins it for crash rollback).
+          await registerItems([{ kind: 'r2', id: upload.key }]);
           // The XHR uploader does not accept an AbortSignal. Journal the returned key first, then
           // honor a cancellation so rollback can delete an upload that finished after Cancel.
           throwIfAborted(signal);
@@ -926,6 +1057,7 @@ export async function importWorkspaceArchive(options: WorkspaceArchiveImportOpti
           const upload = await uploadToR2(encrypted.encrypted);
           createdR2Keys.push(upload.key);
           persistJournal();
+          await registerItems([{ kind: 'r2', id: upload.key }]);
           docData.fileUrl = upload.url;
           docData.r2Key = upload.key;
           docData.encrypted = true;
@@ -965,9 +1097,28 @@ export async function importWorkspaceArchive(options: WorkspaceArchiveImportOpti
     }
 
     // The final drop has been written, recorded in the journal, and its synchronous progress
-    // bookkeeping has completed. From this point on, cleanup must never be allowed to roll back a
-    // successful restore.
-    clearImportJournal();
+    // bookkeeping has completed. From this point on, cleanup must never be allowed to roll
+    // back a successful restore — and with the fence, "successful" means the COMPLETION
+    // RECORD is closed (S7-1: the durable record is the authority). Both calls are
+    // idempotent, so a transient failure is retried before giving up.
+    stopHeartbeat();
+    let fenceClosed = false;
+    for (let attempt = 0; attempt < 3 && !fenceClosed; attempt++) {
+      let recorded = true;
+      for (let i = 0; i < registeredItems.length && recorded; i += 500) {
+        // S7-2: the full record is LOGICAL — bounded chunks of ≤100 entries (≤5 per call)
+        // carry it; on the success path every registered item's disposition is 'committed'.
+        const batch = registeredItems.slice(i, i + 500).map((id) => ({ id, disposition: 'committed' as const }));
+        const chunks: { index: number; entries: { id: string; disposition: 'committed' }[] }[] = [];
+        for (let j = 0; j < batch.length; j += 100) chunks.push({ index: i + j, entries: batch.slice(j, j + 100) });
+        recorded = await recordImportDispositions(jobId, chunks);
+      }
+      if (recorded) fenceClosed = await completeImportFence(jobId, registeredItems.length);
+      if (!fenceClosed) await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1)));
+    }
+    if (!fenceClosed) throw new Error('The import could not be completed — please try again.');
+
+    clearImportJournal(jobId);
     try {
       await loaded.reader.close();
     } catch (error) {
@@ -983,15 +1134,25 @@ export async function importWorkspaceArchive(options: WorkspaceArchiveImportOpti
       warnings,
     };
   } catch (error) {
+    stopHeartbeat();
     await loaded.reader.close().catch(() => {});
     for (const key of createdR2Keys) await deleteFromR2(key, destinationWorkspace?.id || null).catch(() => {});
     for (const dropId of createdDropIds) await deleteDoc(doc(db, 'drops', dropId)).catch(() => {});
     for (const categoryId of createdCategoryIds) await deleteDoc(doc(db, 'categories', categoryId)).catch(() => {});
-    if (createdWorkspace && destinationWorkspace) {
-      await deleteWorkspace(userId, destinationWorkspace.id).catch(() => {});
+    // ROUND 12 (part J): close the fence cancelled (override — this producer is done
+    // either way) and ack the ledger in bounded chunks. The fresh workspace PARENT rides
+    // the background deletion START path — the old synchronous deleteWorkspace is gone.
+    // (If an account deletion holds the barrier, START refuses and the parent is consumed
+    // by the account flow's own workspace stage — the deliberate hand-off.)
+    await cancelImportFence(jobId, true);
+    for (let i = 0; i < registeredItems.length; i += 100) {
+      await ackImportItems(jobId, registeredItems.slice(i, i + 100));
     }
-    clearImportJournal();
-    if (error instanceof ArchiveCancelledError) throw error;
+    if (createdWorkspace && destinationWorkspace) {
+      const started = await startWorkspaceDeletion(destinationWorkspace.id, { forceEndAck: true });
+      if (started.ok) await runDeletionJob(destinationWorkspace.id).catch(() => {});
+    }
+    clearImportJournal(jobId);
     throw error;
   }
 }

@@ -114,7 +114,13 @@ export async function POST(request: NextRequest) {
       }
       const members = workspaceDoc.data()?.members || [];
       if (!members.includes(userId)) {
-        return NextResponse.json({ error: 'Not a workspace member' }, { status: 403 });
+        // ROUND 12 (R4): the frozen DELETING owner keeps asset-cleanup authority independent
+        // of the roster — the deletion loop must never lose its R2 authority to a roster change.
+        const isDeletingOwner =
+          workspaceDoc.get('deleting') === true && workspaceDoc.get('deletingOwner') === userId;
+        if (!isDeletingOwner) {
+          return NextResponse.json({ error: 'Not a workspace member' }, { status: 403 });
+        }
       }
     } else {
       // Personal drop — caller must own it.

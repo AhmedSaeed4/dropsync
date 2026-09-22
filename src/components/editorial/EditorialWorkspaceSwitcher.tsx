@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { Workspace } from '@/types';
+import { DeletingWorkspaceRow } from '@/components/DeletingWorkspaceRow';
 import { getWorkspaceMembers, MemberInfo } from '@/lib/workspaces';
 import { getEditorialThemeColors } from './editorialTheme';
 
@@ -206,6 +207,19 @@ export function EditorialWorkspaceSwitcher({
               const isExpanded = expandedWorkspaceId === workspace.id;
               const members = membersMap[workspace.id];
               const hasMention = mentionedWorkspaceIds?.has(workspace.id) ?? false;
+
+              // ROUND 12 (D-d): the shared locked row for a mid-deletion workspace.
+              if (workspace.deleting === true) {
+                return (
+                  <DeletingWorkspaceRow
+                    key={workspace.id}
+                    workspace={workspace}
+                    theme={theme}
+                    variant="editorial"
+                    isOwnerView={isOwner}
+                  />
+                );
+              }
 
               return (
                 <div key={workspace.id}>

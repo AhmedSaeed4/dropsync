@@ -756,6 +756,7 @@ export async function enforceExpiredCall(
     if (deadlineMs == null || deadlineMs > nowMs) {
       return { ended: false, participantUids: [] };
     }
+    const attemptSnap = await readAttemptInTransaction(txn, db, callDropId, roomName);
     const rawUids = snap.data()?.callParticipantUids;
     const participantUids = Array.isArray(rawUids)
       ? rawUids.filter((uid): uid is string => typeof uid === 'string')
@@ -765,6 +766,10 @@ export async function enforceExpiredCall(
       // first, then writes, per the Firestore transaction contract) and delete the doc.
       // minutesUsedToday is untouched: never-joined time is never billed.
       await releaseReservationsForCallInTransaction(txn, db, participantUids, callDropId);
+      ackAttemptInTransaction(txn, db, callDropId, roomName, attemptSnap, {
+        reason: 'never-joined-ghost',
+        settled: false,
+      });
       txn.delete(callRef);
       return { ended: true, participantUids };
     }
@@ -782,16 +787,28 @@ export async function enforceExpiredCall(
       });
       return { ended: false, participantUids: [] };
     }
+    const frozenJoinedAt = getCallParticipantJoinedAtMap(callData, participantUids);
+    const frozenRelief = new Set(getCallTrustedReliefUids(callData, participantUids, trustedByUid));
     await settleCallUsageInTransaction(
       txn,
       db,
       participantUids,
       trustedByUid,
       callDropId,
-      getCallParticipantJoinedAtMap(callData, participantUids),
-      new Set(getCallTrustedReliefUids(callData, participantUids, trustedByUid)),
+      frozenJoinedAt,
+      frozenRelief,
       nowMs,
     );
+    ackAttemptInTransaction(txn, db, callDropId, roomName, attemptSnap, {
+      reason: 'untrusted_time_limit',
+      settled: true,
+      chargeInputs: {
+        uids: participantUids,
+        joinedAtByUid: frozenJoinedAt,
+        trustedReliefUids: [...frozenRelief],
+        chargeEndMs: nowMs,
+      },
+    });
     txn.update(callRef, {
       callState: 'ended',
       callEndReason: 'untrusted_time_limit',
@@ -939,4 +956,273 @@ export async function getLiveKitRoomParticipantCount(roomName: string): Promise<
     console.warn(`[call] LiveKit room inspection failed for ${roomName}`, e);
     return null;
   }
+}
+
+// ---- Call-attempt termination protocol (Round 12 parts D + the C6 creation fence) ----
+//
+// Every LiveKit call attempt (a generation-unique room born from the deterministic slot
+// `call-{workspaceId}`) gets a durable accounting + obligation record in
+// callTerminations/{callDropId}_{attemptKey}. Terminal writers (start's losing branches,
+// leave, enforce, webhook, reap-stale, the expired helper, the terminal route) settle
+// usage and acknowledge the attempt in the SAME transaction; the immutable charge inputs
+// are frozen at that terminal moment (never at registration — confirm writes joinedAt at
+// promotion and join changes the roster later), and the committed `settled` flag makes a
+// retried acknowledgment a verified no-op.
+
+export const CREATION_RESOLUTION_WINDOW_MS = 15 * 60 * 1000;
+
+export function attemptDocRef(db: Firestore, callDropId: string, attemptKey: string) {
+  return db.collection('callTerminations').doc(`${callDropId}_${attemptKey}`);
+}
+
+export function attemptKeyFromRoomName(callDropId: string, roomName: string): string {
+  if (!roomName || roomName === callDropId) return 'legacy';
+  const prefix = `${callDropId}-`;
+  return roomName.startsWith(prefix) ? roomName.slice(prefix.length) : 'legacy';
+}
+
+/** Paired read for ackAttemptInTransaction — call EARLY in the writer's transaction,
+ *  before any of its writes (the Firestore all-reads-before-writes contract). */
+export async function readAttemptInTransaction(
+  txn: Transaction,
+  db: Firestore,
+  callDropId: string,
+  roomName: string | null,
+) {
+  const key = roomName ? attemptKeyFromRoomName(callDropId, roomName) : 'legacy';
+  return txn.get(attemptDocRef(db, callDropId, key));
+}
+
+export interface AttemptChargeInputs {
+  uids: string[];
+  joinedAtByUid: Map<string, number>;
+  trustedReliefUids: string[];
+  chargeEndMs: number;
+}
+
+/**
+ * Write-only acknowledgment — must be paired with readAttemptInTransaction in the SAME
+ * transaction (its snapshot passed back in). A missing snapshot means a legacy attempt
+ * (pre-Round-12 call): a synthetic resolved record is created so the ledger still
+ * converges. Resolved/cancelled records are a verified no-op (exactly-once settlement).
+ */
+export function ackAttemptInTransaction(
+  txn: Transaction,
+  db: Firestore,
+  callDropId: string,
+  roomName: string | null,
+  attemptSnap: { exists: boolean; get: (field: string) => unknown },
+  opts: { reason: string; settled: boolean; chargeInputs?: AttemptChargeInputs | null; workspaceId?: string | null; roomResolved?: boolean },
+): void {
+  const key = roomName ? attemptKeyFromRoomName(callDropId, roomName) : 'legacy';
+  const ref = attemptDocRef(db, callDropId, key);
+  const now = Date.now();
+  const chargeRecord = opts.chargeInputs
+    ? {
+        uids: opts.chargeInputs.uids,
+        joinedAtByUid: Object.fromEntries(opts.chargeInputs.joinedAtByUid),
+        trustedReliefUids: opts.chargeInputs.trustedReliefUids,
+        chargeEndMs: opts.chargeInputs.chargeEndMs,
+      }
+    : null;
+  if (!attemptSnap.exists) {
+    txn.set(ref, {
+      callDropId,
+      attemptKey: key,
+      workspaceId: opts.workspaceId ?? null,
+      roomName: roomName ?? callDropId,
+      phase: 'resolved',
+      registeredAt: now,
+      registeredBy: null,
+      updatedAt: now,
+      settled: opts.settled,
+      resolvedAt: now,
+      resolvedReason: opts.reason,
+      chargeInputs: chargeRecord,
+      roomResolved: opts.roomResolved ?? true,
+      legacy: true,
+    });
+    return;
+  }
+  const phase = attemptSnap.get('phase');
+  if (phase === 'resolved' || phase === 'cancelled') return;
+  const priorSettled = attemptSnap.get('settled') === true;
+  txn.update(ref, {
+    phase: 'resolved',
+    updatedAt: now,
+    resolvedAt: now,
+    resolvedReason: opts.reason,
+    settled: priorSettled || opts.settled,
+    chargeInputs: chargeRecord ?? attemptSnap.get('chargeInputs') ?? null,
+    roomResolved: opts.roomResolved ?? attemptSnap.get('roomResolved') ?? false,
+  });
+}
+
+/**
+ * Register an attempt BEFORE the external createRoom is issued. The registration
+ * transactionally reads the workspace (a DELETING scope cannot register — this closes
+ * register-after-deletion-scan) and the registrant's account barrier (no new call
+ * attempts under an account deletion). Idempotent for the same live identity.
+ */
+export async function registerCallAttempt(
+  db: Firestore,
+  args: { callDropId: string; attemptKey: string; workspaceId: string; roomName: string; registeredBy: string },
+): Promise<{ ok: true; error?: undefined } | { ok: false; error: string }> {
+  const ref = attemptDocRef(db, args.callDropId, args.attemptKey);
+  return db.runTransaction(async (tx) => {
+    const wsSnap = await tx.get(db.collection('workspaces').doc(args.workspaceId));
+    if (!wsSnap.exists) return { ok: false as const, error: 'Workspace not found' };
+    if (wsSnap.get('deleting') === true) return { ok: false as const, error: 'Workspace is deleting' };
+    const barrierSnap = await tx.get(db.collection('accountBarriers').doc(args.registeredBy));
+    if (barrierSnap.exists) {
+      const state = barrierSnap.get('state');
+      if (state === 'active' || state === 'completing' || state === 'finalizing') {
+        return { ok: false as const, error: 'Account deletion is in progress' };
+      }
+    }
+    const attemptSnap = await tx.get(ref);
+    const now = Date.now();
+    if (!attemptSnap.exists) {
+      tx.set(ref, {
+        callDropId: args.callDropId,
+        attemptKey: args.attemptKey,
+        workspaceId: args.workspaceId,
+        roomName: args.roomName,
+        phase: 'registered',
+        registeredAt: now,
+        registeredBy: args.registeredBy,
+        updatedAt: now,
+        settled: false,
+        roomResolved: false,
+      });
+      return { ok: true as const };
+    }
+    const phase = attemptSnap.get('phase');
+    if (phase === 'resolved' || phase === 'cancelled') {
+      return { ok: false as const, error: 'Attempt is no longer active' };
+    }
+    return { ok: true as const };
+  });
+}
+
+/**
+ * The creator's post-createRoom / failed-createRoom phase write. REFUSES on a
+ * cancelled/resolved record (cancel-before-issue): the creator then deletes the room it
+ * created and the record is retained until acknowledged.
+ */
+export async function markCallAttemptPhase(
+  db: Firestore,
+  callDropId: string,
+  attemptKey: string,
+  phase: 'roomCreated' | 'creationFailed',
+): Promise<{ ok: boolean; refused: boolean }> {
+  const ref = attemptDocRef(db, callDropId, attemptKey);
+  try {
+    return await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) return { ok: false, refused: false };
+      const current = snap.get('phase');
+      if (current === 'cancelled' || current === 'resolved') return { ok: false, refused: true };
+      if (current === phase) return { ok: true, refused: false };
+      tx.update(ref, { phase, updatedAt: Date.now() });
+      return { ok: true, refused: false };
+    });
+  } catch (e) {
+    console.warn('[call-attempt] phase mark failed', callDropId, attemptKey, e);
+    return { ok: false, refused: false };
+  }
+}
+
+/** Standalone resolve (no usage charge) — start's losing branches, cancellations. */
+export async function resolveCallAttemptStandalone(
+  db: Firestore,
+  callDropId: string,
+  attemptKey: string,
+  reason: string,
+  roomResolved = true,
+): Promise<void> {
+  const ref = attemptDocRef(db, callDropId, attemptKey);
+  try {
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) return;
+      const phase = snap.get('phase');
+      if (phase === 'resolved' || phase === 'cancelled') return;
+      const now = Date.now();
+      tx.update(ref, {
+        phase: 'resolved',
+        updatedAt: now,
+        resolvedAt: now,
+        resolvedReason: reason,
+        settled: snap.get('settled') === true,
+        roomResolved,
+      });
+    });
+  } catch (e) {
+    console.warn('[call-attempt] standalone resolve failed', callDropId, attemptKey, e);
+  }
+}
+
+/** Cancel an attempt (never-issued or failed creations). Idempotent. */
+export async function cancelCallAttempt(
+  db: Firestore,
+  callDropId: string,
+  attemptKey: string,
+): Promise<void> {
+  const ref = attemptDocRef(db, callDropId, attemptKey);
+  try {
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) return;
+      const phase = snap.get('phase');
+      if (phase !== 'registered' && phase !== 'roomCreated' && phase !== 'creationFailed') return;
+      tx.update(ref, { phase: 'cancelled', updatedAt: Date.now() });
+    });
+  } catch (e) {
+    console.warn('[call-attempt] cancel failed', callDropId, attemptKey, e);
+  }
+}
+
+/**
+ * The C6 creation-resolution window. An attempt in registered/roomCreated/creationFailed
+ * is NEVER resolved by an instantaneous absence lookup while a creation could still be
+ * in flight: before `registeredAt + CREATION_RESOLUTION_WINDOW` it stays UNRESOLVED (the
+ * caller defers and re-checks; the deletion job never seals). After the window, an
+ * authoritative server-side listRooms lookup resolves it: room exists → stop it +
+ * acknowledge; verifiably absent → creation is resolved-failed, acknowledge. A lookup
+ * error is NOT absence — the attempt stays unresolved.
+ */
+export async function resolveAttemptByWindow(
+  db: Firestore,
+  attempt: { callDropId: string; attemptKey: string; roomName: string; phase: string; registeredAt: number },
+): Promise<'unresolved' | 'resolved'> {
+  if (attempt.phase !== 'registered' && attempt.phase !== 'roomCreated' && attempt.phase !== 'creationFailed') {
+    return 'resolved';
+  }
+  if (Date.now() - attempt.registeredAt < CREATION_RESOLUTION_WINDOW_MS) return 'unresolved';
+  const svc = getLiveKitRoomService();
+  if (!svc) return 'unresolved';
+  let roomExists = false;
+  try {
+    const rooms = await svc.listRooms([attempt.roomName]);
+    roomExists = rooms.some((r) => r.name === attempt.roomName);
+  } catch {
+    return 'unresolved';
+  }
+  if (roomExists) {
+    try {
+      await svc.deleteRoom(attempt.roomName);
+    } catch (e) {
+      console.warn('[call-attempt] window room stop failed', attempt.roomName, e);
+      return 'unresolved';
+    }
+  }
+  await resolveCallAttemptStandalone(
+    db,
+    attempt.callDropId,
+    attempt.attemptKey,
+    roomExists ? 'lookup-room-stopped' : 'lookup-absent',
+    true,
+  );
+  return 'resolved';
 }

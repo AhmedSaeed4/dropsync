@@ -16,6 +16,15 @@ export interface Workspace {
   members: string[];
   inviteCode: string;
   createdAt: Date;
+  // ROUND 12 — the frozen background-deletion job fields (present only while deleting;
+  // minted by /api/workspaces/delete-begin via the Admin SDK, never by a client).
+  deleting?: boolean;
+  deletingStartedAt?: number;
+  deletingOwner?: string;
+  deletingOwnerName?: string;
+  deletingRecipients?: string[];
+  deleteDone?: number;
+  deleteTotal?: number;
 }
 
 export interface YouTubeVideoLabel {

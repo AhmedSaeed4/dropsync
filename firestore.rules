@@ -53,6 +53,49 @@ service cloud.firestore {
         && resource.data.expiresAt <= request.time;
     }
 
+    // ---- Background-deletion helpers (Round 12) ----
+    // The frozen deletion job fields live on workspaces/{id} and are minted ONLY by the
+    // Admin route /api/workspaces/delete-begin (the Admin SDK bypasses these rules):
+    //   deleting, deletingStartedAt, deletingOwner, deletingOwnerName,
+    //   deletingRecipients, deleteDone, deleteTotal.
+    // True when the named workspace is mid-deletion. A MISSING workspace is never
+    // "deleting" — creator-authored leftover drops keep their legacy behavior by design.
+    function wsDeleting(workspaceId) {
+      return workspaceId != null
+        && exists(/databases/$(database)/documents/workspaces/$(workspaceId))
+        && 'deleting' in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data
+        && get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.deleting == true;
+    }
+    // The caller is the frozen deleting owner of the named workspace (the deletion
+    // runner's read/delete authority while the lockout holds).
+    function isDeletingOwner(workspaceId) {
+      return request.auth != null
+        && wsDeleting(workspaceId)
+        && 'deletingOwner' in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data
+        && get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.deletingOwner == request.auth.uid;
+    }
+    // Account-barrier admission: a MISSING barrier doc is OPEN (normal users); a barrier
+    // in active/completing/finalizing BLOCKS. 'cancelled' does not block (the owner
+    // aborted and recovered). Rules are fail-closed predicates only — reconciliation
+    // never runs here.
+    function barrierBlocks(uid) {
+      return exists(/databases/$(database)/documents/accountBarriers/$(uid))
+        && get(/databases/$(database)/documents/accountBarriers/$(uid)).data.state in ['active', 'completing', 'finalizing'];
+    }
+    // Import producer epoch (part J / F3): a create that names an importJobId is
+    // admitted ONLY while the caller's own matching import fence is OPEN. The field
+    // is DISTINCT from the frozen deletion job fields — create-shape validation
+    // rejects deletion job fields, while importJobId is admitted only under an OPEN
+    // fence. Cancellation closes the fence, so a persistent multi-tab client
+    // replaying a buffered write after cancellation is denied at the boundary.
+    function importEpochAdmitted() {
+      return !('importJobId' in request.resource.data)
+        || (request.auth != null
+            && exists(/databases/$(database)/documents/importFences/$(request.auth.uid + '_' + request.resource.data.importJobId))
+            && get(/databases/$(database)/documents/importFences/$(request.auth.uid + '_' + request.resource.data.importJobId)).data.userId == request.auth.uid
+            && get(/databases/$(database)/documents/importFences/$(request.auth.uid + '_' + request.resource.data.importJobId)).data.state == 'open');
+    }
+
     // Users collection - field-guarded + SELF/OWNER-ONLY read (closes the "any authed user reads
     // any user's email + tier" leak — audit critical #5). Display fields (displayName, photoURL)
     // moved to the world-readable profiles collection below; email + tier stay here. isTrusted()
@@ -142,7 +185,21 @@ service cloud.firestore {
 
     // Workspaces collection
     match /workspaces/{workspaceId} {
-      allow create: if request.auth != null;
+      // CREATE (Round 12 part B):
+      //  * SHAPE — only the known base fields (+ importJobId for a fence-backed import
+      //    create). The frozen deletion job fields are NOT in this list, so no client can
+      //    ever MINT a deletion job — only the Admin START route does (bypasses rules).
+      //  * ADMISSION — the CALLER's account barrier must be open, and so must the PROPOSED
+      //    owner's (a raw client cannot create a workspace owned by a deleting account;
+      //    normal self-owner constructors are unaffected because their own barrier is
+      //    missing/open).
+      //  * IMPORT EPOCH — a job-naming create is admitted only under the caller's OPEN
+      //    matching import fence.
+      allow create: if request.auth != null
+        && request.resource.data.keys().hasOnly(['name', 'ownerId', 'members', 'inviteCode', 'createdAt', 'importJobId'])
+        && !barrierBlocks(request.auth.uid)
+        && !barrierBlocks(request.resource.data.ownerId)
+        && importEpochAdmitted();
       allow read: if request.auth != null
         && (request.auth.uid in resource.data.members
           || resource.data.ownerId == request.auth.uid);
@@ -152,31 +209,64 @@ service cloud.firestore {
       // member/owner so the invite code can't be enumerated (the route does the lookup server-side).
       // The only remaining client-side members mutation is self-remove (leave): new ⊆ old AND
       // |new|==|old|-1 AND caller∈old AND caller∉new — no other uid can be kicked/smuggled.
-      // ownerId/name/inviteCode are immutable for non-owners; accountDeletion's owner-transfer is
-      // covered by the owner branch, its member-leave by the self-remove below.
+      //
+      // ROUND 12 (part B) — state-entry invariants layered on the same branches:
+      //  * ACTIVE workspace: the owner may still change any BASE field (kick rotates members +
+      //    inviteCode; transfer changes ownerId), but can never MINT job fields, and an
+      //    ownership transfer additionally requires the SUCCESSOR's barrier to be open
+      //    (outgoing transfer under the caller's own barrier stays legal — part K).
+      //  * DELETING workspace: the job identity is FROZEN. The owner's only writable key is
+      //    deleteDone, only monotonically (the deletion runner's progress transaction);
+      //    deleteTotal is server-written; kick/transfer/name changes are denied. The deletion
+      //    ends with the Admin SEAL route deleting the whole doc.
+      //  * SELF-REMOVE (leave) keeps the pre-Round-12 wording — members-only diff — so the
+      //    frozen job fields ride along UNCHANGED. Leaving a deleting workspace is legal.
       allow update: if request.auth != null && (
-        resource.data.ownerId == request.auth.uid
-        || (
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members'])
-          && request.resource.data.ownerId == resource.data.ownerId
+        (
+          resource.data.ownerId == request.auth.uid
           && (
-            // self-remove (leave): new ⊆ old, exactly one uid (the caller) dropped
-            (request.auth.uid in resource.data.members
-              && !(request.auth.uid in request.resource.data.members)
-              && request.resource.data.members.hasOnly(resource.data.members)
-              && request.resource.data.members.size() == resource.data.members.size() - 1)
+            (
+              (!('deleting' in resource.data) || resource.data.deleting != true)
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'ownerId', 'members', 'inviteCode', 'createdAt'])
+              && (request.resource.data.ownerId == resource.data.ownerId
+                  || !barrierBlocks(request.resource.data.ownerId))
+            )
+            ||
+            (
+              resource.data.deleting == true
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deleteDone'])
+              && 'deleteDone' in resource.data
+              && 'deleteDone' in request.resource.data
+              && request.resource.data.deleteDone >= resource.data.deleteDone
+            )
           )
         )
+        ||
+        (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members'])
+          && request.resource.data.ownerId == resource.data.ownerId
+          && request.auth.uid in resource.data.members
+          && !(request.auth.uid in request.resource.data.members)
+          && request.resource.data.members.hasOnly(resource.data.members)
+          && request.resource.data.members.size() == resource.data.members.size() - 1
+        )
       );
+      // Raw owner parent-delete retained (the accepted residual: rules cannot prove cleanup).
       allow delete: if request.auth != null && resource.data.ownerId == request.auth.uid;
 
-      // Group chat messages - only workspace members can read/write
+      // Group chat messages - workspace members read/write; Round 12 adds the DELETING-OWNER
+      // read + delete (the message-wipe stage runs client-side as the frozen deleting owner)
+      // and gates every ordinary member/sender path while the workspace deletes.
       match /messages/{messageId} {
-        allow read: if request.auth != null &&
-          request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members;
-        allow create: if request.auth != null &&
-          request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members &&
-          request.auth.uid == request.resource.data.senderId
+        allow read: if request.auth != null && (
+          (!wsDeleting(workspaceId)
+            && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members)
+          || isDeletingOwner(workspaceId)
+        );
+        allow create: if request.auth != null
+          && !wsDeleting(workspaceId)
+          && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members
+          && request.auth.uid == request.resource.data.senderId
           // Trust anchors the update rule relies on — enforced at create so a raw-SDK member can't
           // forge a malformed message that defeats the 24h window (future-dated createdAt), the
           // 10-edit cap (editCount < 0), or inject plaintext (encrypted:false). A serverTimestamp()
@@ -185,13 +275,18 @@ service cloud.firestore {
           && request.resource.data.editCount == 0
           && request.resource.data.createdAt == request.time;
         allow delete: if request.auth != null && (
-          (request.auth.uid == resource.data.senderId &&
-           request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members)
+          isDeletingOwner(workspaceId)
+          ||
+          (request.auth.uid == resource.data.senderId
+           && !wsDeleting(workspaceId)
+           && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members)
           ||
           request.auth.uid == get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId
         );
         // Edit your OWN message only — sender-only (NOT the owner), within 24h, capped at 10 edits.
+        // Round 12: no message edits while the workspace deletes.
         allow update: if request.auth != null
+          && !wsDeleting(workspaceId)
           // caller IS the EXISTING doc's sender (resource.data = pre-update; senderId cannot be reassigned via payload)
           && 'senderId' in resource.data
           && request.auth.uid == resource.data.senderId
@@ -220,107 +315,127 @@ service cloud.firestore {
               : request.resource.data.editCount == 1);
       }
 
-      // Per-user group chat read state - user can only access their own doc, must be a workspace member
+      // Per-user group chat read state - user can only access their own doc, must be a workspace
+      // member. Round 12: gated off entirely while the workspace deletes (residual orphan docs
+      // are accepted — the SEAL cascade removes them server-side).
       match /readState/{userId} {
-        allow read: if request.auth != null &&
-          request.auth.uid == userId &&
-          request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members;
-        allow write: if request.auth != null &&
-          request.auth.uid == userId &&
-          request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members;
+        allow read: if request.auth != null
+          && !wsDeleting(workspaceId)
+          && request.auth.uid == userId
+          && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members;
+        allow write: if request.auth != null
+          && !wsDeleting(workspaceId)
+          && request.auth.uid == userId
+          && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members;
       }
 
-      // Group chat typing indicator — per-user ephemeral plaintext doc. Read open to ALL workspace
-      // members (so everyone sees who is typing); write restricted to the doc owner (self only) so
-      // no one can spoof another user as typing. These rules do NO field-equality check, so the
-      // missing-field gotcha does not apply.
+      // Group chat typing indicator — per-user ephemeral plaintext doc. Round 12: gated off
+      // while the workspace deletes (residual orphans accepted).
       match /typing/{userId} {
-        allow read: if request.auth != null &&
-          request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members;
-        allow write: if request.auth != null &&
-          request.auth.uid == userId &&
-          request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members;
+        allow read: if request.auth != null
+          && !wsDeleting(workspaceId)
+          && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members;
+        allow write: if request.auth != null
+          && !wsDeleting(workspaceId)
+          && request.auth.uid == userId
+          && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members;
       }
 
-      // Group chat online presence — per-user ephemeral plaintext doc. Same shape: member-wide
-      // read (so everyone sees who is online / last-seen), self-only write (anti-spoof).
+      // Group chat online presence — per-user ephemeral plaintext doc. Round 12: gated off
+      // while the workspace deletes (residual orphans accepted).
       match /presence/{userId} {
-        allow read: if request.auth != null &&
-          request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members;
-        allow write: if request.auth != null &&
-          request.auth.uid == userId &&
-          request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members;
+        allow read: if request.auth != null
+          && !wsDeleting(workspaceId)
+          && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members;
+        allow write: if request.auth != null
+          && !wsDeleting(workspaceId)
+          && request.auth.uid == userId
+          && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members;
       }
     }
 
-    // Workspace encryption keys. Read -> workspace MEMBER only (members decrypt drops + group chat
-    // with the key via getWorkspaceKey). Create/update -> workspace OWNER only (the key is written
-    // once by the workspace creator at creation time; no legitimate flow ever rewrites it). Stops any
-    // authenticated user bricking a key (a permanent "[Decryption failed]" DoS for the whole
-    // workspace) or reading keySecret for a workspace they are not a member of.
+    // Workspace encryption keys. Read -> workspace MEMBER (Round 12: OR the frozen deleting
+    // owner — the runner reads the key state during the key stage). Create/update -> workspace
+    // OWNER only, and NEVER while the workspace deletes (no key resurrection); an import-backed
+    // key create additionally requires the caller's OPEN matching import fence (the epoch gate).
     match /workspaceKeys/{workspaceId} {
       allow read: if request.auth != null
         && exists(/databases/$(database)/documents/workspaces/$(workspaceId))
-        && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members;
+        && (request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members
+            || isDeletingOwner(workspaceId));
       allow create, update: if request.auth != null
         && exists(/databases/$(database)/documents/workspaces/$(workspaceId))
-        && get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId == request.auth.uid;
+        && get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId == request.auth.uid
+        && !wsDeleting(workspaceId)
+        && importEpochAdmitted();
     }
 
     // Drops collection
     match /drops/{dropId} {
       // Create - must be authenticated, own the drop, be trusted to make it last forever, AND be a
       // member of the target workspace. Personal drops (workspaceId == null) are unaffected. Call
-      // drops are created ONLY by /api/call/start (Admin SDK, bypasses rules) — block any client
-      // create of type 'call' so a raw-SDK member can't mint a rogue call drop that escapes the
-      // one-call-per-workspace + capacity-4 invariants the route enforces (§3: "NEVER client-side").
+      // drops are created ONLY by /api/call/start (Admin SDK, bypasses rules). ROUND 12: no new
+      // drops into a DELETING destination (checked on the payload's destination at the commit
+      // boundary), and a job-naming import create requires the OPEN fence.
       allow create: if request.auth != null
         && request.auth.uid == request.resource.data.userId
         && (!isForeverWrite() || isTrusted())
         && (request.resource.data.workspaceId == null
-            || request.auth.uid in get(/databases/$(database)/documents/workspaces/$(request.resource.data.workspaceId)).data.members)
-        && request.resource.data.type != 'call';
+            || (!wsDeleting(request.resource.data.workspaceId)
+                && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(request.resource.data.workspaceId)).data.members))
+        && request.resource.data.type != 'call'
+        && importEpochAdmitted();
 
-      // Read - authenticated users can read their own drops or workspace drops they're a member of
+      // Read - authenticated users can read their own drops or workspace drops they're a member of.
+      // ROUND 12: creator/member reads are gated off while the drop's workspace deletes; the
+      // frozen deleting owner may enumerate (the loop must see its work queue).
       allow read: if request.auth != null && (
-        request.auth.uid == resource.data.userId ||
-        (resource.data.workspaceId != null &&
-          request.auth.uid in get(/databases/$(database)/documents/workspaces/$(resource.data.workspaceId)).data.members)
+        (!wsDeleting(resource.data.workspaceId)
+          && request.auth.uid == resource.data.userId)
+        || (resource.data.workspaceId != null
+          && !wsDeleting(resource.data.workspaceId)
+          && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(resource.data.workspaceId)).data.members)
+        || isDeletingOwner(resource.data.workspaceId)
       );
 
       // Update - creator/owner always; a member only if the drop is NOT locked; forever writes still
       // require a trusted tier; only creator/owner may touch the locked field. Call drops are NEVER
-      // client-updatable — liveness lives in callPresence/{uid}.lastSeen and the roster/callState
-      // are route-only (the Admin route bypasses rules). Block ALL client updates to a call drop.
+      // client-updatable. ROUND 12: no client updates at all while the source workspace deletes, and
+      // a workspaceId change is denied if the DESTINATION is deleting (checked on the post-state).
       allow update: if request.auth != null
+        && !wsDeleting(resource.data.workspaceId)
         && (canMutateDrop() || (!isLockedDrop() && isDropWorkspaceMember()))
         && (!isForeverWrite() || isTrusted())
         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['locked']) || canMutateDrop())
-        && !(resource.data.type == 'call');
+        && !(resource.data.type == 'call')
+        && (request.resource.data.workspaceId == null
+            || request.resource.data.workspaceId == resource.data.workspaceId
+            || !wsDeleting(request.resource.data.workspaceId));
 
-      // Delete - creator/owner always; a member may delete an open drop OR an already-expired drop
-      // (so cleanup can remove dead locked drops when only members are online). Live-call lifecycle
-      // is separate from generic drop expiry: call deletion is owned by the Admin routes/webhook/
-      // cron, so client cleanup cannot delete either new calls or legacy calls carrying the old
-      // four-hour expiry.
-      allow delete: if request.auth != null && (
-        canMutateDrop()
-        || (isDropWorkspaceMember() && (!isLockedDrop() || isExpiredDrop()))
-      ) && resource.data.type != 'call';
+      // Delete - creator/owner always; a member may delete an open drop OR an already-expired drop.
+      // Client call-drop deletion stays unconditionally forbidden (the terminal route owns call
+      // teardown). ROUND 12: creator/member deletes are gated off while the workspace deletes; the
+      // frozen deleting owner may delete any non-call drop (the drops stage).
+      allow delete: if request.auth != null
+        && resource.data.type != 'call'
+        && (
+          isDeletingOwner(resource.data.workspaceId)
+          || (!wsDeleting(resource.data.workspaceId)
+              && (canMutateDrop()
+                  || (isDropWorkspaceMember() && (!isLockedDrop() || isExpiredDrop()))))
+        );
 
       // ---- Live-call signaling (per peer pair) ---- SDP offer/answer + coalesced ICE candidates
-      // for one pair in a call drop's full mesh. Both ends are authenticated members of the call's
-      // workspace AND listed in the call's roster (callParticipantUids). WebRTC-correct (an offer is
-      // FROM one peer TO another) AND quota-minimal (≤6 pair docs for a 4-person mesh; ICE coalesces
-      // via arrayUnion into two arrays, never one addDoc per candidate). The Admin leave route
-      // cascades these (bypasses rules); clients never delete. Field allowlist on UPDATE keeps a
-      // member from writing anything beyond the signaling keys.
+      // for one pair in a call drop's full mesh. ROUND 12: the whole signaling surface is gated off
+      // while the call's workspace deletes (the deletion force-ends the call via the terminal
+      // route; signaling for a dying call is pointless and members are locked out).
       match /callSignals/{pairId} {
         function isCallMember() {
           return request.auth != null
             && exists(/databases/$(database)/documents/drops/$(dropId))
             && get(/databases/$(database)/documents/drops/$(dropId)).data.type == 'call'
             && get(/databases/$(database)/documents/drops/$(dropId)).data.workspaceId != null
+            && !wsDeleting(get(/databases/$(database)/documents/drops/$(dropId)).data.workspaceId)
             && exists(/databases/$(database)/documents/workspaces/$(get(/databases/$(database)/documents/drops/$(dropId)).data.workspaceId))
             && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(get(/databases/$(database)/documents/drops/$(dropId)).data.workspaceId)).data.members
             && request.auth.uid in get(/databases/$(database)/documents/drops/$(dropId)).data.callParticipantUids;
@@ -331,16 +446,14 @@ service cloud.firestore {
         allow delete: if false;
       }
 
-      // ---- Live-call presence (per-participant heartbeat) ---- lastSeen is a serverTimestamp
-      // SENTINEL (never a client Date — dodges the cross-device clock-skew bug already fixed for
-      // workspace presence/typing/seen-by). Each participant writes ONLY their own doc (self-only)
-      // and ONLY the lastSeen field. reap-stale/leave routes delete these (bypass rules).
+      // ---- Live-call presence (per-participant heartbeat) ---- same Round 12 workspace gate.
       match /callPresence/{uid} {
         function isCallPresenceMember() {
           return request.auth != null
             && exists(/databases/$(database)/documents/drops/$(dropId))
             && get(/databases/$(database)/documents/drops/$(dropId)).data.type == 'call'
             && get(/databases/$(database)/documents/drops/$(dropId)).data.workspaceId != null
+            && !wsDeleting(get(/databases/$(database)/documents/drops/$(dropId)).data.workspaceId)
             && exists(/databases/$(database)/documents/workspaces/$(get(/databases/$(database)/documents/drops/$(dropId)).data.workspaceId))
             && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(get(/databases/$(database)/documents/drops/$(dropId)).data.workspaceId)).data.members
             && request.auth.uid in get(/databases/$(database)/documents/drops/$(dropId)).data.callParticipantUids;
@@ -354,24 +467,32 @@ service cloud.firestore {
       }
     }
 
-    // Categories collection. Read/create -> the creator OR, for workspace categories, a member of
-    // that workspace. Delete -> the creator OR the workspace owner (so an injected category can be
-    // cleaned up). Closes non-member reads/creates of a workspace's category list and indestructible
-    // injected categories. Personal categories (workspaceId == null) stay creator-only.
+    // Categories collection. ROUND 12: reads/creates/deletes by creator/member are gated off
+    // while the workspace deletes; the workspace-OWNER delete branch is PRESERVED (the categories
+    // stage runs client-side as the owner); the deleting owner keeps read (enumeration) via
+    // isDeletingOwner. Personal categories (workspaceId == null) are unaffected (a missing
+    // workspace is never "deleting"). A job-naming import create requires the OPEN fence.
     match /categories/{categoryId} {
       allow read: if request.auth != null && (
-        request.auth.uid == resource.data.createdBy
+        (request.auth.uid == resource.data.createdBy
+          && !wsDeleting(resource.data.workspaceId))
         || (resource.data.workspaceId != null
-            && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(resource.data.workspaceId)).data.members)
+          && !wsDeleting(resource.data.workspaceId)
+          && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(resource.data.workspaceId)).data.members)
+        || isDeletingOwner(resource.data.workspaceId)
       );
       allow create: if request.auth != null
         && request.auth.uid == request.resource.data.createdBy
+        && !wsDeleting(request.resource.data.workspaceId)
         && (request.resource.data.workspaceId == null
-            || request.auth.uid in get(/databases/$(database)/documents/workspaces/$(request.resource.data.workspaceId)).data.members);
+            || request.auth.uid in get(/databases/$(database)/documents/workspaces/$(request.resource.data.workspaceId)).data.members)
+        && importEpochAdmitted();
       allow delete: if request.auth != null && (
-        request.auth.uid == resource.data.createdBy
+        (request.auth.uid == resource.data.createdBy
+          && !wsDeleting(resource.data.workspaceId))
         || (resource.data.workspaceId != null
-            && get(/databases/$(database)/documents/workspaces/$(resource.data.workspaceId)).data.ownerId == request.auth.uid)
+          && exists(/databases/$(database)/documents/workspaces/$(resource.data.workspaceId))
+          && get(/databases/$(database)/documents/workspaces/$(resource.data.workspaceId)).data.ownerId == request.auth.uid)
       );
     }
 
@@ -398,6 +519,77 @@ service cloud.firestore {
     // keyed on the Firebase-verified uid (the Admin SDK bypasses firestore.rules). Clients
     // never read or write this doc; deny all as defense-in-depth.
     match /usage/{uid} {
+      allow read, write: if false;
+    }
+
+    // ---- ROUND 12 NEW COLLECTIONS ----
+
+    // Deletion notices (tombstones) — created ONLY by the Admin PREPARE route
+    // (/api/workspaces/delete-prepare-notices). Doc id: {recipientId}_{workspaceId}.
+    // The recipient reads their own notice (drives the goodbye toast) and deletes it
+    // (cooperative acknowledgment). No client create/update — a member can neither
+    // forge nor silence another member's notice.
+    match /deletionNotices/{noticeId} {
+      allow read, delete: if request.auth != null
+        && request.auth.uid == resource.data.recipientId;
+      allow create, update: if false;
+    }
+
+    // Deletion receipts — written ONLY by the Admin SEAL route
+    // (/api/workspaces/delete-finalize) atomically with the parent delete. Read by the
+    // deleted workspace's owner OR any frozen recipient holding a notice (both use it
+    // as the completion authority when the workspace doc is gone).
+    match /deletionReceipts/{workspaceId} {
+      allow read: if request.auth != null
+        && (request.auth.uid == resource.data.ownerId
+          || request.auth.uid in resource.data.recipients);
+      allow write: if false;
+    }
+
+    // Call termination/attempt records — server-only accounting + obligation ledger for
+    // the call terminal primitive. Doc id: {callDropId}_{attemptKey}. Clients never
+    // read or write these.
+    match /callTerminations/{attemptId} {
+      allow read, write: if false;
+    }
+
+    // Account barriers — the account-deletion finalizer state, written ONLY by the
+    // /api/account/barrier-* Admin routes. The owner may READ their own barrier
+    // (progress/resume UX); everything else is denied. Other rules reach it via get()
+    // in barrierBlocks() — a fail-closed predicate, never reconciliation.
+    match /accountBarriers/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    // Import fences — the durable import producer state, written ONLY by the
+    // /api/archive/import-fence Admin route. The fence owner (own userId) may read the
+    // fence, its item ledger, and its manifest chunks; nobody else.
+    match /importFences/{fenceId} {
+      allow read: if request.auth != null
+        && exists(/databases/$(database)/documents/importFences/$(fenceId))
+        && request.auth.uid == get(/databases/$(database)/documents/importFences/$(fenceId)).data.userId;
+      allow write: if false;
+
+      match /items/{itemId} {
+        allow read: if request.auth != null
+          && exists(/databases/$(database)/documents/importFences/$(fenceId))
+          && request.auth.uid == get(/databases/$(database)/documents/importFences/$(fenceId)).data.userId;
+        allow write: if false;
+      }
+
+      match /manifest/{chunkId} {
+        allow read: if request.auth != null
+          && exists(/databases/$(database)/documents/importFences/$(fenceId))
+          && request.auth.uid == get(/databases/$(database)/documents/importFences/$(fenceId)).data.userId;
+        allow write: if false;
+      }
+    }
+
+    // Deletion job certificates — the notice-preparation certificate + seal state,
+    // written ONLY by the Admin PREPARE/SEAL routes. Clients get it all via
+    // /api/workspaces/delete-status (Admin); no direct client access.
+    match /deletionJobs/{workspaceId} {
       allow read, write: if false;
     }
   }

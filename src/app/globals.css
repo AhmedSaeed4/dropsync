@@ -766,3 +766,86 @@ html {
 @media (prefers-reduced-motion: reduce) {
   .ds-link, .ds-link::after { transition: none; }
 }
+/* ---- ROUND 12 v3 (D-d/D-g): the deleting-workspace switcher row, RESTORED to the
+   owner-approved design (deleting-workspace-preview.html) after the v2 redesign was
+   rejected. One-line row — dimmed icon + shimmer name + the subtle status word, no
+   action buttons, dead (no hover highlight), shake on click. The hover progress
+   tooltip sits above every layer (z-index 60). The click-note is the mock's
+   screen-level toast: the component portals it to <body> and it is pinned
+   bottom-center with position: fixed — it can never be clipped by the dropdown
+   panel or the viewport edge (the v1 bug). Shared by both layouts via
+   DeletingWorkspaceRow; reduced-motion users already lose the shimmer via the
+   .shimmer-text rule above (the name stays readable). */
+.ws-deleting {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0.75rem 1rem;
+  cursor: not-allowed;
+}
+.ws-deleting:hover { background: transparent; }
+
+@keyframes ws-deleting-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-3px); }
+  75% { transform: translateX(3px); }
+}
+/* During the shake the row transform creates a stacking context that would trap the
+   z-60 tip beneath sibling rows z-10 buttons — lift the whole row while it shakes. */
+.ws-deleting-shake { animation: ws-deleting-shake 0.18s ease-in-out 2; z-index: 60; }
+
+.ws-deleting-tip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%);
+  background: #1a1a1a;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 5px 10px 7px;
+  border-radius: 6px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+  z-index: 60; /* v3: above every switcher layer */
+}
+.ws-deleting:hover .ws-deleting-tip { opacity: 1; }
+/* v3: the mock's dark-theme tooltip — light bubble on the dark dropdown. */
+.ws-deleting-tip.tip-dark { background: #f5f2ed; color: #1a1a1a; }
+.ws-deleting-tip .ws-deleting-bar {
+  display: block;
+  height: 3px;
+  background: #ffffff33;
+  border-radius: 2px;
+  margin-top: 5px;
+  overflow: hidden;
+  width: 130px;
+}
+.ws-deleting-tip.tip-dark .ws-deleting-bar { background: #1a1a1a22; }
+.ws-deleting-tip .ws-deleting-bar i {
+  display: block;
+  height: 100%;
+  background: #EF4444; /* D-g: red-500 */
+  border-radius: 2px;
+  transition: width 0.5s;
+}
+
+/* v3: the click-note is the approved screen-level toast — fixed to the viewport,
+   bottom-center, portaled to <body> by the component, above everything. */
+.ws-deleting-note {
+  position: fixed;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1a1a1a;
+  color: #fff;
+  font-size: 12px;
+  padding: 8px 16px;
+  border-radius: 8px;
+  white-space: nowrap;
+  z-index: 9999;
+}

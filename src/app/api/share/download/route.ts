@@ -81,6 +81,29 @@ export async function GET(request: NextRequest) {
 
     const data = snapshot.docs[0].data();
 
+    // ROUND 12 serving gate (fail-closed, mirrors GET /api/share): a share of a DELETING
+    // workspace stops serving; a legacy zombie (no source AND the drop gone) stops serving.
+    const sourceWorkspaceId = typeof data.sourceWorkspaceId === 'string' ? data.sourceWorkspaceId : null;
+    if (sourceWorkspaceId) {
+      const wsDoc = await adminDb.collection('workspaces').doc(sourceWorkspaceId).get();
+      if (!wsDoc.exists || wsDoc.get('deleting') === true) {
+        return NextResponse.json({ error: 'Share expired' }, { status: 410 });
+      }
+    } else if (typeof data.dropId === 'string' && data.dropId) {
+      const dropDoc = await adminDb.collection('drops').doc(data.dropId).get();
+      if (dropDoc.exists) {
+        const legacyWs = dropDoc.get('workspaceId');
+        if (typeof legacyWs === 'string' && legacyWs) {
+          const wsDoc = await adminDb.collection('workspaces').doc(legacyWs).get();
+          if (!wsDoc.exists || wsDoc.get('deleting') === true) {
+            return NextResponse.json({ error: 'Share expired' }, { status: 410 });
+          }
+        }
+      } else {
+        return NextResponse.json({ error: 'Share expired' }, { status: 410 });
+      }
+    }
+
     // Expiry check — READ-ONLY. Do NOT delete here; ../route.ts owns expiry-cleanup. Forever
     // drops (expiresAt null) skip this and remain downloadable.
     if (data.expiresAt) {

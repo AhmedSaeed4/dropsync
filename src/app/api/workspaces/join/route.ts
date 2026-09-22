@@ -89,15 +89,40 @@ export async function POST(request: Request) {
       );
     }
 
-    // ---- WRITE: atomic arrayUnion so a concurrent join can't race a duplicate. Members ONLY. ----
-    await d.ref.update({ members: FieldValue.arrayUnion(uid) });
+    // ---- WRITE: transactional membership admission (ROUND 12). The deleting predicate and the
+    // arrayUnion commit atomically — a workspace that began deleting between the lookup and this
+    // write can never gain a member. ----
+    let txResult: { joined: boolean; deleting: boolean; members: string[] } = {
+      joined: false,
+      deleting: false,
+      members,
+    };
+    await adminDb.runTransaction(async (tx) => {
+      const txSnap = await tx.get(d.ref);
+      if (!txSnap.exists) return;
+      const txData = txSnap.data()!;
+      if (txData.deleting === true) {
+        txResult = { joined: false, deleting: true, members: [] };
+        return;
+      }
+      const txMembers: string[] = Array.isArray(txData.members) ? txData.members : [];
+      tx.update(d.ref, { members: FieldValue.arrayUnion(uid) });
+      txResult = { joined: true, deleting: false, members: [...new Set([...txMembers, uid])] };
+    });
+
+    if (txResult.deleting) {
+      return NextResponse.json({ error: 'This workspace is being deleted' }, { status: 409 });
+    }
+    if (!txResult.joined) {
+      return NextResponse.json({ error: 'Invalid invite code' }, { status: 404 });
+    }
 
     return NextResponse.json(
       {
         workspaceId: d.id,
         name: data.name,
         ownerId: data.ownerId,
-        members: [...members, uid],
+        members: txResult.members,
         inviteCode: data.inviteCode,
       },
       { status: 200 }

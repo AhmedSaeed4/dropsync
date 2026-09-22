@@ -85,6 +85,10 @@ export async function GET(request: NextRequest) {
       if (!members.includes(uid)) {
         return NextResponse.json({ error: 'Not a workspace member' }, { status: 403 });
       }
+      // ROUND 12: no ordinary share reads for a dying workspace (the deleting owner may look).
+      if (wsDoc.get('deleting') === true && wsDoc.get('deletingOwner') !== uid) {
+        return NextResponse.json({ error: 'This workspace is being deleted' }, { status: 409 });
+      }
     } else {
       if (dropData.userId !== uid) {
         return NextResponse.json({ error: 'Not authorized' }, { status: 403 });

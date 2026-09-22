@@ -123,7 +123,8 @@ interface EditorialLayoutProps {
   handleDeleteCategory: (id: string, name: string) => void;
   handleCreateWorkspace: (name: string) => Promise<void>;
   handleJoinWorkspace: (code: string) => Promise<{ success: boolean; error?: string }>;
-  handleDeleteWorkspace: () => void;
+  handleDeleteWorkspace: (forceEndAck?: boolean) => void;
+  forceEndPending: boolean;
   handleLeaveWorkspace: () => void;
   handleLeaveAndTransfer: (newOwnerId: string) => void;
   handlePreview: (drop: Drop) => void;
@@ -204,7 +205,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
     drops, dropsLoading, refreshDrops,
     categories, handleCreateCategory, handleDeleteCategory,
     handleCreateWorkspace, handleJoinWorkspace,
-    handleDeleteWorkspace, handleLeaveWorkspace, handleLeaveAndTransfer,
+    handleDeleteWorkspace, forceEndPending, handleLeaveWorkspace, handleLeaveAndTransfer,
     handlePreview, handleOpenRootDrop, handleOpenMentionedDrop, handlePreviewBack,
     handleClosePreview, clearPreviewTrail, dropTrailLength,
     handleShowVerifyModal, handleCheckVerification,
@@ -767,6 +768,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
           onDelete={handleDeleteWorkspace}
           onLeaveAndTransfer={handleLeaveAndTransfer}
           onImport={onImportWorkspace ? () => { setWorkspaceToDelete(null); onImportWorkspace(); } : undefined}
+          forceEndPending={forceEndPending}
           onClose={() => setWorkspaceToDelete(null)}
         />
       )}

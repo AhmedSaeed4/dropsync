@@ -36,8 +36,11 @@ const r2 = new S3Client({
 const MAX_RAW_BODY = 700 * 1024 * 1024;  // ~700MB raw base64 body
 const MAX_DECODED = 500 * 1024 * 1024;   // 500MB decoded (matches /api/upload)
 
-async function deleteShareR2Assets(shareData: Record<string, unknown>) {
+// ROUND 12: returns the keys that FAILED so callers can acknowledge per item — a cleanup
+// obligation is never silently lost.
+async function deleteShareR2Assets(shareData: Record<string, unknown>): Promise<string[]> {
   const keys = [shareData.imageR2Key, shareData.fileR2Key].filter(Boolean) as string[];
+  const failed: string[] = [];
   for (const key of keys) {
     try {
       await r2.send(new DeleteObjectCommand({
@@ -46,8 +49,10 @@ async function deleteShareR2Assets(shareData: Record<string, unknown>) {
       }));
     } catch (error) {
       console.error('Failed to delete share asset from R2:', error);
+      failed.push(key);
     }
   }
+  return failed;
 }
 
 // GET /api/share?id=abc123 — fetch share data (no auth required)
@@ -66,10 +71,40 @@ export async function GET(request: NextRequest) {
 
     const data = snapshot.docs[0].data();
 
+    // ROUND 12 serving gate (fail-closed): a share of a DELETING workspace stops serving. New
+    // shares carry the server-derived sourceWorkspaceId; legacy shares fall back to the drop's
+    // workspace, and a legacy zombie (no source AND the drop gone) stops serving too.
+    const sourceWorkspaceId = typeof data.sourceWorkspaceId === 'string' ? data.sourceWorkspaceId : null;
+    if (sourceWorkspaceId) {
+      const wsDoc = await adminDb.collection('workspaces').doc(sourceWorkspaceId).get();
+      if (!wsDoc.exists || wsDoc.get('deleting') === true) {
+        return NextResponse.json({ error: 'Share expired' }, { status: 410 });
+      }
+    } else if (typeof data.dropId === 'string' && data.dropId) {
+      const dropDoc = await adminDb.collection('drops').doc(data.dropId).get();
+      if (dropDoc.exists) {
+        const legacyWs = dropDoc.get('workspaceId');
+        if (typeof legacyWs === 'string' && legacyWs) {
+          const wsDoc = await adminDb.collection('workspaces').doc(legacyWs).get();
+          if (!wsDoc.exists || wsDoc.get('deleting') === true) {
+            return NextResponse.json({ error: 'Share expired' }, { status: 410 });
+          }
+        }
+      } else {
+        // Legacy zombie: the drop is gone and no source scope exists — fail closed.
+        return NextResponse.json({ error: 'Share expired' }, { status: 410 });
+      }
+    }
+
     if (data.expiresAt) {
       const expiresAt = data.expiresAt.toDate();
       if (expiresAt <= new Date()) {
-        await deleteShareR2Assets(data);
+        const failedAssets = await deleteShareR2Assets(data);
+        if (failedAssets.length > 0) {
+          // Per-item acknowledgment: keep the record (evidence) and fail the request so the
+          // next GET retries — never silently lose a cleanup obligation.
+          return NextResponse.json({ error: 'Share expired' }, { status: 500 });
+        }
         await adminDb.collection('shares').doc(snapshot.docs[0].id).delete();
         return NextResponse.json({ error: 'Share expired' }, { status: 410 });
       }
@@ -236,6 +271,10 @@ export async function POST(request: NextRequest) {
       if (!members.includes(decodedToken.uid)) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
       }
+      // ROUND 12: no new public shares for a dying workspace.
+      if (workspaceDoc.get('deleting') === true) {
+        return NextResponse.json({ error: 'This workspace is being deleted' }, { status: 409 });
+      }
     } else if (dropData.userId !== decodedToken.uid) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
@@ -249,6 +288,9 @@ export async function POST(request: NextRequest) {
       createdAt: new Date(),
       expiresAt: expiresAt ? new Date(expiresAt) : null,
     };
+    // ROUND 12: the server-derived, immutable source scope (never client-supplied) so the
+    // serving gate above can fail closed when this workspace deletes.
+    if (dropWorkspaceId) docData.sourceWorkspaceId = dropWorkspaceId;
 
     if (type === 'text' && content) docData.content = content;
     if (mimeType) docData.mimeType = mimeType;
@@ -307,7 +349,12 @@ export async function DELETE(request: NextRequest) {
       }
       const members = wsDoc.data()?.members || [];
       if (!members.includes(uid)) {
-        return NextResponse.json({ error: 'Not a workspace member' }, { status: 403 });
+        // ROUND 12 (R4): the frozen DELETING owner keeps share-cleanup authority.
+        const isDeletingOwner =
+          wsDoc.get('deleting') === true && wsDoc.get('deletingOwner') === uid;
+        if (!isDeletingOwner) {
+          return NextResponse.json({ error: 'Not a workspace member' }, { status: 403 });
+        }
       }
     } else {
       if (dropData.userId !== uid) {
@@ -316,14 +363,28 @@ export async function DELETE(request: NextRequest) {
     }
 
     const snapshot = await adminDb.collection('shares').where('dropId', '==', dropId).get();
-    const deletes = snapshot.docs.map(async (d) => {
-      const data = d.data();
-      await deleteShareR2Assets(data);
+    // ROUND 12: per-item acknowledgment — a record is deleted ONLY after its assets are
+    // confirmed gone; any failure keeps that record and fails the request so the caller
+    // (the deletion loop) retries idempotently.
+    let deleted = 0;
+    let failed = 0;
+    for (const d of snapshot.docs) {
+      const failedAssets = await deleteShareR2Assets(d.data());
+      if (failedAssets.length > 0) {
+        failed += 1;
+        continue;
+      }
       await adminDb.collection('shares').doc(d.id).delete();
-    });
-    await Promise.allSettled(deletes);
+      deleted += 1;
+    }
+    if (failed > 0) {
+      return NextResponse.json(
+        { error: 'Some shares failed to delete', deleted, failed },
+        { status: 500 },
+      );
+    }
 
-    return NextResponse.json({ success: true, deleted: snapshot.size });
+    return NextResponse.json({ success: true, deleted });
   } catch (error) {
     console.error('Share DELETE error:', error);
     return NextResponse.json({ error: 'Failed to delete shares' }, { status: 500 });

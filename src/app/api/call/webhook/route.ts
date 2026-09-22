@@ -11,6 +11,8 @@ import {
   getCallTrustedReliefUids,
   getCallUsageStatesInTransaction,
   getTrustedStatusMapInTransaction,
+  ackAttemptInTransaction,
+  readAttemptInTransaction,
   reconcileTrustedCallTransitionInTransaction,
   releaseReservationForCallInTransaction,
   releaseReservationsForCallInTransaction,
@@ -119,6 +121,8 @@ async function removeParticipant(
       return { handled: false, callEnded: false, cascade: false, expired: false };
     }
 
+    const removeAttemptSnap = await readAttemptInTransaction(txn, db, callDropId, eventRoomName);
+
     const rawDeadline = snap.data()?.callLimitDeadlineAt;
     const currentDeadlineMs =
       rawDeadline && typeof rawDeadline.toMillis === 'function' ? rawDeadline.toMillis() : null;
@@ -156,6 +160,16 @@ async function removeParticipant(
         nowMs,
         usageStates,
       );
+      ackAttemptInTransaction(txn, db, callDropId, eventRoomName, removeAttemptSnap, {
+        reason: 'webhook-last-exit',
+        settled: true,
+        chargeInputs: {
+          uids,
+          joinedAtByUid,
+          trustedReliefUids,
+          chargeEndMs: nowMs,
+        },
+      });
       txn.delete(presenceRef);
       txn.delete(callRef);
       return { handled: true, callEnded: true, cascade: true, expired: false };
@@ -274,6 +288,8 @@ async function finishRoom(
       return { handled: false, callEnded: false, cascade: false, expired: false };
     }
 
+    const finishAttemptSnap = await readAttemptInTransaction(txn, db, callDropId, eventRoomName);
+
     // A pending (never-confirmed) room that finished: nobody ever joined, so release the host's
     // reservation with zero charge and delete the invisible doc — mirrors the leave/sweep paths.
     if (snap.data()?.callState === 'pending') {
@@ -281,6 +297,10 @@ async function finishRoom(
       if (typeof hostUid === 'string') {
         await releaseReservationForCallInTransaction(txn, db, hostUid, callDropId);
       }
+      ackAttemptInTransaction(txn, db, callDropId, eventRoomName, finishAttemptSnap, {
+        reason: 'pending-room-finished',
+        settled: false,
+      });
       txn.delete(callRef);
       return { handled: true, callEnded: true, cascade: true, expired: false };
     }
@@ -299,22 +319,38 @@ async function finishRoom(
       // delete — nobody ever spent time in this room, so nobody is billed. Batch release: all
       // reads precede all writes (Firestore transaction contract).
       await releaseReservationsForCallInTransaction(txn, db, participantUids, callDropId);
+      ackAttemptInTransaction(txn, db, callDropId, eventRoomName, finishAttemptSnap, {
+        reason: 'never-joined-ghost',
+        settled: false,
+      });
       txn.delete(callRef);
       return { handled: true, callEnded: true, cascade: true, expired: false };
     }
     const trustedByUid = await getTrustedStatusMapInTransaction(txn, db, participantUids);
     const usageStates = await getCallUsageStatesInTransaction(txn, db, participantUids, nowMs);
+    const finishJoinedAt = getCallParticipantJoinedAtMap(callData, participantUids);
+    const finishRelief = new Set(getCallTrustedReliefUids(callData, participantUids, trustedByUid));
     await settleCallUsageInTransaction(
       txn,
       db,
       participantUids,
       trustedByUid,
       callDropId,
-      getCallParticipantJoinedAtMap(callData, participantUids),
-      new Set(getCallTrustedReliefUids(callData, participantUids, trustedByUid)),
+      finishJoinedAt,
+      finishRelief,
       nowMs,
       usageStates,
     );
+    ackAttemptInTransaction(txn, db, callDropId, eventRoomName, finishAttemptSnap, {
+      reason: 'room-finished',
+      settled: true,
+      chargeInputs: {
+        uids: participantUids,
+        joinedAtByUid: finishJoinedAt,
+        trustedReliefUids: [...finishRelief],
+        chargeEndMs: nowMs,
+      },
+    });
 
     txn.delete(callRef);
     return { handled: true, callEnded: true, cascade: true, expired: false };
