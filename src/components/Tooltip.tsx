@@ -73,7 +73,7 @@ export function Tooltip({ content, children, className = '' }: TooltipProps) {
             left: pos?.left ?? -9999,
             transform: 'translate(-50%, -100%)',
           }}
-          className={`pointer-events-none w-max max-w-[220px] text-center px-2.5 py-1.5 rounded-md bg-[#1a1a1a] text-white text-[11px] leading-snug shadow-lg z-[300] transition-opacity duration-150 ${pos ? 'opacity-100' : 'opacity-0'}`}
+          className={`pointer-events-none w-max max-w-[220px] text-center break-words px-2.5 py-1.5 rounded-md bg-[#1a1a1a] text-white text-[11px] leading-snug shadow-lg z-[300] transition-opacity duration-150 ${pos ? 'opacity-100' : 'opacity-0'}`}
         >
           {content}
         </div>,
