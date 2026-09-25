@@ -13,7 +13,7 @@ export interface UseWorkspacesOptions {
   // case; 'deleted' = a workspace that was mid-deletion finished (its SEAL removed the doc —
   // members show the goodbye notice, the owner sees the job complete). Stored in a ref so the
   // listener never re-subscribes when this callback changes.
-  onWorkspaceRemoved?: (workspace: Workspace, reason: 'removed' | 'deleted') => void;
+  onWorkspaceRemoved?: (workspace: Workspace, reason: 'removed' | 'deleted' | 'import-cancelled') => void;
 }
 
 export function useWorkspaces(userId: string | null, options?: UseWorkspacesOptions) {
@@ -64,7 +64,7 @@ export function useWorkspaces(userId: string | null, options?: UseWorkspacesOpti
           if (!stillPresent && !locallyRemovedRef.current.has(p.id)) {
             // ROUND 12: a workspace that was mid-deletion did not "remove" anyone — its SEAL
             // completed. The owner's own deletion lands here too (cross-session resume).
-            onRemovedRef.current?.(p, p.deleting === true ? 'deleted' : 'removed');
+            onRemovedRef.current?.(p, p.deleting === true ? 'deleted' : p.isImporting ? 'import-cancelled' : 'removed');
           }
         }
       }

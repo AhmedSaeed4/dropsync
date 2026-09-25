@@ -6,6 +6,7 @@ import { Category, Drop, ExpirationOption, Workspace } from '@/types';
 import { createFileDrop, createTextDrop, formatReminderFire } from '@/lib/drops';
 import type { ReminderUnit } from '@/lib/drops';
 import { dedupeCategoryNames } from '@/lib/categories';
+import { assertCategoryNamesWritable, assertWorkspaceWritableById } from '@/lib/archiveJournalVisibility';
 import { getEditorialThemeColors } from '../editorialTheme';
 import { Toast } from '@/components/Toast';
 import { ForeverLockedModal } from '../../ForeverLockedModal';
@@ -439,6 +440,8 @@ export function MobileCreateView({
   };
 
   const handleFilePick = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    try { await assertWorkspaceWritableById(currentWorkspaceId); }
+    catch (error) { showToast(error instanceof Error ? error.message : 'This workspace is still importing.'); return; }
     const files = Array.from(e.target.files ?? []);
     if (fileInputRef.current) fileInputRef.current.value = '';
     if (files.length === 0) return;
@@ -509,6 +512,10 @@ export function MobileCreateView({
     if (!content.trim() && !drawingFile) return; // modal :245 — the button is disabled anyway
     if (reminderEnabled && reminderInvalidValue) return; // modal :248
     if (!user) return;
+    try {
+      await assertWorkspaceWritableById(currentWorkspaceId);
+      await assertCategoryNamesWritable(selectedCategories, currentWorkspaceId, user.uid);
+    } catch (error) { showToast(error instanceof Error ? error.message : 'This workspace is still importing.'); return; }
     setCreating(true);
     try {
       const creatorName = user.displayName || user.email?.split('@')[0] || undefined;
@@ -585,7 +592,7 @@ export function MobileCreateView({
   // While a File-mode upload runs the strip goes busy (spinner + "Uploading… · N/M").
   const stripBusy = uploading;
 
-  const categoryNames = dedupeCategoryNames(categories.map((c) => c.name));
+  const categoryNames = dedupeCategoryNames(categories.filter((c) => !c.isStaged).map((c) => c.name));
 
   // Shared pill face (the modal's pill classes; active = ink-inverted).
   const pillBase = `px-3 py-1.5 text-xs rounded-full border transition-colors ${font}`;
@@ -648,6 +655,7 @@ export function MobileCreateView({
     </>
   );
 
+  if (currentWorkspace?.isImporting) return <div role="status" className="p-5 text-sm">This workspace is still importing.</div>;
   return (
     <div ref={createScrollRef} className="h-full space-y-4 overflow-y-auto overscroll-contain px-4 pb-28 editorial-scroll-hide">
       {/* Title block (prototype :517) — the Drops h1 idiom; NO top padding (D12: the header's

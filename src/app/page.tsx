@@ -55,6 +55,11 @@ import { db } from '@/lib/firebase';
 import { CURRENT_TERMS_VERSION } from '@/lib/termsVersion';
 import { TermsConsentGate } from '@/components/TermsConsentGate';
 import { WorkspaceArchiveModal } from '@/components/WorkspaceArchiveModal';
+import { ArchiveChipStack } from '@/components/ArchiveChipStack';
+import { ArchiveProgressPanel } from '@/components/ArchiveProgressPanel';
+import { getArchiveTaskManager, type ArchiveJobDescriptor } from '@/lib/archiveTaskManager';
+import { requestArchiveSaveHandle } from '@/lib/archiveFormat';
+import { assertCategoryWritableById, assertDropWritableById } from '@/lib/archiveJournalVisibility';
 import WorkspaceOptionsModal from '@/components/WorkspaceOptionsModal';
 import { startWorkspaceDeletion, runDeletionJob, resumeDeletionJobs, subscribeDeletionNotices } from '@/lib/workspaceDeletion';
 import {
@@ -62,7 +67,7 @@ import {
   hasLiveWorkspaceArchiveOverlap,
   importWorkspaceArchive,
   inspectWorkspaceArchive,
-  recoverInterruptedWorkspaceArchiveImport,
+  workspaceArchiveFileName,
   type WorkspaceArchiveImportResult,
   type WorkspaceArchiveInspection,
   type WorkspaceArchiveProgress,
@@ -72,7 +77,7 @@ import {
   hasLivePersonalArchiveOverlap,
   importPersonalArchive,
   inspectPersonalArchive,
-  recoverInterruptedPersonalArchiveImport,
+  personalArchiveFileName,
   type PersonalArchiveExportResult,
   type PersonalArchiveImportResult,
   type PersonalArchiveInspection,
@@ -139,7 +144,7 @@ function TosDeclinedNote({ theme, layoutMode }: { theme: Theme; layoutMode: Layo
 
 export default function Home() {
   const router = useRouter();
-  const { user, loading: authLoading, signIn, signUp, signInWithEmail: emailSignIn, resetPassword, resendVerification, signOutUser, updateDisplayName } = useAuth();
+  const { user, loading: authLoading, signIn, signUp, signInWithEmail: emailSignIn, resetPassword, resendVerification, signOutUser, updateDisplayName, authActionNotice, clearAuthActionNotice } = useAuth();
   const [previewDrop, setPreviewDrop] = useState<Drop | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [dropTrail, setDropTrail] = useState<string[]>([]);
@@ -194,6 +199,7 @@ export default function Home() {
     // was NOT a locally-initiated leave/delete (i.e. the owner kicked them, or the owner deleted
     // the workspace). Honest in both cases. Empty initial list → no false fire on load/refresh.
     onWorkspaceRemoved: (ws, reason) => {
+      if (reason === 'import-cancelled') return;
       // Stage B: confirmed access loss - drop the scope's cached payloads.
       editorialCardCache.revokeScope(ws.id);
       if (reason === 'deleted') {
@@ -274,6 +280,17 @@ export default function Home() {
     },
   });
 
+  useEffect(() => {
+    if (dropsLoading) return;
+    const frame = requestAnimationFrame(() => setPreviewDrop((previous) => {
+      if (!previous) return previous;
+      const live = drops.find((drop) => drop.id === previous.id);
+      if (!live) return null;
+      return previous.isStaged === live.isStaged ? previous : { ...previous, isStaged: live.isStaged };
+    }));
+    return () => cancelAnimationFrame(frame);
+  }, [drops, dropsLoading]);
+
   // A workspace/personal scope change starts a fresh preview trail. Layout switches do not affect
   // this state because the trail belongs to Home, not either layout branch.
   useEffect(() => {
@@ -313,6 +330,11 @@ export default function Home() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showJoinModal, setShowJoinModal] = useState(false);
   const [editDrop, setEditDrop] = useState<Drop | null>(null);
+  useEffect(() => {
+    if (dropsLoading) return;
+    const frame = requestAnimationFrame(() => setEditDrop((previous) => previous && (drops.find((drop) => drop.id === previous.id)?.isStaged || !drops.some((drop) => drop.id === previous.id)) ? null : previous));
+    return () => cancelAnimationFrame(frame);
+  }, [drops, dropsLoading]);
   // True while the edit modal is being prepared (metadata refresh + decrypt) — drives a loading
   // state on the preview's Edit button so the wait never looks like the app froze.
   const [editPreparing, setEditPreparing] = useState(false);
@@ -333,7 +355,9 @@ export default function Home() {
   const [youtubeBackfillVisible, setYoutubeBackfillVisible] = useState(true);
   const [youtubeBackfillVisibilityReady, setYoutubeBackfillVisibilityReady] = useState(false);
   const [archiveNotice, setArchiveNotice] = useState<string | null>(null);
-  const [pendingArchiveWorkspaceId, setPendingArchiveWorkspaceId] = useState<string | null>(null);
+  const [archivePanelJobId, setArchivePanelJobId] = useState<string | null>(null);
+  const [archivePanelShowAll, setArchivePanelShowAll] = useState(false);
+  const archiveManager = getArchiveTaskManager();
   const [showChat, setShowChat] = useState(false);
   const [chatMode, setChatMode] = useState<'ai' | 'group'>('ai');
   const [unreadCount, setUnreadCount] = useState(0);
@@ -384,16 +408,6 @@ export default function Home() {
     return stopSubscribe;
   }, [youtubeUserId]);
 
-  // A newly restored workspace is not present in the listener snapshot until Firestore emits it.
-  // Wait for that emission before switching, otherwise useWorkspaces correctly treats the new ID as
-  // missing and immediately resets to Personal.
-  useEffect(() => {
-    if (!pendingArchiveWorkspaceId) return;
-    if (!workspaces.some((workspace) => workspace.id === pendingArchiveWorkspaceId)) return;
-    switchWorkspace(pendingArchiveWorkspaceId);
-    setPendingArchiveWorkspaceId(null);
-  }, [pendingArchiveWorkspaceId, switchWorkspace, workspaces]);
-
   // Auto-close auth modal when user successfully logs in
   useEffect(() => {
     if (user && user.emailVerified && showAuthModal) {
@@ -427,17 +441,26 @@ export default function Home() {
     }
   }, [user]);
 
-  // If the tab was reloaded during an import, best-effort cleanup resumes from the local journal.
-  // It only ever touches objects created by the interrupted import and never source workspace data.
+  // Recovery holds the account lock while it checks local and server fences.
+  const archiveUserId = user?.uid;
   useEffect(() => {
-    if (!user) return;
-    recoverInterruptedWorkspaceArchiveImport(user.uid).catch((error) => {
-      console.error('Failed to recover interrupted workspace import:', error);
-    });
-    recoverInterruptedPersonalArchiveImport(user.uid).catch((error) => {
-      console.error('Failed to recover interrupted personal import:', error);
-    });
-  }, [user]);
+    if (!archiveUserId) return;
+    void archiveManager.recoverForUser(archiveUserId);
+  }, [archiveManager, archiveUserId]);
+
+  useEffect(() => {
+    archiveManager.setNoticeHandler((notice) => setArchiveNotice(notice));
+    return () => archiveManager.setNoticeHandler(null);
+  }, [archiveManager]);
+
+  useEffect(() => {
+    const select = (event: Event) => {
+      const jobId = (event as CustomEvent<string>).detail;
+      if (jobId) { setArchivePanelJobId(jobId); setArchivePanelShowAll(true); }
+    };
+    window.addEventListener('dropsync-archive-select', select);
+    return () => window.removeEventListener('dropsync-archive-select', select);
+  }, []);
 
   const initializeEncryption = async () => {
     if (!user) return;
@@ -1418,6 +1441,8 @@ export default function Home() {
 
   // Handle edit drop — decrypt text drops, file drops just need metadata
   const handleEditDrop = async (drop: Drop) => {
+    try { await assertDropWritableById(drop.id); }
+    catch (error) { setArchiveNotice(error instanceof Error ? error.message : 'This item is still importing.'); return; }
     retractFooterIfUp(); // retract the footer before the edit overlay mounts (no-op at scrollY 0)
     previewEpochRef.current += 1; // any in-flight preview decrypt is now stale — must not resurrect
     const preparationEpoch = ++editPreparationEpochRef.current;
@@ -1429,6 +1454,8 @@ export default function Home() {
       ? await loadLatestDrop(drop)
       : drop;
     if (!isCurrentPreparation()) return;
+    try { await assertDropWritableById(drop.id); }
+    catch (error) { setEditPreparing(false); setArchiveNotice(error instanceof Error ? error.message : 'This item is still importing.'); return; }
     const openEditModal = (source: Drop) => {
       if (!isCurrentPreparation()) return;
       // Keep the preview visible during the metadata/decryption wait, then replace it in the same
@@ -1625,6 +1652,8 @@ export default function Home() {
 
   // Handle category deletion
   const handleDeleteCategory = async (categoryId: string, categoryName: string) => {
+    try { await assertCategoryWritableById(categoryId); }
+    catch (error) { setArchiveNotice(error instanceof Error ? error.message : 'This category is still importing.'); return; }
     const result = await removeCategory(categoryId, categoryName);
     if (!result.success) {
       console.error('Failed to delete category:', result.error);
@@ -1803,7 +1832,9 @@ export default function Home() {
   // Decline = non-destructive sign-out (clears this device's FCM token + ends the session; touches
   // NO Firestore data, so a misclick loses nothing). Sets a one-shot flag so the login screen can
   // show a reassurance note.
-  const handleDecline = () => {
+  const handleDecline = async () => {
+    const signedOut = await signOutUser();
+    if (!signedOut) { setArchiveNotice('Finish the active archive before signing out.'); return; }
     try {
       window.sessionStorage.setItem('tosDeclined', '1');
     } catch {}
@@ -1811,7 +1842,6 @@ export default function Home() {
     // useState initializer only runs once at first mount, so without this the banner wouldn't
     // appear until a cold reload).
     setTosDeclinedNote(true);
-    signOutUser();
   };
 
   const canManageWorkspaceArchive = !!user && !!currentWorkspace && currentWorkspace.ownerId === user.uid;
@@ -1837,196 +1867,133 @@ export default function Home() {
     setPersonalOptionsOpen(true);
   }, []);
 
-  const handleWorkspaceArchiveExport = useCallback(async (
-    password: string,
-    signal: AbortSignal,
-    onProgress: (progress: WorkspaceArchiveProgress) => void
-  ): Promise<void> => {
-    if (!user || !currentWorkspace) throw new Error('Choose a workspace before exporting.');
-    const members = resolvedWorkspaceMembers.length > 0
-      ? resolvedWorkspaceMembers
-      : await getWorkspaceMembers(currentWorkspace.members, currentWorkspace.ownerId);
-    const result = await exportWorkspaceArchive({
-      workspace: currentWorkspace,
-      drops,
-      categories,
-      members,
-      userId: user.uid,
-      password,
-      signal,
-      onProgress,
-    });
-    setArchiveNotice([
-      'Workspace backup exported. The original workspace was not changed.',
-      result.skippedExpiredCount ? `${result.skippedExpiredCount} expired drop${result.skippedExpiredCount === 1 ? '' : 's'} skipped.` : '',
-      result.uneditableDrawingNames.length > 0
-        ? `${result.uneditableDrawingNames.length} drawing${result.uneditableDrawingNames.length === 1 ? '' : 's'} included without editable data (${result.uneditableDrawingNames.map((name) => `"${name}"`).join(', ')}).`
-        : '',
-    ].filter(Boolean).join(' '));
-  }, [categories, currentWorkspace, drops, resolvedWorkspaceMembers, user]);
-
-  const handleWorkspaceArchiveInspect = useCallback(async (
-    file: File,
-    password: string,
-    signal: AbortSignal,
-    onProgress: (progress: WorkspaceArchiveProgress) => void
-  ) => inspectWorkspaceArchive(file, password, signal, onProgress), []);
-
-  const handleWorkspaceArchiveImport = useCallback(async (
-    file: File,
-    password: string,
-    destination: { mode: 'new'; workspaceName: string } | { mode: 'merge'; workspaceId: string },
-    signal: AbortSignal,
-    onProgress: (progress: WorkspaceArchiveProgress) => void
-  ): Promise<WorkspaceArchiveImportResult> => {
-    if (!user) throw new Error('Sign in before importing a workspace backup.');
-    const result = await importWorkspaceArchive({
-      file,
-      password,
-      userId: user.uid,
-      destination,
-      signal,
-      onProgress,
-    });
-    if (destination.mode === 'new') setPendingArchiveWorkspaceId(result.workspaceId);
-    refreshDrops();
-    setArchiveNotice([
-      `Workspace backup imported: ${result.importedCount} drop${result.importedCount === 1 ? '' : 's'}.`,
-      result.legacyExpiryFallbackCount
-        ? 'This older backup had no saved remaining-time data, so finite drops restarted from their saved duration.'
-        : 'Finite drop timers resumed from their saved remaining time.',
-      result.zeroRemainingCount
-        ? `${result.zeroRemainingCount} drop${result.zeroRemainingCount === 1 ? '' : 's'} may expire immediately after import.`
-        : '',
-      result.downgradedForeverCount
-        ? `${result.downgradedForeverCount} forever drop${result.downgradedForeverCount === 1 ? ' was' : 's were'} downgraded to 24 hours (your account isn't trusted).`
-        : '',
-      result.unpinnedCount
-        ? `${result.unpinnedCount} pin${result.unpinnedCount === 1 ? ' was' : 's were'} adjusted for the two-pin limit.`
-        : '',
-      ...result.warnings,
-    ].filter(Boolean).join(' '));
-    return result;
-  }, [refreshDrops, user]);
-
-  const handlePersonalArchiveExport = useCallback(async (
-    password: string,
-    signal: AbortSignal,
-    onProgress: (progress: PersonalArchiveProgress) => void
-  ): Promise<void> => {
-    if (!user) throw new Error('Sign in before exporting personal drops.');
-    if (currentWorkspace) throw new Error('Switch to Personal before exporting personal drops.');
-    const result: PersonalArchiveExportResult = await exportPersonalArchive({
-      drops,
-      categories,
-      userId: user.uid,
-      sourceDisplayName: user.displayName || user.email?.split('@')[0] || null,
-      password,
-      suggestedName: 'personal',
-      signal,
-      onProgress,
-    });
-    const skippedSummary = result.skippedDrops.length > 0
-      ? `${result.skippedDrops.length} drop${result.skippedDrops.length === 1 ? '' : 's'} skipped because they could not be decrypted: ${result.skippedDrops.map((skipped) => `"${skipped.name}" (${skipped.reason})`).join('; ')}.`
-      : '';
-    setArchiveNotice([
-      'Personal backup exported. Your personal drops were not changed.',
-      result.skippedExpiredCount ? `${result.skippedExpiredCount} expired drop${result.skippedExpiredCount === 1 ? '' : 's'} skipped.` : '',
-      skippedSummary,
-      result.uneditableDrawingNames.length > 0
-        ? `${result.uneditableDrawingNames.length} drawing${result.uneditableDrawingNames.length === 1 ? '' : 's'} included without editable data (${result.uneditableDrawingNames.map((name) => `"${name}"`).join(', ')}).`
-        : '',
-    ].filter(Boolean).join(' '));
-  }, [categories, currentWorkspace, drops, user]);
-
-  const handlePersonalArchiveInspect = useCallback(async (
-    file: File,
-    password: string,
-    signal: AbortSignal,
-    onProgress: (progress: PersonalArchiveProgress) => void
-  ): Promise<PersonalArchiveInspection> => inspectPersonalArchive(file, password, signal, onProgress), []);
-
-  const handlePersonalArchiveImport = useCallback(async (
-    file: File,
-    password: string,
-    signal: AbortSignal,
-    onProgress: (progress: PersonalArchiveProgress) => void
-  ): Promise<PersonalArchiveImportResult> => {
-    if (!user) throw new Error('Sign in before importing a personal backup.');
-    const result = await importPersonalArchive({
-      file,
-      password,
-      userId: user.uid,
-      signal,
-      onProgress,
-    });
-    refreshDrops();
-    setArchiveNotice([
-      `Personal backup imported: ${result.importedCount} drop${result.importedCount === 1 ? '' : 's'}.`,
-      result.legacyExpiryFallbackCount
-        ? 'This older backup had no saved remaining-time data, so finite drops restarted from their saved duration.'
-        : 'Finite drop timers resumed from their saved remaining time.',
-      result.zeroRemainingCount
-        ? `${result.zeroRemainingCount} drop${result.zeroRemainingCount === 1 ? '' : 's'} may expire immediately after import.`
-        : '',
-      result.downgradedForeverCount
-        ? `${result.downgradedForeverCount} forever drop${result.downgradedForeverCount === 1 ? ' was' : 's were'} downgraded to 24 hours (your account isn't trusted).`
-        : '',
-      result.unpinnedCount
-        ? `${result.unpinnedCount} pin${result.unpinnedCount === 1 ? ' was' : 's were'} adjusted for the two-pin limit.`
-        : '',
-      ...result.warnings,
-    ].filter(Boolean).join(' '));
-    return result;
-  }, [refreshDrops, user]);
-
-  const handleArchiveExport = useCallback(async (
-    password: string,
-    signal: AbortSignal,
-    onProgress: (progress: WorkspaceArchiveProgress | PersonalArchiveProgress) => void
-  ): Promise<void> => {
-    if (archiveScope === 'personal') {
-      await handlePersonalArchiveExport(password, signal, onProgress);
-    } else {
-      await handleWorkspaceArchiveExport(password, signal, onProgress);
-    }
-  }, [archiveScope, handlePersonalArchiveExport, handleWorkspaceArchiveExport]);
-
   const handleArchiveInspect = useCallback(async (
     file: File,
     password: string,
     signal: AbortSignal,
     onProgress: (progress: WorkspaceArchiveProgress | PersonalArchiveProgress) => void
   ): Promise<WorkspaceArchiveInspection | PersonalArchiveInspection> => {
-    if (archiveScope === 'personal') return handlePersonalArchiveInspect(file, password, signal, onProgress);
-    return handleWorkspaceArchiveInspect(file, password, signal, onProgress);
-  }, [archiveScope, handlePersonalArchiveInspect, handleWorkspaceArchiveInspect]);
+    if (archiveScope === 'personal') return inspectPersonalArchive(file, password, signal, onProgress);
+    return inspectWorkspaceArchive(file, password, signal, onProgress);
+  }, [archiveScope]);
 
   const handleArchiveImportOverlap = useCallback(async (
     archiveId: string,
     destinationWorkspaceId: string | null
   ): Promise<boolean> => {
     if (!user) throw new Error('Sign in before checking archive overlap.');
-    if (archiveScope === 'personal') {
-      return hasLivePersonalArchiveOverlap(user.uid, archiveId);
-    }
-    if (!destinationWorkspaceId) return false;
-    return hasLiveWorkspaceArchiveOverlap(destinationWorkspaceId, archiveId);
+    if (archiveScope === 'personal') return hasLivePersonalArchiveOverlap(user.uid, archiveId);
+    return destinationWorkspaceId ? hasLiveWorkspaceArchiveOverlap(destinationWorkspaceId, archiveId) : false;
   }, [archiveScope, user]);
+
+  const handleArchiveExport = useCallback(async (password: string): Promise<string | null> => {
+    if (!user) throw new Error('Sign in before exporting a backup.');
+    if (archiveScope === 'workspace' && (!currentWorkspace || currentWorkspace.ownerId !== user.uid)) {
+      throw new Error('Choose a workspace you own before exporting.');
+    }
+    if (archiveScope === 'personal' && currentWorkspace) throw new Error('Switch to Personal before exporting.');
+    const scope = archiveScope;
+    const workspace = currentWorkspace ? { ...currentWorkspace } : null;
+    const sourceDrops = drops.map((drop) => ({ ...drop }));
+    const sourceCategories = categories.map((category) => ({ ...category }));
+    const sourceMembers = resolvedWorkspaceMembers.map((member) => ({ ...member }));
+    const jobId = crypto.randomUUID();
+    const exactFileName = scope === 'personal'
+      ? personalArchiveFileName('personal', new Date())
+      : workspaceArchiveFileName(workspace!.name, new Date());
+    const descriptor: ArchiveJobDescriptor = {
+      jobId, uid: user.uid, kind: 'export', scope,
+      sourceWorkspaceId: workspace?.id || null, sourceWorkspaceName: workspace?.name,
+      sourceDropIds: sourceDrops.map((drop) => drop.id), startedAt: Date.now(),
+    };
+    archiveManager.reserveForStart(descriptor);
+    let saveHandle;
+    try {
+      const picker = requestArchiveSaveHandle(exactFileName, 'DropSync backup');
+      saveHandle = picker ? await picker : null;
+    } catch (error) {
+      archiveManager.releaseReservation(jobId);
+      if (error instanceof DOMException && error.name === 'AbortError') return null;
+      throw error;
+    }
+    void archiveManager.startUnderLock(descriptor, async (signal, onProgress, onFinalClose) => {
+      if (scope === 'personal') {
+        const result: PersonalArchiveExportResult = await exportPersonalArchive({
+          drops: sourceDrops, categories: sourceCategories, userId: descriptor.uid,
+          sourceDisplayName: user.displayName || user.email?.split('@')[0] || null,
+          password, suggestedName: 'personal', exactFileName, saveHandle, onFinalizing: onFinalClose,
+          signal, onProgress,
+        });
+        return [
+          result.saveKind === 'picker' ? 'Personal backup saved.' : 'Backup download started; check your downloads.',
+          result.skippedExpiredCount ? result.skippedExpiredCount + ' expired drops skipped.' : '',
+          result.skippedDrops.length ? result.skippedDrops.length + ' drops could not be decrypted and were skipped.' : '',
+          result.uneditableDrawingNames.length ? result.uneditableDrawingNames.length + ' drawings included without editable data.' : '',
+        ].filter(Boolean).join(' ');
+      }
+      const members = sourceMembers.length ? sourceMembers : await getWorkspaceMembers(workspace!.members, workspace!.ownerId);
+      const result = await exportWorkspaceArchive({
+        workspace: workspace!, drops: sourceDrops, categories: sourceCategories, members,
+        userId: descriptor.uid, password, exactFileName, saveHandle, onFinalizing: onFinalClose,
+        signal, onProgress,
+      });
+      return [
+        result.saveKind === 'picker' ? 'Workspace backup saved.' : 'Backup download started; check your downloads.',
+        result.skippedExpiredCount ? result.skippedExpiredCount + ' expired drops skipped.' : '',
+        result.uneditableDrawingNames.length ? result.uneditableDrawingNames.length + ' drawings included without editable data.' : '',
+      ].filter(Boolean).join(' ');
+    }).catch((error) => setArchiveNotice(error instanceof Error ? error.message : 'Could not start the archive.'));
+    return jobId;
+  }, [archiveManager, archiveScope, categories, currentWorkspace, drops, resolvedWorkspaceMembers, user]);
 
   const handleArchiveImport = useCallback(async (
     file: File,
     password: string,
-    destination: { mode: 'new'; workspaceName: string } | { mode: 'merge'; workspaceId: string } | undefined,
-    signal: AbortSignal,
-    onProgress: (progress: WorkspaceArchiveProgress | PersonalArchiveProgress) => void
-  ): Promise<WorkspaceArchiveImportResult | PersonalArchiveImportResult> => {
-    if (archiveScope === 'personal') {
-      return handlePersonalArchiveImport(file, password, signal, onProgress);
-    }
-    if (!destination) throw new Error('Choose a workspace destination.');
-    return handleWorkspaceArchiveImport(file, password, destination, signal, onProgress);
-  }, [archiveScope, handlePersonalArchiveImport, handleWorkspaceArchiveImport]);
+    destination: { mode: 'new'; workspaceName: string } | { mode: 'merge'; workspaceId: string } | undefined
+  ): Promise<string | null> => {
+    if (!user) throw new Error('Sign in before importing a backup.');
+    if (archiveScope === 'workspace' && !destination) throw new Error('Choose a workspace destination.');
+    const scope = archiveScope;
+    const jobId = crypto.randomUUID();
+    const chosenDestination = destination ? { ...destination } : undefined;
+    const descriptor: ArchiveJobDescriptor = {
+      jobId, uid: user.uid, kind: 'import', scope,
+      destinationMode: chosenDestination?.mode,
+      destinationId: chosenDestination?.mode === 'merge' ? chosenDestination.workspaceId : null,
+      destinationName: chosenDestination?.mode === 'new' ? chosenDestination.workspaceName : undefined,
+      sourceDropIds: [], startedAt: Date.now(),
+    };
+    archiveManager.reserveForStart(descriptor);
+    void archiveManager.startUnderLock(descriptor, async (signal, onProgress) => {
+      if (scope === 'personal') {
+        const result: PersonalArchiveImportResult = await importPersonalArchive({
+          file, password, userId: descriptor.uid, jobId, signal, onProgress,
+        });
+        refreshDrops();
+        return [
+          'Personal backup imported: ' + result.importedCount + ' drops.',
+          result.legacyExpiryFallbackCount ? 'Finite drops restarted from their saved duration.' : 'Finite drop timers resumed from their saved remaining time.',
+          result.zeroRemainingCount ? result.zeroRemainingCount + ' drops may expire immediately.' : '',
+          result.downgradedForeverCount ? result.downgradedForeverCount + ' forever drops were downgraded to 24 hours.' : '',
+          result.unpinnedCount ? result.unpinnedCount + ' pins were adjusted for the two-pin limit.' : '',
+          ...result.warnings,
+        ].filter(Boolean).join(' ');
+      }
+      const result: WorkspaceArchiveImportResult = await importWorkspaceArchive({
+        file, password, userId: descriptor.uid, destination: chosenDestination!, jobId, signal, onProgress,
+      });
+      refreshDrops();
+      return [
+        'Workspace backup imported into "' + (chosenDestination?.mode === 'new' ? chosenDestination.workspaceName : workspaces.find((ws) => ws.id === chosenDestination?.workspaceId)?.name || 'workspace') + '": ' + result.importedCount + ' drops.',
+        result.legacyExpiryFallbackCount ? 'Finite drops restarted from their saved duration.' : 'Finite drop timers resumed from their saved remaining time.',
+        result.zeroRemainingCount ? result.zeroRemainingCount + ' drops may expire immediately.' : '',
+        result.downgradedForeverCount ? result.downgradedForeverCount + ' forever drops were downgraded to 24 hours.' : '',
+        result.unpinnedCount ? result.unpinnedCount + ' pins were adjusted for the two-pin limit.' : '',
+        ...result.warnings,
+      ].filter(Boolean).join(' ');
+    }).catch((error) => setArchiveNotice(error instanceof Error ? error.message : 'Could not start the archive.'));
+    return jobId;
+  }, [archiveManager, archiveScope, refreshDrops, user, workspaces]);
 
   // Wait for theme to load to prevent flash. While waiting, emit the PREPAINT_BG <script> (runs
   // during parse, before first paint) so the body background is the saved theme color immediately —
@@ -2908,9 +2875,16 @@ export default function Home() {
           onInspect={handleArchiveInspect}
           onImport={handleArchiveImport}
           onCheckImportOverlap={handleArchiveImportOverlap}
+          onStarted={(jobId) => { setArchiveMode(null); setArchivePanelShowAll(false); setArchivePanelJobId(jobId); }}
           onClose={() => setArchiveMode(null)}
         />
       )}
+      {archivePanelJobId && user && <ArchiveProgressPanel key={archivePanelJobId + String(archivePanelShowAll)} jobId={archivePanelJobId} uid={user.uid}
+        theme={theme} variant={layoutMode === 'editorial' ? 'editorial' : 'classic'}
+        showAllInitially={archivePanelShowAll}
+        onBack={() => setArchivePanelJobId(null)} />}
+      <ArchiveChipStack editorial={layoutMode === 'editorial'} callPill={!!activeCallDrop && callMinimized}
+        onOpen={(jobId, showAll) => { setArchivePanelShowAll(!!showAll); setArchivePanelJobId(jobId); }} />
       {footerActive && <Footer onHideFooter={onHideFooter} />}
       {activeCallDrop && callMinimized && hoverable && (
         <LiveCallMinimizedPill
@@ -2958,6 +2932,8 @@ export default function Home() {
           onDone={() => setArchiveNotice(null)}
         />
       )}
+      {authActionNotice && <Toast message={authActionNotice} duration={6} theme={theme}
+        editorial={layoutMode === 'editorial'} onDone={clearAuthActionNotice} />}
       {workspaceDeleteError && (
         <Toast
           message={workspaceDeleteError}

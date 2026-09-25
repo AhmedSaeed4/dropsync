@@ -36,6 +36,31 @@ const r2 = new S3Client({
 const MAX_RAW_BODY = 700 * 1024 * 1024;  // ~700MB raw base64 body
 const MAX_DECODED = 500 * 1024 * 1024;   // 500MB decoded (matches /api/upload)
 
+async function sourceStillImporting(dropData: Record<string, unknown>, uid: string, allowCancelledCleanup = false, deletingOwner = false): Promise<boolean> {
+  const jobId = dropData.importJobId;
+  const ownerId = dropData.userId;
+  if (typeof jobId !== 'string') return false;
+  if (typeof ownerId !== 'string') return true;
+  const fence = await adminDb.collection('importFences').doc(ownerId + '_' + jobId).get();
+  if (!fence.exists || fence.get('userId') !== ownerId || fence.get('jobId') !== jobId) return true;
+  if (fence.get('state') === 'closed-success') return false;
+  return !(allowCancelledCleanup && fence.get('state') === 'closed-cancelled' && (uid === ownerId || deletingOwner));
+}
+
+async function freshWorkspaceStillImporting(workspaceId: string | null): Promise<boolean> {
+  if (!workspaceId) return false;
+  const workspace = await adminDb.collection('workspaces').doc(workspaceId).get();
+  if (!workspace.exists) return true;
+  const jobId = workspace.get('importJobId');
+  const ownerId = workspace.get('ownerId');
+  if (typeof jobId !== 'string') return false;
+  if (typeof ownerId !== 'string') return true;
+  const fence = await adminDb.collection('importFences').doc(ownerId + '_' + jobId).get();
+  return !fence.exists || fence.get('userId') !== ownerId || fence.get('jobId') !== jobId
+    || fence.get('workspaceId') !== workspaceId || fence.get('mode') !== 'fresh'
+    || fence.get('state') !== 'closed-success';
+}
+
 // ROUND 12: returns the keys that FAILED so callers can acknowledge per item — a cleanup
 // obligation is never silently lost.
 async function deleteShareR2Assets(shareData: Record<string, unknown>): Promise<string[]> {
@@ -141,8 +166,9 @@ export async function PUT(request: NextRequest) {
     }
 
     const idToken = authHeader.substring(7);
+    let uid: string;
     try {
-      await getAuth().verifyIdToken(idToken);
+      uid = (await getAuth().verifyIdToken(idToken)).uid;
     } catch {
       return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
     }
@@ -156,7 +182,21 @@ export async function PUT(request: NextRequest) {
 
     const body = await request.text();
     const parsed = JSON.parse(body);
-    const { imageData, fileData, mimeType } = parsed;
+    const { imageData, fileData, mimeType, dropId } = parsed;
+    if (typeof dropId !== 'string' || !dropId) return NextResponse.json({ error: 'Missing drop ID' }, { status: 400 });
+    const source = await adminDb.collection('drops').doc(dropId).get();
+    if (!source.exists) return NextResponse.json({ error: 'Drop not found' }, { status: 404 });
+    const sourceData = source.data()!;
+    const sourceWorkspaceId = typeof sourceData.workspaceId === 'string' ? sourceData.workspaceId : null;
+    if (sourceWorkspaceId) {
+      const workspace = await adminDb.collection('workspaces').doc(sourceWorkspaceId).get();
+      if (!workspace.exists || !Array.isArray(workspace.get('members')) || !workspace.get('members').includes(uid)) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+      }
+    } else if (sourceData.userId !== uid) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    if (await sourceStillImporting(sourceData, uid) || await freshWorkspaceStillImporting(sourceWorkspaceId)) {
+      return NextResponse.json({ error: 'This item is still importing.' }, { status: 409 });
+    }
 
     // Handle file upload (video, PDF, etc.)
     if (fileData) {
@@ -262,6 +302,9 @@ export async function POST(request: NextRequest) {
     }
     const dropData = dropDoc.data()!;
     const dropWorkspaceId = dropData.workspaceId || null;
+    if (await sourceStillImporting(dropData, decodedToken.uid) || await freshWorkspaceStillImporting(dropWorkspaceId)) {
+      return NextResponse.json({ error: 'This item is still importing.' }, { status: 409 });
+    }
     if (dropWorkspaceId) {
       const workspaceDoc = await adminDb.collection('workspaces').doc(dropWorkspaceId).get();
       if (!workspaceDoc.exists) {
@@ -342,6 +385,7 @@ export async function DELETE(request: NextRequest) {
     }
     const dropData = dropDoc.data()!;
     const workspaceId = dropData.workspaceId || null;
+    let deletingOwner = false;
     if (workspaceId) {
       const wsDoc = await adminDb.collection('workspaces').doc(workspaceId).get();
       if (!wsDoc.exists) {
@@ -352,14 +396,21 @@ export async function DELETE(request: NextRequest) {
         // ROUND 12 (R4): the frozen DELETING owner keeps share-cleanup authority.
         const isDeletingOwner =
           wsDoc.get('deleting') === true && wsDoc.get('deletingOwner') === uid;
+        deletingOwner = isDeletingOwner;
         if (!isDeletingOwner) {
           return NextResponse.json({ error: 'Not a workspace member' }, { status: 403 });
         }
       }
+      deletingOwner = deletingOwner || (wsDoc.get('deleting') === true && wsDoc.get('deletingOwner') === uid);
     } else {
       if (dropData.userId !== uid) {
         return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
       }
+    }
+
+    if (await sourceStillImporting(dropData, uid, true, deletingOwner)
+      || (await freshWorkspaceStillImporting(workspaceId) && !deletingOwner)) {
+      return NextResponse.json({ error: 'This item is still importing.' }, { status: 409 });
     }
 
     const snapshot = await adminDb.collection('shares').where('dropId', '==', dropId).get();

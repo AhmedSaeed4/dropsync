@@ -1,9 +1,7 @@
 'use client';
 
 import {
-  addDoc,
   collection,
-  deleteDoc,
   doc,
   getDocs,
   query,
@@ -42,18 +40,24 @@ import {
   remapDropReferences,
   throwIfAborted,
   type ArchiveProgress,
+  type ArchiveSaveHandle,
+  yieldBetweenArchiveItems,
 } from './archiveFormat';
 import { decryptPersonalDropForArchive, deleteFromR2, getExpirationDate, uploadBinaryFileToR2, uploadToR2 } from './drops';
 import { generateAESKey, encryptData } from './crypto';
 import { encryptDEKForUser, getUserKeys } from './keys';
 import type { Category, Drop, ExpirationOption, YouTubeVideoLabel } from '@/types';
 import { isPasswordCategories, normalizeYoutubeLabels } from './youtubeLabels';
+import { completeImportFence, getImportFenceOutstanding, heartbeatImportFence, openImportFence, recordImportDispositions, registerImportItems } from './importFenceClient';
+import { ArchiveCheckUnavailableError, ArchiveCleanupNeededError, listOwnedArchiveFences, purgeOwnedDocObligations, recoverArchiveFenceJob } from './workspaceArchive';
+import { announceArchiveJournalTransition, resolveArchiveRecordStaged } from './archiveJournalVisibility';
 
 export const PERSONAL_ARCHIVE_SCHEMA = 'dropsync.personal' as const;
 export const PERSONAL_ARCHIVE_SCHEMA_VERSION = 1;
 export const PERSONAL_ARCHIVE_EXTENSION = ARCHIVE_EXTENSION;
 
 const PERSONAL_IMPORT_JOURNAL_KEY = 'dropsync_personal_archive_import_journal';
+const PERSONAL_IMPORT_JOURNAL_PREFIX = PERSONAL_IMPORT_JOURNAL_KEY + '_';
 const MAX_REMAINING_SECONDS = 24 * 60 * 60;
 const MAX_PERSONAL_NAME_LENGTH = 120;
 const RAW_FILE_THRESHOLD = 10 * 1024 * 1024;
@@ -131,6 +135,9 @@ export interface PersonalArchiveExportOptions {
   sourceDisplayName?: string | null;
   password: string;
   suggestedName?: string;
+  exactFileName?: string;
+  saveHandle?: ArchiveSaveHandle | null;
+  onFinalizing?: () => void;
   signal?: AbortSignal;
   onProgress?: (progress: PersonalArchiveProgress) => void;
 }
@@ -141,6 +148,7 @@ export interface PersonalArchiveExportResult {
   skippedExpiredCount: number;
   skippedDrops: PersonalArchiveSkippedDrop[];
   uneditableDrawingNames: string[];
+  saveKind: 'picker' | 'download';
 }
 
 export interface PersonalArchiveImportOptions {
@@ -149,6 +157,7 @@ export interface PersonalArchiveImportOptions {
   userId: string;
   signal?: AbortSignal;
   onProgress?: (progress: PersonalArchiveProgress) => void;
+  jobId?: string;
 }
 
 export interface PersonalArchiveImportResult {
@@ -161,8 +170,12 @@ export interface PersonalArchiveImportResult {
 }
 
 interface PersonalImportJournal {
+  jobId: string;
   userId: string;
   archiveId: string;
+  workspaceId: string;
+  createdWorkspace: false;
+  fenceMayExist: true;
   createdDropIds: string[];
   createdR2Keys: string[];
   createdCategoryIds: string[];
@@ -175,35 +188,65 @@ interface PreparedPersonalDrop {
 }
 
 function saveImportJournal(journal: PersonalImportJournal): void {
-  try {
-    localStorage.setItem(PERSONAL_IMPORT_JOURNAL_KEY, JSON.stringify(journal));
-  } catch {
-    // Private browsing or disabled storage only removes crash recovery; normal rollback remains active.
-  }
+  const key = PERSONAL_IMPORT_JOURNAL_PREFIX + journal.jobId;
+  const value = JSON.stringify(journal);
+  const wasAbsent = localStorage.getItem(key) === null;
+  localStorage.setItem(key, value);
+  if (localStorage.getItem(key) !== value) throw new Error('Could not safely record import recovery. Check browser storage and try again.');
+  if (wasAbsent) announceArchiveJournalTransition(journal.jobId);
 }
 
-function clearImportJournal(): void {
-  try {
-    localStorage.removeItem(PERSONAL_IMPORT_JOURNAL_KEY);
-  } catch {
-    // Best effort.
-  }
+function clearImportJournal(jobId: string): void {
+  localStorage.removeItem(PERSONAL_IMPORT_JOURNAL_PREFIX + jobId);
+  announceArchiveJournalTransition(jobId);
 }
 
-export async function recoverInterruptedPersonalArchiveImport(userId: string): Promise<void> {
-  let journal: PersonalImportJournal | null = null;
-  try {
-    const raw = localStorage.getItem(PERSONAL_IMPORT_JOURNAL_KEY);
-    if (raw) journal = JSON.parse(raw) as PersonalImportJournal;
-  } catch {
-    clearImportJournal();
-    return;
+export async function recoverInterruptedPersonalArchiveImport(userId: string, forceOwnedFences = false): Promise<boolean> {
+  const journals = new Map<string, PersonalImportJournal>();
+  for (let index = 0; index < localStorage.length; index++) {
+    const key = localStorage.key(index);
+    if (!key?.startsWith(PERSONAL_IMPORT_JOURNAL_PREFIX)) continue;
+    const raw = localStorage.getItem(key);
+    if (!raw) throw new Error('A personal import journal disappeared.');
+    const journal = JSON.parse(raw) as PersonalImportJournal;
+    if (journal.userId === userId) journals.set(journal.jobId, journal);
   }
-  if (!journal || journal.userId !== userId) return;
-  for (const key of journal.createdR2Keys || []) await deleteFromR2(key, null).catch(() => {});
-  for (const dropId of journal.createdDropIds || []) await deleteDoc(doc(db, 'drops', dropId)).catch(() => {});
-  for (const categoryId of journal.createdCategoryIds || []) await deleteDoc(doc(db, 'categories', categoryId)).catch(() => {});
-  clearImportJournal();
+  let fences: Awaited<ReturnType<typeof listOwnedArchiveFences>> | null = null;
+  try { fences = await listOwnedArchiveFences(userId); } catch { /* pre-check only; local journals below still recover */ }
+  if (fences) {
+    for (const fence of fences.docs) {
+      const value = fence.data();
+      if (typeof value.workspaceId !== 'string' || !value.workspaceId.startsWith('personal-import-')) continue;
+      if (value.state !== 'open' && value.state !== 'closed-cancelled') continue;
+      if (typeof value.jobId !== 'string') throw new Error('A personal import fence is malformed.');
+      if (!journals.has(value.jobId)) journals.set(value.jobId, {
+        jobId: value.jobId, userId, archiveId: '', workspaceId: value.workspaceId,
+        createdWorkspace: false, fenceMayExist: true,
+        createdDropIds: [], createdCategoryIds: [], createdR2Keys: [],
+      });
+    }
+  }
+  let remoteActive = false;
+  for (const journal of journals.values()) {
+    if (await recoverArchiveFenceJob({ ...journal, journalKey: localStorage.getItem(PERSONAL_IMPORT_JOURNAL_PREFIX + journal.jobId) ? PERSONAL_IMPORT_JOURNAL_PREFIX + journal.jobId : undefined }, forceOwnedFences || !!localStorage.getItem(PERSONAL_IMPORT_JOURNAL_PREFIX + journal.jobId)) === 'remote-active') remoteActive = true;
+  }
+  // The pre-fence legacy slot is retained until every known deletion is confirmed.
+  const rawLegacy = localStorage.getItem(PERSONAL_IMPORT_JOURNAL_KEY);
+  if (rawLegacy) {
+    const legacy = JSON.parse(rawLegacy) as Pick<PersonalImportJournal, 'userId' | 'createdDropIds' | 'createdCategoryIds' | 'createdR2Keys'>;
+    if (legacy.userId === userId) {
+      for (const key of legacy.createdR2Keys || []) await deleteFromR2(key, null);
+      // ROUND 14 hotfix-4 (R14-D4): same missing-doc trap as the fence rollback — bare
+      // reads of never-created legacy ids are rules-denied; probe through the route.
+      await purgeOwnedDocObligations('legacy-personal', [
+        ...(legacy.createdDropIds || []).map((id) => 'drop:' + id),
+        ...(legacy.createdCategoryIds || []).map((id) => 'category:' + id),
+      ]);
+      localStorage.removeItem(PERSONAL_IMPORT_JOURNAL_KEY);
+    }
+  }
+  if (!fences) throw new ArchiveCheckUnavailableError();
+  return remoteActive;
 }
 
 function getDropCategories(drop: Drop): string[] {
@@ -218,6 +261,11 @@ function getDropCategories(drop: Drop): string[] {
 function normalizeArchiveName(name: string): string {
   const normalized = name.trim().slice(0, MAX_PERSONAL_NAME_LENGTH);
   return normalized || 'personal';
+}
+
+export function personalArchiveFileName(name: string, at = new Date()): string {
+  const safeBaseName = normalizeArchiveName(name).replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '') || 'personal';
+  return `${safeBaseName}-${at.toISOString().slice(0, 10)}${PERSONAL_ARCHIVE_EXTENSION}`;
 }
 
 function errorReason(error: unknown): string {
@@ -398,7 +446,10 @@ export async function inspectPersonalArchive(
 
 async function readPersonalCategories(
   userId: string,
-  manifest: PersonalArchiveManifest
+  manifest: PersonalArchiveManifest,
+  importJobId: string,
+  recordCategoryObligation: (id: string) => void,
+  registerItems: (items: { kind: string; id: string }[]) => Promise<void>
 ): Promise<{ map: Map<string, string>; createdIds: string[] }> {
   const snapshot = await getDocs(query(
     collection(db, 'categories'),
@@ -406,18 +457,24 @@ async function readPersonalCategories(
     where('workspaceId', '==', null)
   ));
   const map = new Map<string, string>();
-  snapshot.forEach((categoryDoc) => {
-    const name = categoryDoc.data().name as string;
+  for (const categoryDoc of snapshot.docs) {
+    const data = categoryDoc.data();
+    if (typeof data.importJobId === 'string' && await resolveArchiveRecordStaged(data.createdBy, data.importJobId)) continue;
+    const name = data.name as string;
     map.set(name.toLowerCase().trim(), name);
-  });
+  }
   const createdIds: string[] = [];
   for (const category of manifest.categories) {
     const normalized = category.name.toLowerCase().trim();
     if (!normalized || normalized === 'password' || normalized === 'link' || map.has(normalized)) continue;
-    const categoryRef = await addDoc(collection(db, 'categories'), {
+    const categoryRef = doc(collection(db, 'categories'));
+    recordCategoryObligation(categoryRef.id);
+    await registerItems([{ kind: 'category', id: categoryRef.id }]);
+    await setDoc(categoryRef, {
       name: category.name.trim(),
       workspaceId: null,
       createdBy: userId,
+      importJobId,
       createdAt: Timestamp.fromDate(parseDate(category.createdAt, 'category.createdAt') || new Date()),
     });
     createdIds.push(categoryRef.id);
@@ -460,7 +517,8 @@ async function uploadArchiveEntryAsBinary(
   mimeType: string | undefined,
   expectedBytes: number | undefined,
   signal: AbortSignal | undefined,
-  onProgress: (count: number) => void
+  onProgress: (count: number) => void,
+  onPresignedKey: (key: string) => Promise<void>
 ): Promise<{ url: string; key: string; bytes: number }> {
   const declaredBytes = entry.uncompressedSize;
   if (!Number.isSafeInteger(declaredBytes) || declaredBytes < 0) {
@@ -487,7 +545,7 @@ async function uploadArchiveEntryAsBinary(
   const result = await uploadBinaryFileToR2(blob, (ratio) => {
     const boundedRatio = Number.isFinite(ratio) ? Math.min(1, Math.max(0, ratio)) : 0;
     onProgress(Math.round(boundedRatio * bytes.byteLength));
-  });
+  }, onPresignedKey);
   onProgress(bytes.byteLength);
   return { ...result, bytes: bytes.byteLength };
 }
@@ -629,19 +687,22 @@ export async function exportPersonalArchive(
   const key = await deriveArchiveKey(password, header);
   const jsonBytes = new TextEncoder().encode(JSON.stringify(manifest));
   const estimatedArchiveBytes = estimatedBytes + jsonBytes.byteLength + 4096;
-  const safeBaseName = normalizeArchiveName(options.suggestedName || 'personal')
-    .replace(/[^a-z0-9._-]+/gi, '-')
-    .replace(/^-+|-+$/g, '') || 'personal';
-  const fileName = `${safeBaseName}-${new Date().toISOString().slice(0, 10)}${PERSONAL_ARCHIVE_EXTENSION}`;
-  const sink = await createArchiveSink(fileName, estimatedArchiveBytes, 'DropSync personal backup');
+  const fileName = options.exactFileName || personalArchiveFileName(options.suggestedName || 'personal');
+  const sink = await createArchiveSink(fileName, estimatedArchiveBytes, options.saveHandle);
   const zipStream = new ZipWriterStream({ level: 0, zip64: true });
   const encryptedZipStream = zipStream.readable.pipeThrough(
     createEnvelopeEncryptTransform(key, header, headerBytes, signal)
   );
   const outputStream = prependStream(headerBytes, encryptedZipStream);
-  const pipePromise = outputStream.pipeTo(sink.writable, { signal });
+  const pipeAbort = new AbortController();
+  const onAbort = () => pipeAbort.abort(signal?.reason);
+  signal?.addEventListener('abort', onAbort, { once: true });
+  if (signal?.aborted) onAbort();
+  const pipePromise = outputStream.pipeTo(sink.writable, { signal: pipeAbort.signal, preventClose: true, preventAbort: true });
   const sourceDropsById = new Map(drops.map((drop) => [drop.id, drop]));
   let processedBytes = 0;
+  let completedItems = 0;
+  let closeStarted = false;
 
   try {
     await new Blob([jsonBytes as BlobPart]).stream().pipeTo(zipStream.writable('manifest.json'), { signal });
@@ -708,18 +769,30 @@ export async function exportPersonalArchive(
         phase: 'export',
         processedBytes,
         totalBytes: Math.max(estimatedBytes, 1),
+        completedItems: ++completedItems,
+        totalItems: archiveDrops.length,
         currentName: archiveDrop.name,
         message: `Exported ${archiveDrop.name}`,
       });
+      await yieldBetweenArchiveItems();
+      throwIfAborted(signal);
     }
     await zipStream.close(undefined, { zip64: true });
     await pipePromise;
+    throwIfAborted(signal);
+    emitProgress(onProgress, { phase: 'finalizing', processedBytes, totalBytes: Math.max(estimatedBytes, 1), completedItems, totalItems: archiveDrops.length, message: 'Finalizing backup…' });
+    options.onFinalizing?.();
+    closeStarted = true;
     await sink.finish();
-    return { fileName, estimatedBytes: estimatedArchiveBytes, skippedExpiredCount, skippedDrops, uneditableDrawingNames };
+    return { fileName, estimatedBytes: estimatedArchiveBytes, skippedExpiredCount, skippedDrops, uneditableDrawingNames, saveKind: sink.kind };
   } catch (error) {
-    await sink.abort(error);
+    pipeAbort.abort(error);
     await pipePromise.catch(() => {});
+    if (closeStarted) throw new Error('Could not confirm whether the backup was saved; check your downloads');
+    await sink.abort(error);
     throw error;
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
   }
 }
 
@@ -735,12 +808,18 @@ export async function importPersonalArchive(
   if (!userKeys) throw new Error('Your personal encryption keys are unavailable. Sign in again before importing.');
 
   const loaded = await loadPersonalArchive(file, password, signal);
+  const jobId = options.jobId || crypto.randomUUID();
+  const workspaceId = 'personal-import-' + jobId;
   const createdDropIds: string[] = [];
   const createdR2Keys: string[] = [];
   const createdCategoryIds: string[] = [];
   const journal: PersonalImportJournal = {
+    jobId,
     userId,
     archiveId: loaded.manifest.archiveId,
+    workspaceId,
+    createdWorkspace: false,
+    fenceMayExist: true,
     createdDropIds,
     createdR2Keys,
     createdCategoryIds,
@@ -752,27 +831,56 @@ export async function importPersonalArchive(
   let zeroRemainingCount = 0;
   let downgradedForeverCount = 0;
   let unpinnedCount = 0;
+  const registeredItems: string[] = [];
+  const registerItems = async (items: { kind: string; id: string }[]) => {
+    for (let i = 0; i < items.length; i += 100) {
+      if (!(await registerImportItems(jobId, items.slice(i, i + 100)))) throw new Error('The personal import fence could not be updated.');
+    }
+    registeredItems.push(...items.map((item) => item.kind + ':' + item.id));
+  };
+  let fenceLost = false;
+  let lastConfirmedHeartbeat = Date.now();
+  let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  const stopHeartbeat = () => { if (heartbeatTimer) clearInterval(heartbeatTimer); heartbeatTimer = null; };
+  const checkFenceFresh = async () => {
+    if (fenceLost) throw new Error('The personal import was cancelled before it finished.');
+    if (Date.now() - lastConfirmedHeartbeat < 4 * 60 * 1000) return;
+    const beat = await heartbeatImportFence(jobId);
+    if (beat !== 'ok') throw new Error('The personal import fence could not be refreshed.');
+    lastConfirmedHeartbeat = Date.now();
+  };
 
   try {
+    persistJournal();
+    if (!(await openImportFence(jobId, workspaceId, 'fresh'))) throw new Error('Could not start the personal import fence.');
+    heartbeatTimer = setInterval(() => {
+      void heartbeatImportFence(jobId).then((result) => {
+        if (result === 'closed') fenceLost = true;
+        if (result === 'ok') lastConfirmedHeartbeat = Date.now();
+      }).catch(() => {});
+    }, 5 * 60 * 1000);
     const existingDrops = await readExistingPersonalDrops(userId);
 
     const importNow = new Date();
-    persistJournal();
-    const categoryResult = await readPersonalCategories(userId, loaded.manifest);
-    createdCategoryIds.push(...categoryResult.createdIds);
-    persistJournal();
+    const categoryResult = await readPersonalCategories(userId, loaded.manifest, jobId,
+      (id) => { createdCategoryIds.push(id); persistJournal(); }, registerItems);
 
     let pinnedCount = existingDrops.filter((drop) => drop.pinned && !isExpired(drop)).length;
     const sourceToNewId = new Map<string, string>();
     for (const archiveDrop of loaded.manifest.drops) {
       sourceToNewId.set(archiveDrop.sourceId, doc(collection(db, 'drops')).id);
     }
+    createdDropIds.push(...sourceToNewId.values());
+    persistJournal();
+    await registerItems(Array.from(sourceToNewId.values()).map((id) => ({ kind: 'drop', id })));
 
     const totalBytes = Math.max(loaded.totalPayloadBytes, 1);
     let processedBytes = 0;
+    let completedItems = 0;
 
     for (const archiveDrop of loaded.manifest.drops) {
       throwIfAborted(signal);
+      await checkFenceFresh();
       const newDropId = sourceToNewId.get(archiveDrop.sourceId);
       if (!newDropId) throw new Error(`Missing destination ID for "${archiveDrop.name}".`);
 
@@ -838,6 +946,7 @@ export async function importPersonalArchive(
         reminderSetByUid: reminderAt ? userId : null,
         reminderDismissedBy: null,
         importedFromArchiveId: loaded.manifest.archiveId,
+        importJobId: jobId,
       };
       const importedLabels = normalizeYoutubeLabels(archiveDrop.youtubeVideoLabels);
       if (archiveDrop.type === 'text' && !isPasswordCategories(categories) && importedLabels.length > 0) {
@@ -863,9 +972,12 @@ export async function importPersonalArchive(
           }
           const imageData = bytesToDataUri(imageBytes, archiveDrop.imageMimeType || 'image/png');
           const encryptedImage = await encryptData(imageData, dek);
-          const upload = await uploadToR2(encryptedImage.encrypted);
-          createdR2Keys.push(upload.key);
-          persistJournal();
+          const upload = await uploadToR2(encryptedImage.encrypted, undefined, async (key) => {
+            createdR2Keys.push(key);
+            persistJournal();
+            await registerItems([{ kind: 'r2', id: key }]);
+          });
+          throwIfAborted(signal);
           docData.imageUrl = upload.url;
           docData.imageR2Key = upload.key;
           docData.imageSize = imageBytes.byteLength;
@@ -890,10 +1002,13 @@ export async function importPersonalArchive(
               totalBytes,
               currentName: archiveDrop.name,
               message: `Importing ${archiveDrop.name}`,
-            })
+            }),
+            async (key) => {
+              createdR2Keys.push(key);
+              persistJournal();
+              await registerItems([{ kind: 'r2', id: key }]);
+            }
           );
-          createdR2Keys.push(upload.key);
-          persistJournal();
           // The XHR uploader does not accept an AbortSignal. Journal the returned key first, then
           // honor a cancellation so rollback can delete an upload that finished after Cancel.
           throwIfAborted(signal);
@@ -910,9 +1025,12 @@ export async function importPersonalArchive(
           const dataUri = bytesToDataUri(bytes, archiveDrop.mimeType || 'application/octet-stream');
           const encrypted = await encryptData(dataUri, dek);
           const wrappedDek = await encryptDEKForUser(dek, userKeys.publicKey, userKeys.privateKey);
-          const upload = await uploadToR2(encrypted.encrypted);
-          createdR2Keys.push(upload.key);
-          persistJournal();
+          const upload = await uploadToR2(encrypted.encrypted, undefined, async (key) => {
+            createdR2Keys.push(key);
+            persistJournal();
+            await registerItems([{ kind: 'r2', id: key }]);
+          });
+          throwIfAborted(signal);
           docData.fileUrl = upload.url;
           docData.r2Key = upload.key;
           docData.encrypted = true;
@@ -923,6 +1041,8 @@ export async function importPersonalArchive(
       }
 
       const dropRef = doc(db, 'drops', newDropId);
+      throwIfAborted(signal);
+      await checkFenceFresh();
       try {
         await setDoc(dropRef, docData);
       } catch (error) {
@@ -938,22 +1058,43 @@ export async function importPersonalArchive(
           throw error;
         }
       }
-      createdDropIds.push(newDropId);
-      persistJournal();
       importedCount += 1;
       emitProgress(onProgress, {
         phase: 'import',
         processedBytes,
         totalBytes,
+        completedItems: ++completedItems,
+        totalItems: loaded.manifest.drops.length,
         currentName: archiveDrop.name,
         message: `Imported ${archiveDrop.name}`,
       });
+      await yieldBetweenArchiveItems();
+      throwIfAborted(signal);
+      await checkFenceFresh();
     }
 
-    // The final drop has been written, recorded in the journal, and its synchronous progress
-    // bookkeeping has completed. Clear the journal before reader cleanup so cleanup can never
-    // roll back a completed restore on a later login.
-    clearImportJournal();
+    throwIfAborted(signal);
+    await checkFenceFresh();
+    emitProgress(onProgress, { phase: 'finalizing', processedBytes, totalBytes, completedItems, totalItems: loaded.manifest.drops.length, message: 'Finalizing import…' });
+    stopHeartbeat();
+    let fenceClosed = false;
+    for (let attempt = 0; attempt < 3 && !fenceClosed; attempt++) {
+      let recorded = true;
+      for (let i = 0; i < registeredItems.length && recorded; i += 500) {
+        const batch = registeredItems.slice(i, i + 500).map((id) => ({ id, disposition: 'committed' as const }));
+        const chunks: { index: number; entries: { id: string; disposition: 'committed' }[] }[] = [];
+        for (let j = 0; j < batch.length; j += 100) chunks.push({ index: i + j, entries: batch.slice(j, j + 100) });
+        recorded = await recordImportDispositions(jobId, chunks);
+      }
+      if (recorded) {
+        throwIfAborted(signal);
+        fenceClosed = await completeImportFence(jobId, registeredItems.length);
+        if (!fenceClosed) fenceClosed = (await getImportFenceOutstanding(jobId))?.state === 'closed-success';
+      }
+      if (!fenceClosed) await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1)));
+    }
+    if (!fenceClosed) throw new Error('The personal import could not be completed.');
+    clearImportJournal(jobId);
     try {
       await loaded.reader.close();
     } catch (error) {
@@ -968,11 +1109,18 @@ export async function importPersonalArchive(
       warnings,
     };
   } catch (error) {
+    stopHeartbeat();
     await loaded.reader.close().catch(() => {});
-    for (const key of createdR2Keys) await deleteFromR2(key, null).catch(() => {});
-    for (const dropId of createdDropIds) await deleteDoc(doc(db, 'drops', dropId)).catch(() => {});
-    for (const categoryId of createdCategoryIds) await deleteDoc(doc(db, 'categories', categoryId)).catch(() => {});
-    clearImportJournal();
+    try {
+      const outcome = await recoverArchiveFenceJob({ ...journal, journalKey: PERSONAL_IMPORT_JOURNAL_PREFIX + jobId }, true);
+      if (outcome === 'adopted') return {
+        importedCount, legacyExpiryFallbackCount, zeroRemainingCount,
+        downgradedForeverCount, unpinnedCount,
+        warnings: [...warnings, 'Completed before cancellation.'],
+      };
+    } catch (cleanupError) {
+      throw new ArchiveCleanupNeededError(`Cleanup is incomplete: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`, jobId);
+    }
     if (error instanceof ArchiveCancelledError) throw error;
     throw error;
   }

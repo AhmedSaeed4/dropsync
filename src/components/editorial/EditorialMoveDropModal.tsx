@@ -9,6 +9,7 @@ import { Drop, Workspace } from '@/types';
 import { getEditorialThemeColors } from './editorialTheme';
 import { ForeverLockedModal } from '../ForeverLockedModal';
 import { LockedActionButton } from '../LockedActionButton';
+import { assertDropsWritableBatch, assertWorkspaceWritableById } from '@/lib/archiveJournalVisibility';
 
 interface EditorialMoveDropModalProps {
   drops: Drop | Drop[];
@@ -29,6 +30,7 @@ export function EditorialMoveDropModal({ drops: dropsProp, workspaces, currentWo
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(firstDrop.workspaceId);
   const [mode, setMode] = useState<'move' | 'copy'>('move');
   const [loading, setLoading] = useState(false);
+  const [stageError, setStageError] = useState<string | null>(null);
   const [showForeverLocked, setShowForeverLocked] = useState(false);
   const { tier, loading: tierLoading } = useUserTier();
   const { user } = useAuth();
@@ -55,6 +57,12 @@ export function EditorialMoveDropModal({ drops: dropsProp, workspaces, currentWo
 
   const handleSubmit = async () => {
     if (isSameLocation) return;
+    setStageError(null);
+    setLoading(true);
+    try {
+      await assertDropsWritableBatch(dropList.map((drop) => drop.id));
+      await assertWorkspaceWritableById(selectedWorkspaceId);
+    } catch (error) { setStageError(error instanceof Error ? error.message : 'This item is still importing.'); setLoading(false); return; }
     // Standard users can't move a forever drop (the rules reject the write). Show a clean popup
     // instead of letting the move fail. Copy is NOT gated here — copyDrop silently downgrades.
     if (
@@ -64,12 +72,14 @@ export function EditorialMoveDropModal({ drops: dropsProp, workspaces, currentWo
       dropList.some((d) => d.expirationOption === 'forever' || d.expiresAt == null)
     ) {
       setShowForeverLocked(true);
+      setLoading(false);
       return;
     }
-    setLoading(true);
-    if (mode === 'copy') await onCopy(dropList, selectedWorkspaceId);
-    else await onMove(dropList, selectedWorkspaceId);
-    setLoading(false);
+    try {
+      if (mode === 'copy') await onCopy(dropList, selectedWorkspaceId);
+      else await onMove(dropList, selectedWorkspaceId);
+    } catch (error) { setStageError(error instanceof Error ? error.message : 'The move could not finish.'); }
+    finally { setLoading(false); }
   };
 
   return (
@@ -78,6 +88,7 @@ export function EditorialMoveDropModal({ drops: dropsProp, workspaces, currentWo
       onClick={(e) => e.target === e.currentTarget && !loading && onClose()}
     >
       <div className={`${tc.bg} border ${tc.border} rounded-xl w-full max-w-md max-h-[90vh] flex flex-col overflow-hidden shadow-xl`}>
+        {stageError && <p role="alert" className="px-5 py-2 text-sm text-red-500">{stageError}</p>}
         {/* Header */}
         <div className={`border-b ${tc.border} px-5 py-4 flex items-center justify-between shrink-0`}>
           <div>

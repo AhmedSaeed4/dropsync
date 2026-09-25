@@ -252,7 +252,7 @@ export function MobileCategoryStrip({
     }
 
     // Custom category — zero-count ones get the inline delete confirm (compact port of :739-784).
-    const showDelete = item.count === 0 && confirmDeleteCategory !== item.cat.id;
+    const showDelete = item.count === 0 && !item.cat.isStaged && confirmDeleteCategory !== item.cat.id;
     return (
       <div key={item.key} className="relative flex items-center">
         <button
@@ -261,10 +261,11 @@ export function MobileCategoryStrip({
           className={`flex items-center gap-1.5 px-3 py-1.5 text-xs ${font} rounded-full transition-colors ${stateCls} ${showDelete ? 'pr-1' : ''}`}
         >
           <span>{item.cat.name}</span>
+          {item.cat.isStaged && <span className="text-[9px] opacity-60">STAGED</span>}
           <span className={`text-[10px] ${isActive ? tc.activePillCountText : tc.muted}`}>{item.count}</span>
         </button>
 
-        {item.count === 0 && confirmDeleteCategory !== item.cat.id && (
+        {item.count === 0 && !item.cat.isStaged && confirmDeleteCategory !== item.cat.id && (
           <button
             type="button"
             onClick={(e) => handleCategoryDeleteClick(item.cat.id, e)}
@@ -277,7 +278,7 @@ export function MobileCategoryStrip({
           </button>
         )}
 
-        {confirmDeleteCategory === item.cat.id && (
+        {confirmDeleteCategory === item.cat.id && !item.cat.isStaged && (
           <div className="ml-1 flex items-center gap-1">
             <button
               type="button"

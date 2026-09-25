@@ -160,6 +160,8 @@ export async function POST(request: NextRequest) {
       const message =
         registration.error === 'Workspace is deleting'
           ? 'This workspace is being deleted'
+          : registration.error === 'Workspace is importing'
+            ? 'This workspace is still importing.'
           : registration.error === 'Account deletion is in progress'
             ? 'Account deletion is in progress'
             : 'Failed to start call';

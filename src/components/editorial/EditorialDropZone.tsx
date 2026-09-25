@@ -15,6 +15,7 @@ import { retractFooterIfUp } from '../SmoothScrollProvider';
 interface EditorialDropZoneProps {
   theme?: 'light' | 'dark' | 'minimal';
   workspaceId?: string | null;
+  importing?: boolean;
   workspaceMembers?: string[];
   customCategories?: string[];
   onCreateCategory?: (name: string) => Promise<string | null>;
@@ -52,6 +53,7 @@ const EXPIRATION_OPTIONS: { value: ExpirationOption; label: string }[] = [
 export function EditorialDropZone({
   theme = 'light',
   workspaceId = null,
+  importing = false,
   workspaceMembers = [],
   customCategories = [],
   onCreateCategory,
@@ -363,6 +365,7 @@ export function EditorialDropZone({
       : `Uploading… ${pct}%`
     : '';
 
+  if (importing) return <div role="status" className="border border-current/20 p-4 text-sm opacity-70">This workspace is still importing.</div>;
   return (
     <>
       {/* Section header */}

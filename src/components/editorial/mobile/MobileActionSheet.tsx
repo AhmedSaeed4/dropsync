@@ -74,7 +74,7 @@ export function MobileActionSheet({
   const [isSharing, setIsSharing] = useState(false);
   const [shareToast, setShareToast] = useState(false);
 
-  const lockedNoMutate = !!drop?.locked && !canMutate;
+  const lockedNoMutate = !!drop?.isStaged || (!!drop?.locked && !canMutate);
   const isImage = drop?.mimeType?.startsWith('image/') ?? false;
 
   useEffect(() => {
@@ -209,6 +209,7 @@ export function MobileActionSheet({
   };
 
   const handleToggleLock = async () => {
+    if (drop.isStaged) return;
     try {
       await updateDropMetadata(drop.id, { locked: !drop.locked });
     } catch (error) {
@@ -237,7 +238,8 @@ export function MobileActionSheet({
         animate={{ y: 0 }}
         exit={{ y: '100%' }}
         transition={{ duration: 0.28, ease: [0.4, 0, 0.2, 1] }}
-        className={`fixed inset-x-0 bottom-0 z-50 rounded-t-[14px] border-t ${tc.cardBg} ${tc.border} pb-[env(safe-area-inset-bottom)]`}
+        className={`fixed inset-x-0 bottom-0 z-50 rounded-t-[14px] border-t ${tc.cardBg} ${tc.border}`}
+        style={{ maxHeight: 'calc(100dvh - 12px)', overflowY: 'auto', paddingBottom: 'max(env(safe-area-inset-bottom), var(--archive-stack-clearance, 0px))' }}
       >
         <div className="mx-auto mt-2.5 mb-1 h-1 w-9 rounded-full bg-current opacity-20" />
         <p className={`truncate px-5 pb-1 pt-1 text-[13px] font-semibold ${font} ${tc.text}`}>{drop.name}</p>
@@ -268,7 +270,7 @@ export function MobileActionSheet({
             </button>
           )}
 
-          <button type="button" role="menuitem" onClick={handleShare} disabled={isSharing} className={`${rowClass} ${tc.text} ${tc.inactivePillHoverBg} disabled:opacity-50`}>
+          <button type="button" role="menuitem" onClick={handleShare} disabled={isSharing || !!drop.isStaged} className={`${rowClass} ${tc.text} ${tc.inactivePillHoverBg} disabled:opacity-50`}>
             {isSharing ? spinner : (
               <svg className={iconClass} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><path d="M12 3.5v11m0-11-3.5 3.5M12 3.5l3.5 3.5" /><path d="M5 12.5v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6" /></svg>
             )}
@@ -312,7 +314,7 @@ export function MobileActionSheet({
             </button>
           )}
 
-          {manualMove && (
+          {manualMove && !drop.isStaged && (
             <>
               <button
                 type="button"
@@ -340,7 +342,7 @@ export function MobileActionSheet({
           {/* Delete — replaced by the muted note for locked non-mutable drops; otherwise fires
               requestDelete directly (the 30s undo toast is the safety net, #18 — no extra step) */}
           {lockedNoMutate ? (
-            <p className={`px-5 py-3 text-xs ${font} ${tc.muted}`}>Locked by the creator</p>
+            <p className={`px-5 py-3 text-xs ${font} ${tc.muted}`}>{drop.isStaged ? 'This item is still importing.' : 'Locked by the creator'}</p>
           ) : (
             <button
               type="button"

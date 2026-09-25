@@ -210,7 +210,7 @@ export function useMentionEditor({
 
   const filteredMentionDrops = useMemo(() => {
     const q = mentionQuery.toLowerCase().trim();
-    let list = allDrops.filter((d) => d.id !== excludeDropId);
+    let list = allDrops.filter((d) => d.id !== excludeDropId && !d.isStaged);
     if (q) list = list.filter((d) => d.name.toLowerCase().includes(q));
     const MAX_RESULTS = typeof window !== 'undefined' && window.innerWidth < 640 ? 5 : 8;
     return list.slice(0, MAX_RESULTS);
@@ -329,6 +329,7 @@ export function useMentionEditor({
   };
 
   const insertMention = (drop: Drop) => {
+    if (allDrops.find((item) => item.id === drop.id)?.isStaged || !allDrops.some((item) => item.id === drop.id)) return;
     const editor = editorRef.current;
     if (!editor) return;
     editor.focus();

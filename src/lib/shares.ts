@@ -1,4 +1,5 @@
 import { auth } from './firebase';
+import { assertDropWritableById } from './archiveJournalVisibility';
 
 // The 8-field "content identity" two shares must agree on to be considered the same link.
 // Compared with shallow equality. Note hasImage/hasFile are BOOLEANS (presence only) — that is
@@ -108,6 +109,7 @@ export async function createShare(options: {
   expiresAt: Date | null;
 }): Promise<{ shareId: string; url: string } | null> {
   try {
+    await assertDropWritableById(options.dropId);
     const currentUser = auth.currentUser;
     if (!currentUser) return null;
 
@@ -122,6 +124,7 @@ export async function createShare(options: {
     const currentIdentity = buildShareIdentity(options);
     const active = await getActiveShareForDrop(options.dropId);
     if (active && identityMatches(active, currentIdentity)) {
+      await assertDropWritableById(options.dropId);
       return { shareId: active.shareId, url: `${window.location.origin}/s/${active.shareId}` };
     }
 
@@ -138,7 +141,7 @@ export async function createShare(options: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${idToken}`,
           },
-          body: JSON.stringify({ imageData: options.imageData }),
+          body: JSON.stringify({ dropId: options.dropId, imageData: options.imageData }),
         });
         if (uploadRes.ok) {
           const uploadData = await uploadRes.json();
@@ -164,7 +167,7 @@ export async function createShare(options: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${idToken}`,
           },
-          body: JSON.stringify({ fileData: options.fileData, mimeType: options.mimeType }),
+          body: JSON.stringify({ dropId: options.dropId, fileData: options.fileData, mimeType: options.mimeType }),
         });
         if (uploadRes.ok) {
           const uploadData = await uploadRes.json();
@@ -182,6 +185,7 @@ export async function createShare(options: {
       fileUrl = options.fileUrl;
     }
 
+    await assertDropWritableById(options.dropId);
     const res = await fetch('/api/share', {
       method: 'POST',
       headers: {

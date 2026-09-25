@@ -33,7 +33,7 @@ const MAX_HEADER_BYTES = 64 * 1024;
 const MAX_BLOB_FALLBACK_BYTES = 250 * 1024 * 1024;
 const MAX_PASSWORD_LENGTH = 512;
 
-export type ArchiveProgressPhase = 'preflight' | 'export' | 'inspect' | 'import';
+export type ArchiveProgressPhase = 'preflight' | 'export' | 'inspect' | 'import' | 'finalizing';
 
 export interface ArchiveProgress {
   phase: ArchiveProgressPhase;
@@ -41,12 +41,25 @@ export interface ArchiveProgress {
   totalBytes: number;
   currentName?: string;
   message?: string;
+  completedItems?: number;
+  totalItems?: number;
 }
 
 export interface ArchiveSink {
   writable: WritableStream<Uint8Array>;
   finish: () => Promise<void>;
   abort: (reason?: unknown) => Promise<void>;
+  kind: 'picker' | 'download';
+}
+
+export interface ArchiveSaveHandle {
+  createWritable: () => Promise<WritableStream<Uint8Array>>;
+}
+
+export async function yieldBetweenArchiveItems(): Promise<void> {
+  const candidate = globalThis as typeof globalThis & { scheduler?: { yield?: () => Promise<void> } };
+  if (candidate.scheduler?.yield) await candidate.scheduler.yield();
+  else await new Promise<void>((resolve) => setTimeout(resolve, 0));
 }
 
 interface EnvelopeHeader {
@@ -431,30 +444,15 @@ async function readEnvelopeHeader(file: File): Promise<ParsedEnvelopeHeader> {
 export async function createArchiveSink(
   suggestedName: string,
   estimatedBytes: number,
-  description = 'DropSync workspace backup'
+  saveHandle?: ArchiveSaveHandle | null
 ): Promise<ArchiveSink> {
-  const candidateWindow = window as Window & {
-    showSaveFilePicker?: (options?: unknown) => Promise<{
-      createWritable: () => Promise<WritableStream<Uint8Array>>;
-    }>;
-  };
-
-  if (typeof candidateWindow.showSaveFilePicker === 'function') {
-    const handle = await candidateWindow.showSaveFilePicker({
-      suggestedName,
-      types: [{ description, accept: { [ARCHIVE_MIME]: [ARCHIVE_EXTENSION] } }],
-    });
-    const writable = await handle.createWritable();
+  if (saveHandle) {
+    const writable = await saveHandle.createWritable();
     return {
       writable,
-      finish: async () => {},
-      abort: async (reason) => {
-        try {
-          await writable.abort(reason);
-        } catch {
-          // Best effort; the picker may already have closed the stream.
-        }
-      },
+      kind: 'picker',
+      finish: async () => { await writable.close(); },
+      abort: async (reason) => { await writable.abort(reason); },
     };
   }
 
@@ -470,6 +468,7 @@ export async function createArchiveSink(
   });
   return {
     writable,
+    kind: 'download',
     finish: async () => {
       const blob = new Blob(chunks as BlobPart[], { type: ARCHIVE_MIME });
       const url = URL.createObjectURL(blob);
@@ -488,6 +487,18 @@ export async function createArchiveSink(
       chunks.length = 0;
     },
   };
+}
+
+export function requestArchiveSaveHandle(suggestedName: string, description: string): Promise<ArchiveSaveHandle> | null {
+  const candidateWindow = window as Window & {
+    showSaveFilePicker?: (options?: unknown) => Promise<ArchiveSaveHandle>;
+  };
+  if (typeof candidateWindow.showSaveFilePicker !== 'function') return null;
+  // The caller invokes this during the Start event, before its first await.
+  return candidateWindow.showSaveFilePicker({
+    suggestedName,
+    types: [{ description, accept: { [ARCHIVE_MIME]: [ARCHIVE_EXTENSION] } }],
+  });
 }
 
 export function countedStream(

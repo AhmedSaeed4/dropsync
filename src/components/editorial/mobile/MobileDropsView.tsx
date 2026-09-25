@@ -138,6 +138,7 @@ export function MobileDropsView({
   const [holdDone, setHoldDone] = useState(false);
 
   const toggleSelect = useCallback((id: string) => {
+    if (drops.find((drop) => drop.id === id)?.isStaged) return;
     const next = new Set(selectedIds);
     if (next.has(id)) {
       next.delete(id);
@@ -145,13 +146,14 @@ export function MobileDropsView({
       next.add(id);
     }
     setSelectedIds(next);
-  }, [selectedIds]);
+  }, [selectedIds, drops]);
 
   // --- Single-drop delete-with-undo (shared store) + tombstone visibility filter ---
   const { pending: pendingDeletions, tombstone: deletedDropIds } = usePendingDeletions();
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [pinLimitToast, setPinLimitToast] = useState(false);
   const [sheetDrop, setSheetDrop] = useState<Drop | null>(null);
+  const liveSheetDrop = sheetDrop ? drops.find((drop) => drop.id === sheetDrop.id) || null : null;
   // "Copied" confirmation for the ⋯ sheet's Copy row — the sheet unmounts as it closes, so
   // the VIEW owns this toast (it must outlive the sheet's slide-down).
   const [copiedToast, setCopiedToast] = useState(false);
@@ -183,7 +185,7 @@ export function MobileDropsView({
   // semantics: the bar stays with count 0).
   useEffect(() => {
     if (selectedIds.size === 0) return;
-    const existing = new Set(drops.map((d) => d.id));
+    const existing = new Set(drops.filter((d) => !d.isStaged).map((d) => d.id));
     const next = new Set([...selectedIds].filter((id) => existing.has(id)));
     if (next.size === selectedIds.size) return;
     setSelectedIds(next);
@@ -392,7 +394,8 @@ export function MobileDropsView({
   const handleBulkDelete = async () => {
     if (selectedIds.size === 0) return;
     setDeleting(true);
-    const selectedDrops = filteredDrops.filter(d => selectedIds.has(d.id));
+    const selectedDrops = filteredDrops.filter(d => selectedIds.has(d.id) && !d.isStaged);
+    if (selectedDrops.length !== selectedIds.size) { setDeleting(false); return; }
     await Promise.all(selectedDrops.map(drop => deleteDrop(drop)));
     setDeleting(false);
     setHoldDone(true);
@@ -409,7 +412,7 @@ export function MobileDropsView({
       setSelectedIds(new Set());
     } else {
       // Live-call tiles are never selectable (#21).
-      setSelectedIds(new Set(filteredDrops.filter(d => d.type !== 'call').map(d => d.id)));
+      setSelectedIds(new Set(filteredDrops.filter(d => d.type !== 'call' && !d.isStaged).map(d => d.id)));
     }
   };
 
@@ -682,16 +685,16 @@ export function MobileDropsView({
           (exit on the panel + backdrop inside MobileActionSheet). The snapshot carries the old
           non-null drop, so the component renders normally during the exit. */}
       <AnimatePresence>
-        {sheetDrop && (
+        {liveSheetDrop && (
           <MobileActionSheet
             key="action-sheet"
-            drop={sheetDrop}
+            drop={liveSheetDrop}
         onClose={() => setSheetDrop(null)}
         theme={theme}
         currentUserId={currentUserId}
         onPreview={onPreview}
         onEditDrop={onEditDrop}
-        canMutate={sheetDrop ? canMutateFor(sheetDrop) : false}
+        canMutate={!liveSheetDrop.isStaged && canMutateFor(liveSheetDrop)}
         onMove={(drop) => onOpenMoveModal([drop])}
         onDelete={handleDeleteWithUndo}
         onPin={handlePinDrop}

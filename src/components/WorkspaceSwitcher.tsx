@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { Workspace } from '@/types';
 import { DeletingWorkspaceRow } from '@/components/DeletingWorkspaceRow';
+import { ImportingWorkspaceRow } from '@/components/ImportingWorkspaceRow';
 import { getWorkspaceMembers, MemberInfo } from '@/lib/workspaces';
 
 interface WorkspaceSwitcherProps {
@@ -196,6 +197,11 @@ export function WorkspaceSwitcher({
                     isOwnerView={isOwner}
                   />
                 );
+              }
+
+              if (workspace.isImporting) {
+                return <ImportingWorkspaceRow key={workspace.id} workspace={workspace}
+                  theme={theme} onSwitch={(id) => { onSwitch(id); setIsOpen(false); }} />;
               }
 
               return (

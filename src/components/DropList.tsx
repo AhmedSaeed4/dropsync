@@ -41,6 +41,14 @@ interface DropListProps {
 export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspaces = [], theme = 'light', currentUserId, categories = [], onDeleteCategory, currentWorkspace, workspaceMembers, allDrops = [], onJoinCall, isReopenCallId, hoverable = false, onExportWorkspace, onExportPersonal }: DropListProps) {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    const eligible = new Set(drops.filter((drop) => !drop.isStaged).map((drop) => drop.id));
+    const frame = requestAnimationFrame(() => setSelectedIds((prior) => {
+      const next = new Set([...prior].filter((id) => eligible.has(id)));
+      return next.size === prior.size ? prior : next;
+    }));
+    return () => cancelAnimationFrame(frame);
+  }, [drops]);
   // Two-tap bulk-delete guard (owner-approved): first click arms, second click deletes.
   // Auto-disarms after 3s, on outside click, on Cancel, or when the selection empties.
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
@@ -106,6 +114,7 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
   };
 
   const toggleSelect = (id: string) => {
+    if (drops.find((drop) => drop.id === id)?.isStaged) return;
     const newSelected = new Set(selectedIds);
     if (newSelected.has(id)) {
       newSelected.delete(id);
@@ -121,7 +130,7 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
       setSelectedIds(new Set());
       setConfirmBulkDelete(false);
     } else {
-      setSelectedIds(new Set(filteredDrops.map(d => d.id)));
+      setSelectedIds(new Set(filteredDrops.filter(d => !d.isStaged).map(d => d.id)));
     }
   };
 
@@ -138,7 +147,8 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
     if (selectedIds.size === 0) return;
 
     setDeleting(true);
-    const selectedDrops = filteredDrops.filter(d => selectedIds.has(d.id));
+    const selectedDrops = filteredDrops.filter(d => selectedIds.has(d.id) && !d.isStaged);
+    if (selectedDrops.length !== selectedIds.size) { setConfirmBulkDelete(false); return; }
 
     await Promise.all(selectedDrops.map(drop => deleteDrop(drop)));
 
@@ -172,6 +182,7 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
   const visibleDrops = drops.filter(d => !pendingDeletions.has(d.id) && !deletedDropIds.has(d.id));
 
   const handlePinDrop = useCallback(async (drop: Drop) => {
+    if (drop.isStaged) return;
     if (drop.pinned) {
       await unpinDrop(drop.id);
     } else {

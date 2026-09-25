@@ -63,6 +63,15 @@ export async function POST(request: NextRequest) {
     if (ownerId !== uid) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
+    const importJobId = wsDoc.get('importJobId');
+    if (typeof importJobId === 'string') {
+      const fence = await getAdminDb().collection('importFences').doc(uid + '_' + importJobId).get();
+      if (!fence.exists || fence.get('userId') !== uid || fence.get('jobId') !== importJobId
+        || fence.get('workspaceId') !== workspaceId || fence.get('mode') !== 'fresh'
+        || (fence.get('state') !== 'closed-success' && fence.get('state') !== 'closed-cancelled')) {
+        return NextResponse.json({ error: 'This workspace is still importing.' }, { status: 409 });
+      }
+    }
 
     // ---- DELETE the single key doc. Admin SDK bypasses firestore.rules. Admin delete on an
     // already-missing doc is an idempotent no-op — safe to retry. Key fields are NEVER read. ----

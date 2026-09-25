@@ -238,11 +238,13 @@ export function EditorialMobileShell({
   // closing its own modal. MOVE — the drop left this workspace, so no preview return (layout
   // :303-309). COPY — the original still exists, so return to its preview (:337-342).
   const handleMoveComplete = async (selDrops: Drop[], targetWorkspaceId: string | null) => {
+    if (selDrops.some((drop) => drop.isStaged) || currentWorkspace?.isImporting) return;
     await onMoveDrops(selDrops, targetWorkspaceId);
     setMoveDrops(null);
     setMoveReturnDrop(null);
   };
   const handleCopyComplete = async (selDrops: Drop[], targetWorkspaceId: string | null) => {
+    if (selDrops.some((drop) => drop.isStaged) || currentWorkspace?.isImporting) return;
     const returnDrop = moveReturnDrop;
     await onCopyDrops(selDrops, targetWorkspaceId);
     setMoveDrops(null);

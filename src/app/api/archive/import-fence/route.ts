@@ -105,6 +105,51 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(result.payload, { status: result.code });
     }
 
+    // ---------- op: probe-items (R14-D4 hotfix-4) ----------
+    // Recovery existence probe. A bare client read of a MISSING doc is denied by the
+    // rules (the read rules dereference the document body), so the browser cannot ask
+    // "does this obligation exist?" — the route answers under Admin. Every PRESENT doc
+    // must belong to the caller (drop.userId / fence.userId / category.createdBy /
+    // workspace.ownerId); anything else fails the whole call. Runs BEFORE the shared
+    // fence check on purpose: a fully-acked fence is deleted, yet its journal cleanup
+    // still needs probes.
+    if (op === 'probe-items') {
+      const rawIds = Array.isArray(body.ids) ? (body.ids as unknown[]) : [];
+      const ids = rawIds.filter((i): i is string => typeof i === 'string');
+      if (ids.length === 0 || ids.length > CHUNK_LIMIT) {
+        return NextResponse.json({ error: 'Ids chunk must be 1-100' }, { status: 400 });
+      }
+      const absent: string[] = [];
+      const present: string[] = [];
+      const fenceState: Record<string, { state: string; heartbeatAt: number | null }> = {};
+      for (const id of ids) {
+        const colon = id.indexOf(':');
+        const kind = colon > 0 ? id.slice(0, colon) : '';
+        const refId = colon > 0 ? id.slice(colon + 1) : '';
+        if (!refId || (kind !== 'drop' && kind !== 'category' && kind !== 'workspace' && kind !== 'fence')) {
+          return NextResponse.json({ error: 'Bad probe id' }, { status: 400 });
+        }
+        const ref = kind === 'fence'
+          ? db.collection('importFences').doc(refId)
+          : db.collection(kind === 'drop' ? 'drops' : kind === 'category' ? 'categories' : 'workspaces').doc(refId);
+        const snap = await ref.get();
+        if (!snap.exists) { absent.push(id); continue; }
+        const data = snap.data()!;
+        const ownerId = kind === 'drop' || kind === 'fence' ? data.userId : kind === 'category' ? data.createdBy : data.ownerId;
+        if (ownerId !== uid) {
+          return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+        }
+        present.push(id);
+        if (kind === 'fence') {
+          fenceState[id] = {
+            state: typeof data.state === 'string' ? data.state : '',
+            heartbeatAt: typeof data.heartbeatAt === 'number' ? data.heartbeatAt : null,
+          };
+        }
+      }
+      return NextResponse.json({ ok: true, absent, present, fenceState });
+    }
+
     // ---------- shared: the fence must belong to the caller ----------
     const fenceSnap = await fenceRef.get();
     if (!fenceSnap.exists || fenceSnap.get('userId') !== uid) {

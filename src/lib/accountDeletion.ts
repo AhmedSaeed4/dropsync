@@ -1,13 +1,15 @@
 import { auth, db } from './firebase';
-import { deleteDoc, doc, collection, query, where, getDoc, getDocs, updateDoc, QueryDocumentSnapshot } from 'firebase/firestore';
+import { deleteDoc, doc, collection, query, where, getDoc, getDocFromServer, getDocs, getDocsFromServer, updateDoc, QueryDocumentSnapshot } from 'firebase/firestore';
 import { deleteConversation } from './chat';
 import { deleteMasterKey } from './crypto';
 import { deleteFromR2 } from './drops';
 import { PROFILES_COLLECTION, getProfile } from './profiles';
 import { deleteSharesForDrop } from './shares';
 import { acquireAccountBarrier, completeAccountBarrier, abortAccountBarrier } from './accountBarriers';
-import { cancelImportFence, ackImportItems } from './importFenceClient';
+import { getImportFenceOutstanding } from './importFenceClient';
 import { runDeletionJob, isDeletionPaused } from './workspaceDeletion';
+import { withUserArchiveLock } from './archiveJobLock';
+import { getArchiveTaskManager } from './archiveTaskManager';
 
 const USERS_COLLECTION = 'users';
 const USER_KEYS_COLLECTION = 'userKeys';
@@ -197,46 +199,24 @@ async function drainOwnedDeletionJobs(userId: string): Promise<string[]> {
   return unfinished;
 }
 
-// ROUND 12 (part J): drain every OPEN import fence — roll its registered items back (the
-// DURABLE LEDGER is the authority, not localStorage), close it cancelled (override — the
-// account flow is not a competing producer that must respect the lease), ack the ledger in
-// bounded chunks. A 'fresh' workspace PARENT is deliberately NOT deleted here: it is owned
-// + solo, so the normal workspace stage below consumes it (parent + key together). Returns
-// false only when the listing itself failed.
+// Verify the shared recovery pass has closed and acknowledged every owned import before
+// account deletion mutates any drop or workspace. The account barrier prevents new imports.
 async function drainOpenImportFences(userId: string): Promise<boolean> {
   try {
-    const fencesSnap = await getDocs(
-      query(collection(db, 'importFences'), where('userId', '==', userId))
-    );
-    for (const fenceDoc of fencesSnap.docs) {
-      const f = fenceDoc.data();
-      if (f.state !== 'open') continue;
-      const jobId = typeof f.jobId === 'string' ? f.jobId : '';
-      if (!jobId) continue;
-      const wsId = typeof f.workspaceId === 'string' ? f.workspaceId : null;
-      const itemsSnap = await getDocs(collection(db, 'importFences', fenceDoc.id, 'items'));
-      const ackIds: string[] = [];
-      for (const itemDoc of itemsSnap.docs) {
-        const kind = itemDoc.get('kind');
-        const refId = itemDoc.get('refId');
-        if (typeof kind !== 'string' || typeof refId !== 'string') continue;
-        try {
-          if (kind === 'r2') await deleteFromR2(refId, wsId);
-          else if (kind === 'drop') await deleteDoc(doc(db, DROPS_COLLECTION, refId));
-          else if (kind === 'category') await deleteDoc(doc(db, CATEGORIES_COLLECTION, refId));
-        } catch (error) {
-          console.error('Import fence drain item failed:', error);
-        }
-        ackIds.push(`${kind}:${refId}`);
-      }
-      await cancelImportFence(jobId, true);
-      for (let i = 0; i < ackIds.length; i += 100) {
-        await ackImportItems(jobId, ackIds.slice(i, i + 100));
-      }
+    // The lock-held recovery above closed and verified each import before the barrier.
+    // The barrier now prevents another producer from opening one. Re-read server truth;
+    // never acknowledge an item merely because deletion was attempted.
+    const fences = await getDocsFromServer(query(collection(db, 'importFences'), where('userId', '==', userId)));
+    for (const fence of fences.docs) {
+      const data = fence.data();
+      if (data.state === 'closed-success') continue;
+      if (data.state !== 'closed-cancelled' || typeof data.jobId !== 'string') return false;
+      const status = await getImportFenceOutstanding(data.jobId);
+      if (!status || status.state !== 'closed-cancelled' || status.outstandingItems !== 0) return false;
     }
     return true;
   } catch (error) {
-    console.error('Import fence drain failed:', error);
+    console.error('Import fence verification failed:', error);
     return false;
   }
 }
@@ -249,6 +229,26 @@ export async function deleteAccount(
   selectedOwners: SelectedOwners = {},
   onProgress?: (progress: DeletionProgress) => void
 ): Promise<{ success: boolean; error?: string }> {
+  if (getArchiveTaskManager().isBusyForUid(userId)) {
+    return { success: false, error: 'Finish the archive or its cleanup before deleting your account.' };
+  }
+  try {
+    return await withUserArchiveLock(userId, 'account', async () => {
+      if (getArchiveTaskManager().isBusyForUid(userId)) {
+        return { success: false, error: 'Finish the archive or its cleanup before deleting your account.' };
+      }
+      return deleteAccountUnderHeldLock(userId, selectedOwners, onProgress);
+    });
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : 'Could not acquire the account safety lock.' };
+  }
+}
+
+async function deleteAccountUnderHeldLock(
+  userId: string,
+  selectedOwners: SelectedOwners,
+  onProgress?: (progress: DeletionProgress) => void
+): Promise<{ success: boolean; error?: string }> {
   try {
     let currentStep = 0;
     const totalSteps = 10; // 10 onProgress steps (ROUND 12: + the drain step; FCM cleaned server-side in Step 5)
@@ -257,6 +257,13 @@ export async function deleteAccount(
     if (!firebaseUser || firebaseUser.uid !== userId) {
       return { success: false, error: 'User not authenticated' };
     }
+
+    const barrierSnapshot = await getDocFromServer(doc(db, 'accountBarriers', userId));
+    const priorBarrierState = barrierSnapshot.exists() ? barrierSnapshot.get('state') : 'none';
+    // A resumed active barrier cannot admit a new import; take over its owned
+    // fences under the account lock. A new barrier respects a fresh remote lease.
+    const remoteActive = await getArchiveTaskManager().recoverUnderHeldLock(userId, priorBarrierState === 'active');
+    if (remoteActive) return { success: false, error: 'A backup is active on another device. Try again when it finishes.' };
 
     // Step 0 (ROUND 12 part K): acquire the barrier. `finalizing` = a previous attempt
     // already committed the finalizer — resume the committed tail; nothing else remains.
@@ -280,9 +287,7 @@ export async function deleteAccount(
       return { success: false, error: 'A workspace is still being deleted — wait for it to finish, then try again.' };
     }
 
-    // Step 0.6 (ROUND 12 part J): roll back and close every OPEN import fence. The durable
-    // ledger is the authority; failure aborts (resumable) — an open producer epoch must not
-    // outlive the account.
+    // Step 0.6: verify the lock-held recovery pass emptied every cancelled ledger.
     if (!(await drainOpenImportFences(userId))) {
       await abortAccountBarrier();
       return { success: false, error: 'Could not finish cleaning up an interrupted import — please try again.' };

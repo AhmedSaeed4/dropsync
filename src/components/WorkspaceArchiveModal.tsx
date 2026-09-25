@@ -6,19 +6,13 @@ import { useModalBackClose } from '@/hooks/useModalBackClose';
 import { Workspace } from '@/types';
 import { getEditorialThemeColors } from '@/components/editorial/editorialTheme';
 import { WORKSPACE_ARCHIVE_EXTENSION } from '@/lib/workspaceArchive';
+import type { WorkspaceArchiveInspection, WorkspaceArchiveProgress } from '@/lib/workspaceArchive';
 import type {
-  WorkspaceArchiveImportResult,
-  WorkspaceArchiveInspection,
-  WorkspaceArchiveProgress,
-} from '@/lib/workspaceArchive';
-import type {
-  PersonalArchiveImportResult,
   PersonalArchiveInspection,
   PersonalArchiveProgress,
 } from '@/lib/personalArchive';
 
 type ArchiveInspection = WorkspaceArchiveInspection | PersonalArchiveInspection;
-type ArchiveImportResult = WorkspaceArchiveImportResult | PersonalArchiveImportResult;
 type WorkspaceArchiveDestination =
   | { mode: 'new'; workspaceName: string }
   | { mode: 'merge'; workspaceId: string };
@@ -31,10 +25,8 @@ interface WorkspaceArchiveModalProps {
   currentWorkspace: Workspace | null;
   workspaces: Workspace[];
   onExport: (
-    password: string,
-    signal: AbortSignal,
-    onProgress: (progress: WorkspaceArchiveProgress) => void
-  ) => Promise<void>;
+    password: string
+  ) => Promise<string | null>;
   onInspect: (
     file: File,
     password: string,
@@ -44,11 +36,10 @@ interface WorkspaceArchiveModalProps {
   onImport: (
     file: File,
     password: string,
-    destination: WorkspaceArchiveDestination | undefined,
-    signal: AbortSignal,
-    onProgress: (progress: WorkspaceArchiveProgress | PersonalArchiveProgress) => void
-  ) => Promise<ArchiveImportResult>;
+    destination: WorkspaceArchiveDestination | undefined
+  ) => Promise<string | null>;
   onCheckImportOverlap?: (archiveId: string, destinationWorkspaceId: string | null) => Promise<boolean>;
+  onStarted: (jobId: string) => void;
   onClose: () => void;
 }
 
@@ -63,6 +54,7 @@ export function WorkspaceArchiveModal({
   onInspect,
   onImport,
   onCheckImportOverlap,
+  onStarted,
   onClose,
 }: WorkspaceArchiveModalProps) {
   const isPersonal = scope === 'personal';
@@ -81,15 +73,11 @@ export function WorkspaceArchiveModal({
   const [progress, setProgress] = useState<WorkspaceArchiveProgress | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [completeMessage, setCompleteMessage] = useState<string | null>(null);
   const [checkingOverlap, setCheckingOverlap] = useState(false);
   const [duplicateWarning, setDuplicateWarning] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   useBodyScrollLock();
-  useModalBackClose(true, () => {
-    if (!abortRef.current) onClose();
-  });
 
   const colors = useMemo(() => {
     if (isEditorial) {
@@ -141,7 +129,6 @@ export function WorkspaceArchiveModal({
     setBusy(true);
     setProgress(null);
     setError(null);
-    setCompleteMessage(null);
     setCheckingOverlap(false);
     setDuplicateWarning(false);
     operation(controller)
@@ -165,10 +152,14 @@ export function WorkspaceArchiveModal({
       setError('The passwords do not match.');
       return;
     }
-    start(async (controller) => {
-      await onExport(password, controller.signal, setProgress);
-      setCompleteMessage(isPersonal ? 'Personal backup saved successfully.' : 'Workspace backup saved successfully.');
-    });
+    setBusy(true);
+    setError(null);
+    // onExport acquires the save picker synchronously before its first await.
+    void onExport(password).then((jobId) => {
+      if (jobId) onStarted(jobId);
+    }).catch((caught: unknown) => {
+      setError(caught instanceof Error ? caught.message : 'Could not start the export.');
+    }).finally(() => setBusy(false));
   };
 
   const handleInspect = () => {
@@ -189,33 +180,18 @@ export function WorkspaceArchiveModal({
     });
   };
 
-  const runImport = async (controller: AbortController) => {
+  const runImport = async () => {
     if (!file || !inspection) return;
-    const result = await onImport(
+    const jobId = await onImport(
       file,
       password,
       isPersonal
         ? undefined
         : destinationMode === 'new'
           ? { mode: 'new', workspaceName: workspaceName.trim() }
-          : { mode: 'merge', workspaceId: targetWorkspaceId },
-      controller.signal,
-      setProgress
+          : { mode: 'merge', workspaceId: targetWorkspaceId }
     );
-    const details = [
-      `Imported ${result.importedCount} drop${result.importedCount === 1 ? '' : 's'}.`,
-      result.legacyExpiryFallbackCount
-        ? 'This older backup had no saved remaining-time data, so finite drops restarted from their saved duration.'
-        : 'Finite drop timers resumed from their saved remaining time.',
-      result.zeroRemainingCount
-        ? `${result.zeroRemainingCount} drop${result.zeroRemainingCount === 1 ? '' : 's'} may expire immediately after import.`
-        : '',
-      result.downgradedForeverCount ? `${result.downgradedForeverCount} forever drop${result.downgradedForeverCount === 1 ? '' : 's'} downgraded to 24 hours.` : '',
-      result.unpinnedCount ? `${result.unpinnedCount} pin${result.unpinnedCount === 1 ? '' : 's'} adjusted for the two-pin limit.` : '',
-    ].filter(Boolean);
-    setCompleteMessage(details.join(' '));
-    setDuplicateWarning(false);
-    setInspection(null);
+    if (jobId) onStarted(jobId);
   };
 
   const handleImport = () => {
@@ -232,33 +208,37 @@ export function WorkspaceArchiveModal({
       ? targetWorkspaceId
       : null;
     if (!onCheckImportOverlap) {
-      start(runImport);
+      setBusy(true);
+      void runImport().catch((caught: unknown) => setError(caught instanceof Error ? caught.message : 'Could not start the import.')).finally(() => setBusy(false));
       return;
     }
-    start(async (controller) => {
+    setBusy(true);
+    setError(null);
+    void (async () => {
       setCheckingOverlap(true);
       try {
         const hasOverlap = await onCheckImportOverlap(inspection.manifest.archiveId, destinationWorkspaceId);
-        if (controller.signal.aborted) return;
         if (hasOverlap) {
           setDuplicateWarning(true);
           return;
         }
         setCheckingOverlap(false);
-        await runImport(controller);
+        await runImport();
       } finally {
         setCheckingOverlap(false);
       }
-    });
+    })().catch((caught: unknown) => setError(caught instanceof Error ? caught.message : 'Could not start the import.')).finally(() => setBusy(false));
   };
 
   const handleImportAnyway = () => {
     if (!file || !inspection || !duplicateWarning) return;
     setDuplicateWarning(false);
-    start(runImport);
+    setBusy(true);
+    void runImport().catch((caught: unknown) => setError(caught instanceof Error ? caught.message : 'Could not start the import.')).finally(() => setBusy(false));
   };
 
   const closeOrCancel = () => {
+    if (busy && !abortRef.current) return;
     setDuplicateWarning(false);
     setCheckingOverlap(false);
     if (abortRef.current) {
@@ -266,16 +246,14 @@ export function WorkspaceArchiveModal({
       abortRef.current = null;
       setBusy(false);
       setProgress(null);
-      return;
     }
     onClose();
   };
+  useModalBackClose(true, closeOrCancel);
 
-  const progressPercent = completeMessage
-    ? 100
-    : progress && progress.totalBytes > 0
-      ? Math.min(100, Math.round((progress.processedBytes / progress.totalBytes) * 100))
-      : null;
+  const progressPercent = progress && progress.totalBytes > 0
+    ? Math.min(99, Math.round((progress.processedBytes / progress.totalBytes) * 100))
+    : null;
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 overscroll-contain">
@@ -386,7 +364,7 @@ export function WorkspaceArchiveModal({
             </>
           )}
 
-          {progress && (
+          {progress && mode === 'import' && !inspection && (
             <div className={`border ${colors.border} ${colors.rounded} p-3 ${colors.font}`}>
               <div className={`flex justify-between text-[11px] ${colors.muted}`}>
                 <span>{progress.message || 'Working…'}</span>
@@ -408,19 +386,18 @@ export function WorkspaceArchiveModal({
             </div>
           )}
           {error && <p className={`border p-3 text-xs ${colors.font} ${colors.rounded} ${colors.error}`}>{error}</p>}
-          {completeMessage && <p className={`border p-3 text-xs ${colors.font} ${colors.rounded} ${colors.success}`}>{completeMessage}</p>}
         </div>
 
         <div className={`px-5 py-4 border-t ${colors.border} flex justify-end gap-2 ${colors.font}`}>
           <button type="button" onClick={closeOrCancel} className={`${buttonClass} border ${colors.secondary}`}>
-            {busy ? 'Cancel' : completeMessage ? 'Close' : 'Cancel'}
+            {busy ? 'Close' : 'Cancel'}
           </button>
           {mode === 'export' ? (
-            <button type="button" onClick={handleExport} disabled={busy || !!completeMessage} className={`${buttonClass} ${colors.primary}`}>
+            <button type="button" onClick={handleExport} disabled={busy} className={`${buttonClass} ${colors.primary}`}>
               {busy ? 'Exporting…' : (isPersonal ? 'Export personal drops' : 'Export workspace')}
             </button>
           ) : inspection ? (
-            <button type="button" onClick={handleImport} disabled={busy || !!completeMessage || duplicateWarning} className={`${buttonClass} ${colors.primary}`}>
+            <button type="button" onClick={handleImport} disabled={busy || duplicateWarning} className={`${buttonClass} ${colors.primary}`}>
               {busy ? (checkingOverlap ? 'Checking…' : 'Importing…') : (isPersonal ? 'Import personal drops' : 'Import backup')}
             </button>
           ) : null}

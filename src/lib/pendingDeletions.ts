@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import type { Drop } from '@/types';
 import { deleteDrop } from '@/lib/drops';
+import { assertDropWritableById } from '@/lib/archiveJournalVisibility';
 
 /**
  * Module-level singleton store for single-drop delete-with-undo state, shared by both drop lists
@@ -104,6 +105,7 @@ function removePending(dropId: string) {
  */
 async function performDelete(drop: Drop, onDelete: OnDelete) {
   if (tombstone.has(drop.id)) return; // already fired — ignore the second 30s timer (double-fire guard)
+  try { await assertDropWritableById(drop.id); } catch { removePending(drop.id); onDelete(); return; }
   tombstone.add(drop.id); // SYNCHRONOUSLY, before the await below
   notify();
   try {

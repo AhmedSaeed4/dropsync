@@ -14,6 +14,7 @@ import { retractFooterIfUp } from './SmoothScrollProvider';
 interface DropZoneProps {
   theme?: 'light' | 'dark' | 'minimal';
   workspaceId?: string | null;
+  importing?: boolean;
   workspaceMembers?: string[];
   customCategories?: string[];
   onCreateCategory?: (name: string) => Promise<string | null>;
@@ -41,6 +42,7 @@ const EXPIRATION_OPTIONS: { value: ExpirationOption; label: string }[] = [
 export function DropZone({
   theme = 'light',
   workspaceId = null,
+  importing = false,
   workspaceMembers = [],
   customCategories = [],
   onCreateCategory,
@@ -276,6 +278,7 @@ export function DropZone({
 
   const tc = getThemeColors();
 
+  if (importing) return <div role="status" className="border border-current/20 p-4 text-sm opacity-70">This workspace is still importing.</div>;
   return (
     <>
       <div className={`border ${tc.borderColor} ${tc.bgColor} ${tc.roundedClass} transition-colors duration-300`}>
