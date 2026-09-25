@@ -1,7 +1,9 @@
 'use client';
 
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { getAuth } from 'firebase/auth';
 import { createFileDrop, createTextDrop } from '@/lib/drops';
+import { aiNameForImage, renamePastedFile } from '@/lib/imageNaming';
 import { leaveCallRoute, startCallRoute } from '@/lib/callRoutes';
 import { useAuth } from '@/hooks/useAuth';
 import { useUserTier } from '@/hooks/useUserTier';
@@ -67,6 +69,10 @@ export function DropZone({
   const callStartStreamRef = useRef<MediaStream | null>(null);
   // Open/Locked toggle for shared-workspace drops. Defaults Open; hidden for personal drops (Phase 3).
   const [locked, setLocked] = useState(false);
+  // AI naming for PASTED images (owner decision 2026-09-25): OFF by default — pasted images go
+  // to the AI naming route only while this is on; OFF (or any AI failure) still renames them to
+  // a clean "Pasted image" instead of the old timestamp junk. Drag/browse files are unaffected.
+  const [aiNaming, setAiNaming] = useState(false);
   const { tier, loading: tierLoading } = useUserTier();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isDark = theme === 'dark';
@@ -217,7 +223,7 @@ export function DropZone({
           const blob = item.getAsFile();
           if (blob) {
             const ext = item.type.split('/')[1] || 'png';
-            const file = new File([blob], `pasted-image-${Date.now()}.${ext}`, { type: item.type });
+            const file = new File([blob], `pasted-image.${ext}`, { type: item.type });
             imageFiles.push(file);
           }
         }
@@ -227,8 +233,17 @@ export function DropZone({
         e.preventDefault();
         setError(null);
         setUploading(true);
+        // Name FIRST, upload SECOND (owner decision 2026-09-25) — uploading=true blocks a 2nd
+        // paste during naming. Every image the AI could not name gets the clean fallback name,
+        // so the upload can never be blocked by the AI.
+        const token = await getAuth().currentUser?.getIdToken();
+        const named: File[] = [];
+        for (let i = 0; i < imageFiles.length; i++) {
+          const base = aiNaming && token ? await aiNameForImage(imageFiles[i], token) : null;
+          named.push(renamePastedFile(imageFiles[i], base ?? 'Pasted image', i, imageFiles.length));
+        }
         const creatorName = user.displayName || user.email?.split('@')[0] || undefined;
-        for (const file of imageFiles) {
+        for (const file of named) {
           const result = await createFileDrop(user.uid, file, expiration, workspaceId, workspaceMembers, creatorName, locked);
           if (result.error) {
             setError(result.error);
@@ -240,7 +255,7 @@ export function DropZone({
 
     document.addEventListener('paste', handlePaste);
     return () => document.removeEventListener('paste', handlePaste);
-  }, [user, uploading, expiration, workspaceId, workspaceMembers, showTextModal, editModalOpen, locked]);
+  }, [user, uploading, expiration, workspaceId, workspaceMembers, showTextModal, editModalOpen, locked, aiNaming]);
 
   // Theme colors
   const getThemeColors = () => {
@@ -385,30 +400,50 @@ export function DropZone({
                 ))}
               </div>
             </div>
-            {workspaceId && (
-              <Tooltip content={locked ? 'Locked — only the creator can edit' : 'Open — anyone can edit'}>
+            <div className="flex items-center gap-2">
+              <Tooltip content={aiNaming ? 'On — pasted images get AI names' : 'Off — pasted images are named "Pasted image"'}>
                 <button
                   type="button"
-                  onClick={(e) => { e.stopPropagation(); setLocked(!locked); }}
-                  aria-label={locked ? 'Locked — only the creator can edit' : 'Open — anyone can edit'}
-                  className={`flex items-center justify-center px-2 py-1 text-xs transition-colors ${
-                    locked
+                  onClick={(e) => { e.stopPropagation(); setAiNaming(!aiNaming); }}
+                  aria-pressed={aiNaming}
+                  aria-label="AI image naming"
+                  className={`inline-flex items-center gap-1.5 px-2 py-1 text-xs transition-colors ${
+                    aiNaming
                       ? 'bg-[#1A1A1A] text-white'
                       : `${tc.textColor} hover:bg-[#1A1A1A]/10`
                   } ${isMinimal ? 'rounded-full' : ''}`}
                 >
-                  {locked ? (
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                    </svg>
-                  ) : (
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
-                    </svg>
-                  )}
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+                  </svg>
+                  {isMinimal ? (aiNaming ? 'AI naming on' : 'AI naming off') : (aiNaming ? 'AI_NAMING_ON' : 'AI_NAMING_OFF')}
                 </button>
               </Tooltip>
-            )}
+              {workspaceId && (
+                <Tooltip content={locked ? 'Locked — only the creator can edit' : 'Open — anyone can edit'}>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setLocked(!locked); }}
+                    aria-label={locked ? 'Locked — only the creator can edit' : 'Open — anyone can edit'}
+                    className={`flex items-center justify-center px-2 py-1 text-xs transition-colors ${
+                      locked
+                        ? 'bg-[#1A1A1A] text-white'
+                        : `${tc.textColor} hover:bg-[#1A1A1A]/10`
+                    } ${isMinimal ? 'rounded-full' : ''}`}
+                  >
+                    {locked ? (
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                      </svg>
+                    ) : (
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
+                      </svg>
+                    )}
+                  </button>
+                </Tooltip>
+              )}
+            </div>
           </div>
         </div>
 
