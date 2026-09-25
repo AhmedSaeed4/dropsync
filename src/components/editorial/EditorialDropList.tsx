@@ -302,6 +302,14 @@ export function EditorialDropList({
   const isWide = useWideEditorial();
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    const eligible = new Set(drops.filter((drop) => !drop.isStaged).map((drop) => drop.id));
+    const frame = requestAnimationFrame(() => setSelectedIds((prior) => {
+      const next = new Set([...prior].filter((id) => eligible.has(id)));
+      return next.size === prior.size ? prior : next;
+    }));
+    return () => cancelAnimationFrame(frame);
+  }, [drops]);
   const [deleting, setDeleting] = useState(false);
   const [holdDone, setHoldDone] = useState(false);
   // Single-drop delete-with-undo state lives in the shared module store (PR #168) so it survives a
@@ -350,6 +358,7 @@ export function EditorialDropList({
   // Mirrors DropList.toggleSelect so both themes behave identically. Selection only
   // changes in selection mode, so drag-frame memo stability is unaffected.
   const toggleSelect = useCallback((id: string) => {
+    if (drops.find((drop) => drop.id === id)?.isStaged) return;
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) {
@@ -359,7 +368,7 @@ export function EditorialDropList({
       }
       return next;
     });
-  }, []);
+  }, [drops]);
 
   const selectAll = () => {
     // Wide window (D17): membership-based all-selected so off-window rows of
@@ -370,7 +379,7 @@ export function EditorialDropList({
     if (allSelected) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(filteredDrops.map(d => d.id)));
+      setSelectedIds(new Set(filteredDrops.filter(d => !d.isStaged).map(d => d.id)));
     }
   };
 
@@ -378,7 +387,8 @@ export function EditorialDropList({
     if (selectedIds.size === 0) return;
 
     setDeleting(true);
-    const selectedDrops = filteredDrops.filter(d => selectedIds.has(d.id));
+    const selectedDrops = filteredDrops.filter(d => selectedIds.has(d.id) && !d.isStaged);
+    if (selectedDrops.length !== selectedIds.size) return;
 
     await Promise.all(selectedDrops.map(drop => deleteDrop(drop)));
 
@@ -723,6 +733,7 @@ export function EditorialDropList({
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
+    if (filteredDrops.find((drop) => drop.id === active.id)?.isStaged || filteredDrops.find((drop) => drop.id === over.id)?.isStaged) return;
     // WV-4 (Order 21): only rows in the drag-eligible set - the same
     // predicate both sortable branches register - may start or receive a
     // move, so a leaked grip or a drop onto a tier row can never persist a

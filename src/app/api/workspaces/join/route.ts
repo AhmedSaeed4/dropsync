@@ -92,9 +92,10 @@ export async function POST(request: Request) {
     // ---- WRITE: transactional membership admission (ROUND 12). The deleting predicate and the
     // arrayUnion commit atomically — a workspace that began deleting between the lookup and this
     // write can never gain a member. ----
-    let txResult: { joined: boolean; deleting: boolean; members: string[] } = {
+    let txResult: { joined: boolean; deleting: boolean; importing: boolean; members: string[] } = {
       joined: false,
       deleting: false,
+      importing: false,
       members,
     };
     await adminDb.runTransaction(async (tx) => {
@@ -102,16 +103,31 @@ export async function POST(request: Request) {
       if (!txSnap.exists) return;
       const txData = txSnap.data()!;
       if (txData.deleting === true) {
-        txResult = { joined: false, deleting: true, members: [] };
+        txResult = { joined: false, deleting: true, importing: false, members: [] };
         return;
+      }
+      if (typeof txData.importJobId === 'string') {
+        const ownerId = txData.ownerId;
+        const fence = typeof ownerId === 'string'
+          ? await tx.get(adminDb.collection('importFences').doc(ownerId + '_' + txData.importJobId))
+          : null;
+        if (!fence?.exists || fence.get('userId') !== ownerId || fence.get('jobId') !== txData.importJobId
+          || fence.get('workspaceId') !== d.id || fence.get('mode') !== 'fresh'
+          || fence.get('state') !== 'closed-success') {
+          txResult = { joined: false, deleting: false, importing: true, members: [] };
+          return;
+        }
       }
       const txMembers: string[] = Array.isArray(txData.members) ? txData.members : [];
       tx.update(d.ref, { members: FieldValue.arrayUnion(uid) });
-      txResult = { joined: true, deleting: false, members: [...new Set([...txMembers, uid])] };
+      txResult = { joined: true, deleting: false, importing: false, members: [...new Set([...txMembers, uid])] };
     });
 
     if (txResult.deleting) {
       return NextResponse.json({ error: 'This workspace is being deleted' }, { status: 409 });
+    }
+    if (txResult.importing) {
+      return NextResponse.json({ error: 'This workspace is still importing.' }, { status: 409 });
     }
     if (!txResult.joined) {
       return NextResponse.json({ error: 'Invalid invite code' }, { status: 404 });

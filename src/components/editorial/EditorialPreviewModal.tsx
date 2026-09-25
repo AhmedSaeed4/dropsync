@@ -12,8 +12,16 @@ import { contentToPlainText } from '@/lib/dropTagUtils';
 import { getEditorialThemeColors } from './editorialTheme';
 import { DropMentionContent } from '../DropMentionContent';
 import { LockedActionButton } from '../LockedActionButton';
+import { Tooltip } from '../Tooltip';
 
 const YOUTUBE_PLAYER_TRANSITION = 'transition-[grid-template-rows] duration-300 ease-in-out';
+
+// R14-D5: a staged drop is frozen until its import settles. The gated Move/Edit/Share buttons
+// stay hoverable (a disabled button swallows hover events, so a tooltip could never show)
+// and explain themselves through the shared Tooltip bubble.
+const STAGED_MOVE_MESSAGE = 'Staged while importing — you can move this drop once the import finishes.';
+const STAGED_EDIT_MESSAGE = 'Staged while importing — you can edit this drop once the import finishes.';
+const STAGED_SHARE_MESSAGE = 'Staged while importing — you can share this drop once the import finishes.';
 
 interface EditorialPreviewModalProps {
   drop: Drop;
@@ -182,6 +190,7 @@ export function EditorialPreviewModal({ drop, onClose, onBack, canBack, theme = 
   // Header fire-time preview (next to the drop name) when this drop has a reminder. "Due …" once past.
   const reminderFire = drop.reminderAt ? formatReminderFire(drop.reminderAt, now) : null;
   const handleReminderDismiss = async () => {
+    if (drop.isStaged) return;
     if (!currentUserId) return;
     // On a locked drop only creator/owner (canMutate) may write; the Dismiss button is gated to
     // LockedActionButton below, so this is defense-in-depth.
@@ -248,6 +257,7 @@ export function EditorialPreviewModal({ drop, onClose, onBack, canBack, theme = 
   const youtubeVideoId = textContent ? getYouTubeVideoId(textContent) : null;
 
   const handleShare = async () => {
+    if (drop.isStaged) return;
     if (drop.type === 'call') return;
     setIsSharing(true);
     try {
@@ -580,18 +590,37 @@ export function EditorialPreviewModal({ drop, onClose, onBack, canBack, theme = 
               </button>
             )}
 
-            {/* Move button — opens the move/copy modal for everyone (Copy is reachable via the in-modal toggle). */}
+            {/* Move button — opens the move/copy modal for everyone (Copy is reachable via the in-modal toggle).
+                R14-D5: on a staged drop this renders the LockedActionButton-style faded stand-in
+                (hoverable, the shared Tooltip explains the gate) instead of a silent disabled button. */}
             {onMove && (
-              <button
-                onClick={() => onMove(drop)}
-                className={`flex items-center gap-2 px-2 sm:px-4 py-2 rounded-md border ${tc.border} ${tc.text} hover:border-[#1a1a1a] transition-all text-sm ${tc.fontClass}`}
-                title="Move"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 7.5L7.5 3m0 0L12 7.5M7.5 3v13.5M12 16.5l4.5-4.5m0 0L21 16.5M16.5 12V3" />
-                </svg>
-                <span className="hidden sm:inline">Move</span>
-              </button>
+              drop.isStaged ? (
+                <Tooltip content={STAGED_MOVE_MESSAGE}>
+                  <button
+                    type="button"
+                    aria-label={STAGED_MOVE_MESSAGE}
+                    aria-disabled="true"
+                    onClick={(e) => e.stopPropagation()}
+                    className={`flex items-center gap-2 px-2 sm:px-4 py-2 rounded-md border ${tc.border} ${tc.text} transition-all text-sm opacity-40 cursor-not-allowed ${tc.fontClass}`}
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 7.5L7.5 3m0 0L12 7.5M7.5 3v13.5M12 16.5l4.5-4.5m0 0L21 16.5M16.5 12V3" />
+                    </svg>
+                    <span className="hidden sm:inline">Move</span>
+                  </button>
+                </Tooltip>
+              ) : (
+                <button
+                  onClick={() => onMove(drop)}
+                  className={`flex items-center gap-2 px-2 sm:px-4 py-2 rounded-md border ${tc.border} ${tc.text} hover:border-[#1a1a1a] transition-all text-sm ${tc.fontClass}`}
+                  title="Move"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 7.5L7.5 3m0 0L12 7.5M7.5 3v13.5M12 16.5l4.5-4.5m0 0L21 16.5M16.5 12V3" />
+                  </svg>
+                  <span className="hidden sm:inline">Move</span>
+                </button>
+              )
             )}
 
             {/* Edit button */}
@@ -611,6 +640,21 @@ export function EditorialPreviewModal({ drop, onClose, onBack, canBack, theme = 
                     </>
                   }
                 />
+              ) : drop.isStaged ? (
+                <Tooltip content={STAGED_EDIT_MESSAGE}>
+                  <button
+                    type="button"
+                    aria-label={STAGED_EDIT_MESSAGE}
+                    aria-disabled="true"
+                    onClick={(e) => e.stopPropagation()}
+                    className={`flex items-center gap-2 px-2 sm:px-4 py-2 rounded-md border ${tc.border} ${tc.text} transition-all text-sm opacity-40 cursor-not-allowed ${tc.fontClass}`}
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+                    </svg>
+                    <span className="hidden sm:inline">Edit</span>
+                  </button>
+                </Tooltip>
               ) : (
                 <button
                   onClick={() => onEdit(drop)}
@@ -650,6 +694,7 @@ export function EditorialPreviewModal({ drop, onClose, onBack, canBack, theme = 
               ) : (
                 <button
                   onClick={handleReminderDismiss}
+                  disabled={!!drop.isStaged}
                   className={`flex items-center gap-2 px-2 sm:px-4 py-2 rounded-md border ${tc.border} ${tc.text} hover:border-[#1a1a1a] transition-all text-sm ${tc.fontClass}`}
                   title="Dismiss reminder"
                 >
@@ -664,35 +709,52 @@ export function EditorialPreviewModal({ drop, onClose, onBack, canBack, theme = 
           </div>
 
           {/* Share */}
-          <button
-            onClick={handleShare}
-            disabled={isSharing}
-            className={`flex items-center gap-2 px-2 sm:px-4 py-2 rounded-md ${tc.activePillBg} ${tc.activePillText} hover:opacity-90 transition-all text-sm ${tc.fontClass} disabled:opacity-50`}
-          >
-            {isSharing ? (
-              <>
-                <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                </svg>
-                Sharing...
-              </>
-            ) : shareCopied ? (
-              <>
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                </svg>
-                Link Copied
-              </>
-            ) : (
-              <>
+          {drop.isStaged ? (
+            <Tooltip content={STAGED_SHARE_MESSAGE}>
+              <button
+                type="button"
+                aria-label={STAGED_SHARE_MESSAGE}
+                aria-disabled="true"
+                onClick={(e) => e.stopPropagation()}
+                className={`flex items-center gap-2 px-2 sm:px-4 py-2 rounded-md ${tc.activePillBg} ${tc.activePillText} transition-all text-sm ${tc.fontClass} opacity-40 cursor-not-allowed`}
+              >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
                 </svg>
                 <span className="hidden sm:inline">Share</span>
-              </>
-            )}
-          </button>
+              </button>
+            </Tooltip>
+          ) : (
+            <button
+              onClick={handleShare}
+              disabled={isSharing}
+              className={`flex items-center gap-2 px-2 sm:px-4 py-2 rounded-md ${tc.activePillBg} ${tc.activePillText} hover:opacity-90 transition-all text-sm ${tc.fontClass} disabled:opacity-50`}
+            >
+              {isSharing ? (
+                <>
+                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  Sharing...
+                </>
+              ) : shareCopied ? (
+                <>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                  Link Copied
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+                  </svg>
+                  <span className="hidden sm:inline">Share</span>
+                </>
+              )}
+            </button>
+          )}
         </div>
       </div>
     </div>

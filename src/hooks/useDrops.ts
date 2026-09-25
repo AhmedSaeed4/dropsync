@@ -8,7 +8,7 @@ import { useAuth } from './useAuth';
 // does not (closes the Order 10e narrow stale window: the fired section + glow must appear with
 // zero user interaction).
 function dropsTickSignature(drops: Drop[], now: Date): string {
-  return drops.map((d) => `${d.id}:${isReminderFiredShared(d, now) ? 1 : 0}`).join("|");
+  return drops.map((d) => `${d.id}:${isReminderFiredShared(d, now) ? 1 : 0}:${d.isStaged ? 1 : 0}`).join("|");
 }
 
 export function useDrops(

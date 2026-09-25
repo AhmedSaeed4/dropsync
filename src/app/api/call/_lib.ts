@@ -1073,6 +1073,17 @@ export async function registerCallAttempt(
     const wsSnap = await tx.get(db.collection('workspaces').doc(args.workspaceId));
     if (!wsSnap.exists) return { ok: false as const, error: 'Workspace not found' };
     if (wsSnap.get('deleting') === true) return { ok: false as const, error: 'Workspace is deleting' };
+    const importJobId = wsSnap.get('importJobId');
+    if (typeof importJobId === 'string') {
+      const ownerId = wsSnap.get('ownerId');
+      if (typeof ownerId !== 'string') return { ok: false as const, error: 'Workspace is importing' };
+      const fence = await tx.get(db.collection('importFences').doc(ownerId + '_' + importJobId));
+      if (!fence.exists || fence.get('userId') !== ownerId || fence.get('jobId') !== importJobId
+        || fence.get('workspaceId') !== args.workspaceId || fence.get('mode') !== 'fresh'
+        || fence.get('state') !== 'closed-success') {
+        return { ok: false as const, error: 'Workspace is importing' };
+      }
+    }
     const barrierSnap = await tx.get(db.collection('accountBarriers').doc(args.registeredBy));
     if (barrierSnap.exists) {
       const state = barrierSnap.get('state');

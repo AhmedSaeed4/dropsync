@@ -71,7 +71,13 @@ export function Toast({ message, duration = 3, theme = 'light', editorial = fals
         position: 'fixed',
         left: '50%',
         transform: 'translateX(-50%)',
-        bottom: mobileFloat ? 'calc(100px + env(safe-area-inset-bottom))' : '24px',
+        bottom: mobileFloat
+          ? 'max(calc(100px + env(safe-area-inset-bottom)), var(--archive-stack-clearance, 0px))'
+          : 'max(24px, var(--archive-stack-clearance, 0px))',
+        maxWidth: 'min(560px, calc(100vw - 32px))',
+        maxHeight: 'calc(100dvh - max(24px, var(--archive-stack-clearance, 0px)) - 16px)',
+        overflowY: 'auto',
+        overflowWrap: 'anywhere',
         zIndex: 9999,
       }}
     >

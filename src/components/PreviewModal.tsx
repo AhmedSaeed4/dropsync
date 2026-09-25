@@ -210,6 +210,7 @@ export function PreviewModal({ drop, onClose, onBack, canBack, theme = 'light', 
   const youtubeVideoId = textContent ? getYouTubeVideoId(textContent) : null;
 
   const handleShare = async () => {
+    if (drop.isStaged) return;
     // A call drop has nothing to share (calls never reach PreviewModal — DropItem dispatches them).
     if (drop.type === 'call') return;
     setIsSharing(true);
@@ -285,6 +286,7 @@ export function PreviewModal({ drop, onClose, onBack, canBack, theme = 'light', 
   // Header fire-time preview (next to the drop name) when this drop has a reminder. "Due …" once past.
   const reminderFire = drop.reminderAt ? formatReminderFire(drop.reminderAt, now) : null;
   const handleReminderDismiss = async () => {
+    if (drop.isStaged) return;
     if (!currentUserId) return;
     // On a locked drop only creator/owner (canMutate) may write; the Dismiss button is gated to
     // LockedActionButton below, so this is defense-in-depth.
@@ -551,7 +553,7 @@ export function PreviewModal({ drop, onClose, onBack, canBack, theme = 'light', 
           )}
           <button
             onClick={handleShare}
-            disabled={isSharing}
+            disabled={isSharing || !!drop.isStaged}
             className={`border ${tc.borderColor} ${tc.textColor} px-3 py-1.5 sm:px-5 sm:py-2 text-xs tracking-wider hover:bg-[#1A1A1A] hover:text-white transition-colors flex items-center gap-2 disabled:opacity-50 ${isMinimal ? 'rounded-full' : ''}`}
           >
             {shareCopied ? (
@@ -619,7 +621,8 @@ export function PreviewModal({ drop, onClose, onBack, canBack, theme = 'light', 
           {/* Move button — opens the move/copy modal for everyone (Copy is reachable via the in-modal toggle). */}
           {onMove && (
             <button
-              onClick={() => onMove(drop)}
+              onClick={() => !drop.isStaged && onMove(drop)}
+              disabled={!!drop.isStaged}
               className={`border ${tc.borderColor} ${tc.textColor} px-3 py-1.5 sm:px-5 sm:py-2 text-xs tracking-wider hover:bg-[#1A1A1A] hover:text-white transition-colors flex items-center gap-2 ${isMinimal ? 'rounded-full' : ''}`}
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
@@ -649,8 +652,8 @@ export function PreviewModal({ drop, onClose, onBack, canBack, theme = 'light', 
               />
             ) : (
               <button
-                onClick={() => onEdit(drop)}
-                disabled={editPreparing}
+                onClick={() => !drop.isStaged && onEdit(drop)}
+                disabled={editPreparing || !!drop.isStaged}
                 className={`border ${tc.borderColor} ${tc.textColor} px-3 py-1.5 sm:px-5 sm:py-2 text-xs tracking-wider hover:bg-[#1A1A1A] hover:text-white transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed ${isMinimal ? 'rounded-full' : ''}`}
               >
                 {editPreparing ? (
@@ -687,6 +690,7 @@ export function PreviewModal({ drop, onClose, onBack, canBack, theme = 'light', 
             ) : (
               <button
                 onClick={handleReminderDismiss}
+                disabled={!!drop.isStaged}
                 className={`border ${tc.borderColor} ${tc.textColor} px-3 py-1.5 sm:px-5 sm:py-2 text-xs tracking-wider hover:bg-[#1A1A1A] hover:text-white transition-colors flex items-center gap-2 ${isMinimal ? 'rounded-full' : ''}`}
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">

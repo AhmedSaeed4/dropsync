@@ -293,6 +293,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
 
   const handleMoveDrop = async (drops: Drop[], targetWorkspaceId: string | null) => {
     if (!user || !drops.length) return;
+    if (drops.some((drop) => drop.isStaged) || currentWorkspace?.isImporting) { alert('This item is still importing.'); return; }
     setMoveLoading(true);
     let catMap = new Map<string, string>();
     try {
@@ -327,6 +328,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
 
   const handleCopyDrop = async (drops: Drop[], targetWorkspaceId: string | null) => {
     if (!user || !drops.length) return;
+    if (drops.some((drop) => drop.isStaged) || currentWorkspace?.isImporting) { alert('This item is still importing.'); return; }
     setMoveLoading(true);
     let catMap = new Map<string, string>();
     try {
@@ -524,9 +526,10 @@ export function EditorialLayout(props: EditorialLayoutProps) {
           <div className="space-y-6">
             <EditorialDropZone
               theme={theme}
+              importing={!!currentWorkspace?.isImporting}
               workspaceId={currentWorkspaceId}
               workspaceMembers={workspaceMembers}
-              customCategories={categories.map(c => c.name)}
+              customCategories={categories.filter(c => !c.isStaged).map(c => c.name)}
               onCreateCategory={handleCreateCategory}
               showChat={showChat}
               editModalOpen={!!editDrop}
@@ -727,7 +730,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
           onSubmit={async () => {}}
           onClose={onEditClose}
           theme={theme}
-          customCategories={categories.map(c => c.name)}
+          customCategories={categories.filter(c => !c.isStaged).map(c => c.name)}
           onCreateCategory={handleCreateCategory}
           editDrop={editDrop}
           onEdit={handleEditSubmit}

@@ -21,6 +21,8 @@ import {
   ChatMessage,
 } from '@/lib/chat';
 import { subscribeToGroupMessages, sendGroupMessage, editGroupMessage, deleteGroupMessage, clearGroupChat, getSeenBy } from '@/lib/groupChat';
+import { parseMessageContent } from '@/lib/dropTagUtils';
+import { assertDropWritableById, assertWorkspaceWritableById } from '@/lib/archiveJournalVisibility';
 import { streamAgentChat, AgentStoppedError, AgentRateLimitError, AgentTransientError } from '@/lib/agentActivity';
 import { useSmoothStream } from '@/hooks/useSmoothStream';
 import { useInPanelMarkRead } from '@/hooks/useInPanelMarkRead';
@@ -674,6 +676,10 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   const handleGroupSend = async () => {
     const text = groupInput.trim();
     if (groupSending || !userId || !workspaceId) return;
+    try {
+      await assertWorkspaceWritableById(workspaceId);
+      for (const id of new Set(parseMessageContent(text).flatMap((part) => part.dropId ? [part.dropId] : []))) await assertDropWritableById(id);
+    } catch (error) { showSystemNotice(error instanceof Error ? error.message : 'This workspace is still importing.', 4000); return; }
 
     // Sending (or clearing) ends any active typing state for this composer.
     typing.clearTyping();
@@ -794,6 +800,10 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
     if (!workspaceId || !userId) return;
     const text = editDraft;
     if (!text.trim()) return; // never persist an empty edit (Save is also disabled while empty)
+    try {
+      await assertWorkspaceWritableById(workspaceId);
+      for (const id of new Set(parseMessageContent(text).flatMap((part) => part.dropId ? [part.dropId] : []))) await assertDropWritableById(id);
+    } catch (error) { showSystemNotice(error instanceof Error ? error.message : 'This workspace is still importing.', 4000); return; }
     const ok = await editGroupMessage(workspaceId, msg.id, userId, text);
     if (ok) {
       setEditingMsgId(null);

@@ -25,6 +25,7 @@ import {
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { db } from './firebase';
+import { assertWorkspaceWritableById } from './archiveJournalVisibility';
 import { encryptData, decryptData } from './crypto';
 import { getWorkspaceKey } from './keys';
 import { extractMentionedUids } from './dropTagUtils';
@@ -150,6 +151,7 @@ export async function sendGroupMessage(
   replyToMessageId?: string,
 ): Promise<string | null> {
   try {
+    await assertWorkspaceWritableById(workspaceId);
     const workspaceKey = await getWorkspaceKey(workspaceId, userId);
     if (!workspaceKey) {
       console.error('No workspace key available for group chat');
@@ -166,6 +168,7 @@ export async function sendGroupMessage(
     // pointer (NEVER encrypted) written ONLY when present — omit the key entirely when undefined so
     // we never store null. The create rule has no hasOnly allowlist, so the extra field passes; the
     // update rule's hasOnly excludes it, making it immutable after create.
+    await assertWorkspaceWritableById(workspaceId);
     const docRef = await addDoc(
       collection(db, 'workspaces', workspaceId, 'messages'),
       {
@@ -234,6 +237,7 @@ export async function deleteGroupMessage(
   messageId: string,
 ): Promise<boolean> {
   try {
+    await assertWorkspaceWritableById(workspaceId);
     await deleteDoc(doc(db, 'workspaces', workspaceId, 'messages', messageId));
     return true;
   } catch (error) {
@@ -259,6 +263,7 @@ export async function editGroupMessage(
   newPlaintext: string,
 ): Promise<boolean> {
   try {
+    await assertWorkspaceWritableById(workspaceId);
     const workspaceKey = await getWorkspaceKey(workspaceId, userId);
     if (!workspaceKey) {
       console.error('No workspace key available to edit group message');
@@ -266,6 +271,7 @@ export async function editGroupMessage(
     }
     const { encrypted, iv } = await encryptData(newPlaintext, workspaceKey); // ONE call → fresh iv
     const ref = doc(db, 'workspaces', workspaceId, 'messages', messageId);
+    await assertWorkspaceWritableById(workspaceId);
     await updateDoc(ref, {
       content: encrypted,
       iv,
@@ -328,6 +334,7 @@ export async function markWorkspaceChatRead(
   userId: string,
   newestSeenCreatedAt?: Timestamp,
 ): Promise<void> {
+  await assertWorkspaceWritableById(workspaceId);
   const ref = doc(db, 'workspaces', workspaceId, 'readState', userId);
   await setDoc(ref, { lastReadAt: newestSeenCreatedAt ?? serverTimestamp() }, { merge: true });
 }
@@ -337,6 +344,7 @@ export async function markWorkspaceChatRead(
  * Called when no readState doc exists yet, so existing messages aren't falsely counted as unread.
  */
 export async function initReadState(workspaceId: string, userId: string, baseline: Date): Promise<void> {
+  await assertWorkspaceWritableById(workspaceId);
   const ref = doc(db, 'workspaces', workspaceId, 'readState', userId);
   await setDoc(ref, { lastReadAt: Timestamp.fromDate(baseline) }, { merge: true });
 }

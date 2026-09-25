@@ -225,9 +225,10 @@ export function MobileDropCard({
   return (
     <div
       ref={cardRef}
-      onClick={() => (selectionMode ? onSelect(drop.id) : onPreview(drop))}
+      onClick={() => (selectionMode ? (!drop.isStaged && onSelect(drop.id)) : onPreview(drop))}
       className={`relative w-full select-none overflow-hidden border ${tc.cardBg} ${tc.border} rounded-[14px] transition-colors cursor-pointer`}
     >
+      {drop.isStaged && <span className="absolute left-2 top-2 z-20 bg-amber-700 px-1.5 py-0.5 text-[9px] text-white">STAGED</span>}
       {/* Pin badge — top-right (desktop parity :479-486) */}
       {drop.pinned && (
         <div className={`absolute right-2 top-2 z-10 flex h-5 w-5 items-center justify-center rounded-md ${theme === 'dark' ? 'bg-white/10 text-white/70' : 'bg-[#1A1A1A]/10 text-[#1A1A1A]/60'}`}>
@@ -338,7 +339,7 @@ export function MobileDropCard({
         </div>
 
         {/* Manual order badge (Manual sort, unfiltered) — position only; reorder lives in the sheet */}
-        {manualMove && manualPosition !== undefined && (
+        {manualMove && !drop.isStaged && manualPosition !== undefined && (
           <span className={`mt-1.5 inline-flex items-center px-1.5 py-0.5 text-[9px] font-semibold tracking-[0.06em] ${font} border ${tc.border} ${tc.muted}`}>
             #{manualPosition + 1}
           </span>

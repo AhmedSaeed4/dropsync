@@ -122,7 +122,7 @@ export function CategoryFilter({
         {/* Custom categories */}
         {categories.map((cat) => {
           const count = dropCounts[cat.name] || 0;
-          const showDelete = count === 0 && confirmDelete !== cat.id;
+          const showDelete = count === 0 && !cat.isStaged && confirmDelete !== cat.id;
 
           return (
             <div key={cat.id} className="relative flex items-center">
@@ -135,13 +135,14 @@ export function CategoryFilter({
                 } ${tc.roundedClass} ${showDelete ? 'pr-1' : ''}`}
               >
                 <span>{isMinimal ? cat.name : cat.name.toUpperCase()}</span>
+                {cat.isStaged && <span className="text-[9px] opacity-60">STAGED</span>}
                 <span className={`text-[10px] ${selectedCategory === cat.name ? 'text-white/70' : tc.textMuted}`}>
                   {count}
                 </span>
               </button>
 
               {/* Delete button - only show when count is 0 */}
-              {count === 0 && confirmDelete !== cat.id && (
+              {count === 0 && !cat.isStaged && confirmDelete !== cat.id && (
                 <button
                   onClick={(e) => handleDeleteClick(cat.id, e)}
                   className={`ml-1 w-4 h-4 flex items-center justify-center ${tc.textMuted} hover:text-red-500 transition-colors`}
@@ -154,7 +155,7 @@ export function CategoryFilter({
               )}
 
               {/* Confirm delete */}
-              {confirmDelete === cat.id && (
+              {confirmDelete === cat.id && !cat.isStaged && (
                 <div className="flex items-center ml-1 gap-1">
                   <button
                     onClick={(e) => handleConfirmDelete(cat.id, cat.name, e)}

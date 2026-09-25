@@ -105,6 +105,7 @@ export function MobileSearchView({
   const [mentionSearch, setMentionSearch] = useState('');
   const [mentionOpen, setMentionOpen] = useState(false);
   const [sheetDrop, setSheetDrop] = useState<Drop | null>(null);
+  const liveSheetDrop = sheetDrop ? drops.find((drop) => drop.id === sheetDrop.id) || null : null;
 
   // R15: the shell drops the navbar while the ⋯ sheet is open.
   useEffect(() => {
@@ -392,16 +393,16 @@ export function MobileSearchView({
           non-null drop, so the component renders normally during the exit. No manualMove —
           the sheet's Move up / Move down rows are never offered in Search. */}
       <AnimatePresence>
-        {sheetDrop && (
+        {liveSheetDrop && (
           <MobileActionSheet
             key="action-sheet"
-            drop={sheetDrop}
+            drop={liveSheetDrop}
             onClose={() => setSheetDrop(null)}
             theme={theme}
             currentUserId={currentUserId}
             onPreview={onPreview}
             onEditDrop={onEditDrop}
-            canMutate={sheetDrop ? canMutateFor(sheetDrop) : false}
+            canMutate={!liveSheetDrop.isStaged && canMutateFor(liveSheetDrop)}
             onMove={(drop) => onOpenMoveModal([drop])}
             onDelete={handleDeleteWithUndo}
             onPin={handlePinDrop}

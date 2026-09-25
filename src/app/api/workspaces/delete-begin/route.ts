@@ -84,7 +84,14 @@ export async function POST(request: NextRequest) {
       if (barrierSnap.exists) {
         const state = barrierSnap.get('state');
         if (state === 'active' || state === 'completing' || state === 'finalizing') {
-          return { code: 409, payload: { error: 'Account deletion is in progress' } };
+          // Resuming account deletion may need to finish a fresh import rollback.
+          // Its fence is already cancelled by the lock-held recovery runner.
+          const importJobId = typeof data.importJobId === 'string' ? data.importJobId : '';
+          if (!importJobId || state !== 'active') return { code: 409, payload: { error: 'Account deletion is in progress' } };
+          const rollbackFence = await tx.get(db.collection('importFences').doc(uid + '_' + importJobId));
+          if (!rollbackFence.exists || rollbackFence.get('workspaceId') !== workspaceId || rollbackFence.get('state') !== 'closed-cancelled') {
+            return { code: 409, payload: { error: 'Account deletion is in progress' } };
+          }
         }
       }
 
@@ -98,6 +105,16 @@ export async function POST(request: NextRequest) {
       );
       if (!callSnap.empty && !forceEndAck) {
         return { code: 200, payload: { status: 'confirmation-required' } };
+      }
+
+      const openFenceSnap = await tx.get(
+        db.collection('importFences')
+          .where('workspaceId', '==', workspaceId)
+          .where('state', '==', 'open')
+          .limit(1)
+      );
+      if (!openFenceSnap.empty) {
+        return { code: 409, payload: { error: 'Finish or cancel the import before deleting this workspace.' } };
       }
 
       const members: string[] = Array.isArray(data.members) ? data.members : [];

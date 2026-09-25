@@ -10,6 +10,8 @@ import {
   getDocs
 } from 'firebase/firestore';
 import { db } from './firebase';
+import { assertCategoryWritableById, assertWorkspaceWritableById, resolveArchiveRecordStaged } from './archiveJournalVisibility';
+import { createArchiveStatusTracker, isArchiveRecordStaged, subscribeArchiveJournalTransitions } from './archiveJournalVisibility';
 import { Category } from '@/types';
 
 const CATEGORIES_COLLECTION = 'categories';
@@ -44,6 +46,7 @@ export async function createCategory(
   userId: string
 ): Promise<Category | null> {
   try {
+    await assertWorkspaceWritableById(workspaceId);
     const docRef = await addDoc(collection(db, CATEGORIES_COLLECTION), {
       name: name.toLowerCase().trim(),
       workspaceId,
@@ -67,6 +70,7 @@ export async function createCategory(
 // Delete a category (only if no drops use it)
 export async function deleteCategory(categoryId: string): Promise<boolean> {
   try {
+    await assertCategoryWritableById(categoryId);
     await deleteDoc(doc(db, CATEGORIES_COLLECTION, categoryId));
     return true;
   } catch (error) {
@@ -131,7 +135,15 @@ export function createCategoriesListener(
     );
   }
 
-  return onSnapshot(q, (snapshot) => {
+  let project: (() => void) | null = null;
+  const tracker = createArchiveStatusTracker(() => project?.());
+  const releaseJournal = subscribeArchiveJournalTransitions(() => project?.());
+  const releaseCategories = onSnapshot(q, (snapshot) => {
+    project = () => {
+    tracker.update(snapshot.docs.flatMap((item) => {
+      const data = item.data();
+      return typeof data.importJobId === 'string' ? [{ ownerId: data.createdBy as string, jobId: data.importJobId }] : [];
+    }));
     const categories: Category[] = [];
     snapshot.forEach((document) => {
       const data = document.data();
@@ -141,17 +153,22 @@ export function createCategoriesListener(
         workspaceId: data.workspaceId,
         createdBy: data.createdBy,
         createdAt: data.createdAt?.toDate() || new Date(),
+        importJobId: typeof data.importJobId === 'string' ? data.importJobId : undefined,
+        isStaged: typeof data.importJobId === 'string' ? isArchiveRecordStaged(data.createdBy, data.importJobId) : false,
       });
     });
 
     // Sort by name
     categories.sort((a, b) => a.name.localeCompare(b.name));
     callback(categories);
+    };
+    project();
   }, (error) => {
     if (error?.code === 'permission-denied') return; // expected during sign-out teardown — ignore
     console.error('Firestore categories listener error:', error);
     callback([]);
   });
+  return () => { releaseCategories(); releaseJournal(); tracker.close(); };
 }
 
 // lowercased category name -> canonical name. The canonical is the STORED doc `name` for an
@@ -172,6 +189,7 @@ export async function ensureCategoriesForTarget(
   currentUserId: string,
   names: string[]
 ): Promise<CategoryNameMap> {
+  await assertWorkspaceWritableById(targetWorkspaceId);
   const map: CategoryNameMap = new Map();
   const BUILT_IN = new Set(['password', 'link']);
   const custom: string[] = [];
@@ -190,15 +208,17 @@ export async function ensureCategoriesForTarget(
       ? query(collection(db, CATEGORIES_COLLECTION), where('workspaceId', '==', targetWorkspaceId))
       : query(collection(db, CATEGORIES_COLLECTION), where('createdBy', '==', currentUserId), where('workspaceId', '==', null));
     const snap = await getDocs(q);
-    snap.forEach(d => {
+    for (const d of snap.docs) {
       const data = d.data();
+      if (typeof data.importJobId === 'string' && await resolveArchiveRecordStaged(data.createdBy, data.importJobId)) continue;
       map.set((data.name as string).toLowerCase().trim(), data.name as string);
-    });
+    }
 
     for (const raw of custom) {
       const lower = raw.toLowerCase().trim();
       if (!map.has(lower)) {
         const trimmed = raw.trim();
+        await assertWorkspaceWritableById(targetWorkspaceId);
         await addDoc(collection(db, CATEGORIES_COLLECTION), {
           name: trimmed,
           workspaceId: targetWorkspaceId,

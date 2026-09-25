@@ -14,6 +14,7 @@ import {
   updateDoc
 } from 'firebase/firestore';
 import { db, auth } from './firebase';
+import { assertCategoryNamesWritable, assertDropWritableById, assertWorkspaceWritableById, createArchiveStatusTracker, isArchiveRecordStaged, resolveArchiveRecordStaged, subscribeArchiveJournalTransitions } from './archiveJournalVisibility';
 import { Drop, ExpirationOption } from '@/types';
 import { generateAESKey, encryptData, decryptData, importAESKey, exportKey } from './crypto';
 import { deleteSharesForDrop, syncSharesExpiryForDrop } from './shares';
@@ -213,7 +214,15 @@ export function createDropListener(
     );
   }
 
-  return onSnapshot(q, (snapshot) => {
+  let project: (() => void) | null = null;
+  const tracker = createArchiveStatusTracker(() => project?.());
+  const releaseJournal = subscribeArchiveJournalTransitions(() => project?.());
+  const releaseDrops = onSnapshot(q, (snapshot) => {
+    project = () => {
+    tracker.update(snapshot.docs.flatMap((item) => {
+      const data = item.data();
+      return typeof data.importJobId === 'string' ? [{ ownerId: data.userId as string, jobId: data.importJobId }] : [];
+    }));
     const now = new Date();
     const drops: Drop[] = [];
 
@@ -262,6 +271,8 @@ export function createDropListener(
           reminderDismissedBy: data.reminderDismissedBy || null,
           fileFormat: data.fileFormat,
           importedFromArchiveId: data.importedFromArchiveId || undefined,
+          importJobId: typeof data.importJobId === 'string' ? data.importJobId : undefined,
+          isStaged: typeof data.importJobId === 'string' ? isArchiveRecordStaged(data.userId, data.importJobId) : false,
           youtubeVideoLabels: isPasswordCategories([
             ...(Array.isArray(data.categories) ? data.categories : []),
             ...(typeof data.category === 'string' ? [data.category] : []),
@@ -283,6 +294,8 @@ export function createDropListener(
     // same position. sortDrops returns a NEW array ref (`drops` is const, so we pass the sorted copy).
     const sortedDrops = sortDrops(drops, now);
     callback(sortedDrops);
+    };
+    project();
   }, (error) => {
     // Handle permission errors gracefully (e.g., workspace deleted)
     if (error.code === 'permission-denied' || error.message?.includes('permissions')) {
@@ -297,6 +310,7 @@ export function createDropListener(
     console.error('Firestore listener error:', error);
     callback([]);
   });
+  return () => { releaseDrops(); releaseJournal(); tracker.close(); };
 }
 
 export async function createTextDrop(
@@ -317,6 +331,8 @@ export async function createTextDrop(
   reminderAt?: Date | null
 ): Promise<Drop | null> {
   try {
+    await assertWorkspaceWritableById(workspaceId);
+    await assertCategoryNamesWritable(categories?.length ? categories : category ? [category] : [], workspaceId, userId);
     const now = new Date();
     const expiresAt = getExpirationDate(expirationOption);
 
@@ -443,6 +459,7 @@ export async function createTextDrop(
 
     let docRef: Awaited<ReturnType<typeof addDoc>>;
     try {
+      await assertWorkspaceWritableById(workspaceId);
       docRef = await addDoc(collection(db, DROPS_COLLECTION), docData);
     } catch (writeError) {
       // Record write failed after the image uploaded → delete the orphaned R2 object so storage
@@ -538,6 +555,7 @@ export async function createFileDrop(
   onProgress?: (ratio: number) => void
 ): Promise<{ drop: Drop | null; error?: string }> {
   try {
+    await assertWorkspaceWritableById(workspaceId);
     // Check file size (NOW UP TO 50MB instead of 800KB)
     if (file.size > MAX_FILE_SIZE) {
       return {
@@ -682,6 +700,7 @@ export async function createFileDrop(
     // Create document
     let docRef: Awaited<ReturnType<typeof addDoc>>;
     try {
+      await assertWorkspaceWritableById(workspaceId);
       docRef = await addDoc(collection(db, DROPS_COLLECTION), docData);
     } catch (writeError) {
       // Record write failed after the file uploaded → delete the orphaned R2 object so storage
@@ -739,6 +758,7 @@ export async function updateDropMetadata(
   }
 ): Promise<boolean> {
   try {
+    await assertDropWritableById(dropId);
     const docRef = doc(db, DROPS_COLLECTION, dropId);
     const updateData: Record<string, unknown> = {};
 
@@ -776,6 +796,7 @@ export async function updateDropMetadata(
       updateData.expiresAt = expiresAt ? Timestamp.fromDate(expiresAt) : null;
     }
 
+    await assertDropWritableById(dropId);
     await updateDoc(docRef, updateData);
 
     // Keep every share link for this drop in sync with the drop's new expiry (shorter, longer,
@@ -806,6 +827,7 @@ export async function updateTextDrop(
   currentUserId: string
 ): Promise<boolean> {
   try {
+    await assertDropWritableById(drop.id);
     const docRef = doc(db, DROPS_COLLECTION, drop.id);
     const updateData: Record<string, unknown> = {};
     const r2KeysToDelete: { key: string; workspaceId: string | null }[] = [];
@@ -1056,6 +1078,7 @@ export async function updateTextDrop(
 
     // Write to Firestore FIRST — if this fails, old R2 objects are untouched
     try {
+      await assertDropWritableById(drop.id);
       await updateDoc(docRef, updateData);
     } catch (writeError) {
       // Write failed after a new image uploaded → delete ONLY the new image object (never the
@@ -1115,6 +1138,7 @@ function fileToBase64(file: File): Promise<string> {
 
 export async function pinDrop(dropId: string): Promise<boolean> {
   try {
+    await assertDropWritableById(dropId);
     const docRef = doc(db, DROPS_COLLECTION, dropId);
     await updateDoc(docRef, { pinned: true });
     return true;
@@ -1126,6 +1150,7 @@ export async function pinDrop(dropId: string): Promise<boolean> {
 
 export async function unpinDrop(dropId: string): Promise<boolean> {
   try {
+    await assertDropWritableById(dropId);
     const docRef = doc(db, DROPS_COLLECTION, dropId);
     await updateDoc(docRef, { pinned: false });
     return true;
@@ -1137,6 +1162,7 @@ export async function unpinDrop(dropId: string): Promise<boolean> {
 
 export async function deleteDrop(drop: Drop): Promise<boolean> {
   try {
+    await assertDropWritableById(drop.id);
     // Delete from R2 if file has R2 key
     if (drop.r2Key) {
       try {
@@ -1209,6 +1235,8 @@ export async function cleanupExpiredDrops(
   await Promise.allSettled(
     expired.map(async (document) => {
       const data = document.data();
+      if (typeof data.importJobId === 'string' && await resolveArchiveRecordStaged(data.userId, data.importJobId)) return;
+      try { await assertDropWritableById(document.id); } catch { return; }
 
       // Delete file from R2 first if present
       if (data.r2Key) {
@@ -1222,6 +1250,7 @@ export async function cleanupExpiredDrops(
       // Delete attached image from R2 if present
       if (data.imageR2Key) {
         try {
+          await assertDropWritableById(document.id);
           await deleteFromR2(data.imageR2Key, data.workspaceId || null);
         } catch (error) {
           console.error('Failed to delete image from R2:', error);
@@ -1229,8 +1258,10 @@ export async function cleanupExpiredDrops(
       }
 
       // Delete associated share links FIRST — while the drop doc still exists (see deleteDrop).
+      try { await assertDropWritableById(document.id); } catch { return; }
       await deleteSharesForDrop(document.id);
       // Then delete the Firestore document
+      try { await assertDropWritableById(document.id); } catch { return; }
       await deleteDoc(doc(db, DROPS_COLLECTION, document.id));
     })
   );
@@ -1285,6 +1316,8 @@ export async function moveDrop(
   resolvedCategories?: CategoryNameMap
 ): Promise<{ success: boolean; error?: string }> {
   try {
+    await assertDropWritableById(drop.id);
+    await assertWorkspaceWritableById(targetWorkspaceId);
     // A call is bound to its workspace (one-call-per-workspace, route-managed roster) and is a live
     // shared state — it cannot be moved.
     if (drop.type === 'call') return { success: false, error: 'Calls cannot be moved.' };
@@ -1550,6 +1583,8 @@ export async function moveDrop(
 
     // Step 5: Single atomic update
     try {
+      await assertDropWritableById(drop.id);
+      await assertWorkspaceWritableById(targetWorkspaceId);
       await updateDoc(docRef, updateData);
     } catch (writeError) {
       // Update failed after re-uploading the file/image to NEW keys → delete ONLY those new objects
@@ -1605,6 +1640,8 @@ export async function copyDrop(
   resolvedCategories?: CategoryNameMap
 ): Promise<{ success: boolean; error?: string }> {
   try {
+    await assertDropWritableById(drop.id);
+    await assertWorkspaceWritableById(targetWorkspaceId);
     // A call is a live, shared, ephemeral workspace state — it cannot be duplicated.
     if (drop.type === 'call') return { success: false, error: 'Calls cannot be copied.' };
     // Step 1: Decrypt the drop to get plaintext.
@@ -1904,6 +1941,8 @@ export async function copyDrop(
     // Step 5: Create the copy with a single addDoc. The original doc + all its R2 objects
     // are never mutated or deleted.
     try {
+      await assertDropWritableById(drop.id);
+      await assertWorkspaceWritableById(targetWorkspaceId);
       await addDoc(collection(db, DROPS_COLLECTION), docData);
     } catch (writeError) {
       // Create failed after re-uploading the file/image to NEW keys → delete those new objects
@@ -2175,7 +2214,8 @@ export async function decryptPersonalDropForArchive(
 // =============================================
 export async function uploadToR2(
   fileData: string,
-  onProgress?: (ratio: number) => void
+  onProgress?: (ratio: number) => void,
+  onPresignedKey?: (key: string) => Promise<void>
 ): Promise<{ url: string; key: string }> {
   // Get Firebase ID token from current user
   const currentUser = auth.currentUser;
@@ -2199,6 +2239,7 @@ export async function uploadToR2(
   }
 
   const { presignedUrl, key, fileUrl } = await presignResponse.json();
+  await onPresignedKey?.(key);
 
   // Step 2: Upload directly to R2 using the presigned URL via XMLHttpRequest so we can report REAL
   // byte progress (xhr.upload.onprogress). Byte-identical to the old fetch PUT: same Content-Type
@@ -2233,7 +2274,8 @@ export async function uploadToR2(
 // uploadToR2 (which uploads ciphertext / data-URI strings) is intentionally left untouched.
 export async function uploadBinaryFileToR2(
   blob: Blob,
-  onProgress?: (ratio: number) => void
+  onProgress?: (ratio: number) => void,
+  onPresignedKey?: (key: string) => Promise<void>
 ): Promise<{ url: string; key: string }> {
   // Get Firebase ID token from current user
   const currentUser = auth.currentUser;
@@ -2263,6 +2305,7 @@ export async function uploadBinaryFileToR2(
   }
 
   const { presignedUrl, key, fileUrl } = await presignResponse.json();
+  await onPresignedKey?.(key);
 
   // Step 2: Upload the RAW blob directly to R2 (binary stream, no base64 inflate) via
   // XMLHttpRequest so we can report REAL byte progress. Byte-identical to the old fetch PUT: the

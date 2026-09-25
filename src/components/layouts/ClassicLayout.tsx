@@ -240,6 +240,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
 
   const handleMoveDrop = async (drops: Drop[], targetWorkspaceId: string | null) => {
     if (!user || !drops.length) return;
+    if (drops.some((drop) => drop.isStaged) || currentWorkspace?.isImporting) { alert('This item is still importing.'); return; }
     setMoveLoading(true);
     let catMap = new Map<string, string>();
     try {
@@ -274,6 +275,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
 
   const handleCopyDrop = async (drops: Drop[], targetWorkspaceId: string | null) => {
     if (!user || !drops.length) return;
+    if (drops.some((drop) => drop.isStaged) || currentWorkspace?.isImporting) { alert('This item is still importing.'); return; }
     setMoveLoading(true);
     let catMap = new Map<string, string>();
     try {
@@ -358,9 +360,10 @@ export function ClassicLayout(props: ClassicLayoutProps) {
             <section className="mb-6">
               <DropZone
                 theme={theme}
+                importing={!!currentWorkspace?.isImporting}
                 workspaceId={currentWorkspaceId}
                 workspaceMembers={workspaceMembers}
-                customCategories={categories.map(c => c.name)}
+                customCategories={categories.filter(c => !c.isStaged).map(c => c.name)}
                 onCreateCategory={handleCreateCategory}
                 editModalOpen={!!editDrop}
                 mentionableDrops={drops}
@@ -587,7 +590,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
           onSubmit={async () => {}}
           onClose={onEditClose}
           theme={theme}
-          customCategories={categories.map(c => c.name)}
+          customCategories={categories.filter(c => !c.isStaged).map(c => c.name)}
           onCreateCategory={handleCreateCategory}
           editDrop={editDrop}
           onEdit={handleEditSubmit}

@@ -11,6 +11,7 @@ import { ForeverLockedModal } from '../ForeverLockedModal';
 import { Toast } from '../Toast';
 import { decryptDrop, getExpirationDate, formatReminderFire } from '@/lib/drops';
 import { dedupeCategoryNames } from '@/lib/categories';
+import { assertCategoryNamesWritable, assertDropWritableById } from '@/lib/archiveJournalVisibility';
 import { DrawingCanvas, BG_COLORS } from '../DrawingCanvas';
 import { EditorialDropPickerRow } from './EditorialDropPickerRow';
 import { CallStartScreen } from '../call/CallStartScreen';
@@ -74,6 +75,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
   const [name, setName] = useState(editDrop?.name || '');
   const [content, setContent] = useState(editDrop?.content || '');
   const [loading, setLoading] = useState(false);
+  const [stageError, setStageError] = useState<string | null>(null);
   const [expiration, setExpiration] = useState<ExpirationOption>(editDrop?.expirationOption || '2h');
   const [showForeverLocked, setShowForeverLocked] = useState(false);
   const [foreverContext, setForeverContext] = useState<'create' | 'edit'>('create');
@@ -242,6 +244,13 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (loading) return;
+    setStageError(null);
+    if (editDrop && currentUserId) {
+      try {
+        await assertDropWritableById(editDrop.id);
+        await assertCategoryNamesWritable(selectedCategories, editDrop.workspaceId, currentUserId);
+      } catch (error) { setStageError(error instanceof Error ? error.message : 'This item is still importing.'); return; }
+    }
     if (!isFileDrop && !content.trim() && !drawingFile) return;
     // The submit button is disabled while the reminder is invalid; guard anyway so a keyboard
     // submit can't slip a bad reminder through (both modes — the edit Save folds the reminder in).
@@ -550,6 +559,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
         </div>
 
         <form onSubmit={handleSubmit} className="flex flex-col min-h-0 flex-1">
+          {stageError && <p role="alert" className="px-4 py-2 text-sm text-red-500">{stageError}</p>}
           {mode === 'call' && !isEditMode ? (
             <div className="flex-1 overflow-y-auto p-5 space-y-4">
               <div className="flex gap-2">

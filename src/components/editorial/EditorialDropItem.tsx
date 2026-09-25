@@ -354,6 +354,7 @@ export const EditorialDropItem = memo(function EditorialDropItem({
 
   const handleShare = async (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (drop.isStaged) return;
     // A call drop has nothing to share (and never reaches the share button — it early-returns the
     // LiveCallDropTile). Narrows drop.type to 'file'|'text' for createShare below.
     if (drop.type === 'call') return;
@@ -453,11 +454,13 @@ export const EditorialDropItem = memo(function EditorialDropItem({
 
   const handleDeleteClick = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (drop.isStaged) return;
     setConfirmDelete(true);
   };
 
   const handleConfirmDelete = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (drop.isStaged) return;
     onDelete(drop);
   };
 
@@ -468,6 +471,7 @@ export const EditorialDropItem = memo(function EditorialDropItem({
 
   const handleEdit = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (drop.isStaged) return;
     onEdit?.(drop);
   };
 
@@ -504,7 +508,7 @@ export const EditorialDropItem = memo(function EditorialDropItem({
   return (
     <div
       ref={cardRef}
-      onClick={() => selectionMode ? onSelect(drop.id) : onPreview(drop)}
+      onClick={() => selectionMode ? (!drop.isStaged && onSelect(drop.id)) : onPreview(drop)}
       onPointerEnter={(e) => {
         if (!hoverable || e.pointerType !== 'mouse' || selectionMode || !isVideo) return;
         if (hoverTimerRef.current !== null) clearTimeout(hoverTimerRef.current);
@@ -530,6 +534,7 @@ export const EditorialDropItem = memo(function EditorialDropItem({
         tc.hoverBorder
       } ${selectionMode && selected ? 'opacity-60' : ''}`}
     >
+      {drop.isStaged && <span className="absolute top-2 left-2 z-20 bg-amber-700 text-white px-1.5 py-0.5 text-[9px]">STAGED</span>}
       {/* Pinned indicator */}
       {drop.pinned && (
         <div className={`absolute top-2 right-2 z-10 w-4 h-4 flex items-center justify-center ${tc.roundedClass} ${theme === 'dark' ? 'bg-white/10 text-white/70' : theme === 'minimal' ? 'bg-[#1A1A1A]/10 text-[#1A1A1A]/60' : 'bg-[#1A1A1A]/10 text-[#1A1A1A]/60'}`}>
@@ -719,7 +724,7 @@ export const EditorialDropItem = memo(function EditorialDropItem({
             transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
             className={`flex flex-wrap items-center justify-end sm:justify-start gap-2 sm:gap-1 flex-shrink-0 pt-2 sm:pt-0 border-t ${tc.border} sm:border-t-0 mt-2 sm:mt-0 w-full sm:w-auto`}
           >
-            {showMoveControls && canMoveUp && (
+            {showMoveControls && !drop.isStaged && canMoveUp && (
               <button
                 onClick={(e) => { e.stopPropagation(); onMoveUp?.(drop.id); }}
                 title="Move up"
@@ -730,7 +735,7 @@ export const EditorialDropItem = memo(function EditorialDropItem({
                 </svg>
               </button>
             )}
-            {showMoveControls && canMoveDown && (
+            {showMoveControls && !drop.isStaged && canMoveDown && (
               <button
                 onClick={(e) => { e.stopPropagation(); onMoveDown?.(drop.id); }}
                 title="Move down"
@@ -858,7 +863,7 @@ export const EditorialDropItem = memo(function EditorialDropItem({
       )}
 
       {/* Context menu */}
-      {menuState && !(drop.locked && !canMutate) && (
+      {menuState && !drop.isStaged && !(drop.locked && !canMutate) && (
         <DropContextMenu
           x={menuState.x}
           y={menuState.y}
@@ -875,7 +880,7 @@ export const EditorialDropItem = memo(function EditorialDropItem({
 
       {/* Locked hint: when the menu is suppressed (locked drop, non-creator), show a brief
           auto-dismissing hint at the gesture point instead of a silent dead-end. */}
-      {menuState && drop.locked && !canMutate && (
+      {menuState && !drop.isStaged && drop.locked && !canMutate && (
         <LockedHintTooltip x={menuState.x} y={menuState.y} onClose={closeMenu} />
       )}
     </div>

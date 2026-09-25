@@ -25,6 +25,8 @@ export interface Workspace {
   deletingRecipients?: string[];
   deleteDone?: number;
   deleteTotal?: number;
+  importJobId?: string;
+  isImporting?: boolean; // runtime certificate projection; never persisted
 }
 
 export interface YouTubeVideoLabel {
@@ -90,6 +92,8 @@ export interface Drop {
   // Optional provenance marker written by workspace archive import. It is used only to warn about
   // importing the same archive into the same target twice; it carries no encryption authority.
   importedFromArchiveId?: string;
+  importJobId?: string;
+  isStaged?: boolean; // runtime certificate projection; never persisted
   // Search-only metadata derived from YouTube links in the current text/name. It is optional so
   // legacy drops remain valid; the content itself stays in the existing encrypted field.
   youtubeVideoLabels?: YouTubeVideoLabel[];
@@ -115,6 +119,8 @@ export interface Category {
   workspaceId: string | null; // null = personal workspace
   createdBy: string;
   createdAt: Date;
+  importJobId?: string;
+  isStaged?: boolean; // runtime certificate projection; never persisted
 }
 
 export interface DropFormData {

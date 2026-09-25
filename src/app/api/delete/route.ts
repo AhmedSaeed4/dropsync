@@ -100,6 +100,7 @@ export async function POST(request: NextRequest) {
     const dropData = snapshot.docs[0].data();
     const dropWorkspaceId = dropData.workspaceId || null;
     const dropUserId = dropData.userId;
+    let deletingOwner = false;
 
     // Authorize purely from the DROP's own record (Hole A). The body workspaceId is no longer
     // consulted (see the destructure note above): previously `workspaceId || dropWorkspaceId` let a
@@ -118,14 +119,26 @@ export async function POST(request: NextRequest) {
         // of the roster — the deletion loop must never lose its R2 authority to a roster change.
         const isDeletingOwner =
           workspaceDoc.get('deleting') === true && workspaceDoc.get('deletingOwner') === userId;
+        deletingOwner = isDeletingOwner;
         if (!isDeletingOwner) {
           return NextResponse.json({ error: 'Not a workspace member' }, { status: 403 });
         }
       }
+      deletingOwner = deletingOwner || (workspaceDoc.get('deleting') === true && workspaceDoc.get('deletingOwner') === userId);
     } else {
       // Personal drop — caller must own it.
       if (dropUserId !== userId) {
         return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
+      }
+    }
+
+    if (typeof dropData.importJobId === 'string') {
+      if (typeof dropUserId !== 'string') return NextResponse.json({ error: 'This item is still importing.' }, { status: 409 });
+      const fence = await adminDb.collection('importFences').doc(dropUserId + '_' + dropData.importJobId).get();
+      const valid = fence.exists && fence.get('userId') === dropUserId && fence.get('jobId') === dropData.importJobId;
+      if (!valid || (fence.get('state') !== 'closed-success'
+        && !(fence.get('state') === 'closed-cancelled' && (userId === dropUserId || deletingOwner)))) {
+        return NextResponse.json({ error: 'This item is still importing.' }, { status: 409 });
       }
     }
 

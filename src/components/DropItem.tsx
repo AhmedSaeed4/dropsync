@@ -152,6 +152,7 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
 
   const handleShare = async (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (drop.isStaged) return;
     // A call drop has nothing to share (and never reaches the share button — it early-returns the
     // LiveCallDropTile). The guard also narrows drop.type to 'file'|'text' for createShare below.
     if (drop.type === 'call') return;
@@ -255,11 +256,13 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
 
   const handleDeleteClick = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (drop.isStaged) return;
     setConfirmDelete(true);
   };
 
   const handleConfirmDelete = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (drop.isStaged) return;
     onDelete(drop);
   };
 
@@ -270,11 +273,13 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
 
   const handleSelect = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (drop.isStaged) return;
     onSelect(drop.id);
   };
 
   const handleEdit = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (drop.isStaged) return;
     onEdit?.(drop);
   };
 
@@ -337,7 +342,7 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
 
   return (
     <div
-      onClick={() => selectionMode ? onSelect(drop.id) : onPreview(drop)}
+      onClick={() => selectionMode ? (!drop.isStaged && onSelect(drop.id)) : onPreview(drop)}
       onPointerEnter={(e) => {
         if (!hoverable || e.pointerType !== 'mouse' || selectionMode || !isVideo) return;
         if (hoverTimerRef.current !== null) clearTimeout(hoverTimerRef.current);
@@ -363,6 +368,7 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
         selected ? `${tc.selectedBg} ${tc.selectedBorder}` : tc.hoverBg
       }`}
     >
+      {drop.isStaged && <span className="absolute top-0 left-0 z-20 bg-amber-700 text-white px-1.5 py-0.5 text-[9px] font-mono">STAGED</span>}
       {/* Pinned indicator */}
       {drop.pinned && (
         <div className={`absolute top-0 left-0 z-10 px-1.5 py-0.5 ${isMinimal ? 'bg-[#1A1A1A]/80 text-[#D4D8C8]' : isDark ? 'bg-white/80 text-[#1A1A1A]' : 'bg-[#FF5A47] text-white'} ${isMinimal ? 'text-[7px] font-sans tracking-wide' : 'text-[7px] font-mono uppercase tracking-wider'}`}>
@@ -608,7 +614,7 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
       )}
 
       {/* Context menu */}
-      {menuState && !(drop.locked && !canMutate) && (
+      {menuState && !drop.isStaged && !(drop.locked && !canMutate) && (
         <DropContextMenu
           x={menuState.x}
           y={menuState.y}
@@ -624,7 +630,7 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
 
       {/* Locked hint: when the menu is suppressed (locked drop, non-creator), show a brief
           auto-dismissing hint at the gesture point instead of a silent dead-end. */}
-      {menuState && drop.locked && !canMutate && (
+      {menuState && !drop.isStaged && drop.locked && !canMutate && (
         <LockedHintTooltip x={menuState.x} y={menuState.y} onClose={closeMenu} />
       )}
     </div>

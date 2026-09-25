@@ -131,7 +131,7 @@ export function UndoToast({ message, dropName, onUndo, onDismiss, duration = 30,
         position: 'fixed',
         left: '50%',
         transform: 'translateX(-50%)',
-        bottom: `${bottomOffset}px`,
+        bottom: `calc(max(${bottomOffset - index * 64}px, var(--archive-stack-clearance, 0px)) + ${index * 64}px)`,
         width: 'calc(100% - 32px)',
         maxWidth: '320px',
         zIndex: 9999

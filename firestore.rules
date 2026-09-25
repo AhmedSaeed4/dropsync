@@ -91,9 +91,72 @@ service cloud.firestore {
     function importEpochAdmitted() {
       return !('importJobId' in request.resource.data)
         || (request.auth != null
+            && request.resource.data.importJobId is string
             && exists(/databases/$(database)/documents/importFences/$(request.auth.uid + '_' + request.resource.data.importJobId))
             && get(/databases/$(database)/documents/importFences/$(request.auth.uid + '_' + request.resource.data.importJobId)).data.userId == request.auth.uid
+            && get(/databases/$(database)/documents/importFences/$(request.auth.uid + '_' + request.resource.data.importJobId)).data.jobId == request.resource.data.importJobId
             && get(/databases/$(database)/documents/importFences/$(request.auth.uid + '_' + request.resource.data.importJobId)).data.state == 'open');
+    }
+    function fenceSuccess(uid, job) {
+      return uid is string && job is string
+        && exists(/databases/$(database)/documents/importFences/$(uid + '_' + job))
+        && get(/databases/$(database)/documents/importFences/$(uid + '_' + job)).data.userId == uid
+        && get(/databases/$(database)/documents/importFences/$(uid + '_' + job)).data.jobId == job
+        && get(/databases/$(database)/documents/importFences/$(uid + '_' + job)).data.state == 'closed-success';
+    }
+    function recordStaged(uid, data) {
+      return 'importJobId' in data && !fenceSuccess(uid, data.importJobId);
+    }
+    function recordCancelled(uid, data) {
+      return uid is string && 'importJobId' in data
+        && data.importJobId is string
+        && exists(/databases/$(database)/documents/importFences/$(uid + '_' + data.importJobId))
+        && get(/databases/$(database)/documents/importFences/$(uid + '_' + data.importJobId)).data.userId == uid
+        && get(/databases/$(database)/documents/importFences/$(uid + '_' + data.importJobId)).data.jobId == data.importJobId
+        && get(/databases/$(database)/documents/importFences/$(uid + '_' + data.importJobId)).data.state == 'closed-cancelled';
+    }
+    function cancelledImporter(uid, data) {
+      return request.auth != null && request.auth.uid == uid && recordCancelled(uid, data);
+    }
+    function freshLocked(workspaceId) {
+      return workspaceId != null
+        && exists(/databases/$(database)/documents/workspaces/$(workspaceId))
+        && 'importJobId' in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data
+        && !fenceSuccess(
+          get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId,
+          get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.importJobId);
+    }
+    function freshCancelled(workspaceId) {
+      return freshLocked(workspaceId)
+        && get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId is string
+        && get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.importJobId is string
+        && exists(/databases/$(database)/documents/importFences/$(
+          get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId + '_' +
+          get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.importJobId))
+        && get(/databases/$(database)/documents/importFences/$(
+          get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId + '_' +
+          get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.importJobId)).data.state == 'closed-cancelled';
+    }
+    function taggedTargetMatches(uid, job, workspaceId) {
+      return workspaceId == null
+        ? get(/databases/$(database)/documents/importFences/$(uid + '_' + job)).data.mode == 'fresh'
+          && get(/databases/$(database)/documents/importFences/$(uid + '_' + job)).data.workspaceId.matches('personal-import-.*')
+        : get(/databases/$(database)/documents/importFences/$(uid + '_' + job)).data.workspaceId == workspaceId
+          && (get(/databases/$(database)/documents/importFences/$(uid + '_' + job)).data.mode == 'merge'
+            || (get(/databases/$(database)/documents/importFences/$(uid + '_' + job)).data.mode == 'fresh'
+              && exists(/databases/$(database)/documents/workspaces/$(workspaceId))
+              && get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId == uid
+              && get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.importJobId == job));
+    }
+    function freshTargetCreate(workspaceId) {
+      return !freshLocked(workspaceId)
+        || (request.auth != null
+          && 'importJobId' in request.resource.data
+          && request.resource.data.importJobId is string
+          && get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId == request.auth.uid
+          && get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.importJobId == request.resource.data.importJobId
+          && importEpochAdmitted()
+          && taggedTargetMatches(request.auth.uid, request.resource.data.importJobId, workspaceId));
     }
 
     // Users collection - field-guarded + SELF/OWNER-ONLY read (closes the "any authed user reads
@@ -199,7 +262,11 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly(['name', 'ownerId', 'members', 'inviteCode', 'createdAt', 'importJobId'])
         && !barrierBlocks(request.auth.uid)
         && !barrierBlocks(request.resource.data.ownerId)
-        && importEpochAdmitted();
+        && importEpochAdmitted()
+        && (!('importJobId' in request.resource.data)
+          || (request.resource.data.ownerId == request.auth.uid
+            && get(/databases/$(database)/documents/importFences/$(request.auth.uid + '_' + request.resource.data.importJobId)).data.mode == 'fresh'
+            && get(/databases/$(database)/documents/importFences/$(request.auth.uid + '_' + request.resource.data.importJobId)).data.workspaceId == workspaceId));
       allow read: if request.auth != null
         && (request.auth.uid in resource.data.members
           || resource.data.ownerId == request.auth.uid);
@@ -221,7 +288,7 @@ service cloud.firestore {
       //    ends with the Admin SEAL route deleting the whole doc.
       //  * SELF-REMOVE (leave) keeps the pre-Round-12 wording — members-only diff — so the
       //    frozen job fields ride along UNCHANGED. Leaving a deleting workspace is legal.
-      allow update: if request.auth != null && (
+      allow update: if request.auth != null && (!freshLocked(workspaceId) || isDeletingOwner(workspaceId)) && (
         (
           resource.data.ownerId == request.auth.uid
           && (
@@ -256,7 +323,8 @@ service cloud.firestore {
         )
       );
       // Raw owner parent-delete retained (the accepted residual: rules cannot prove cleanup).
-      allow delete: if request.auth != null && resource.data.ownerId == request.auth.uid;
+      allow delete: if request.auth != null && resource.data.ownerId == request.auth.uid
+        && (!freshLocked(workspaceId) || freshCancelled(workspaceId));
 
       // Group chat messages - workspace members read/write; Round 12 adds the DELETING-OWNER
       // read + delete (the message-wipe stage runs client-side as the frozen deleting owner)
@@ -269,6 +337,7 @@ service cloud.firestore {
         );
         allow create: if request.auth != null
           && !wsDeleting(workspaceId)
+          && !freshLocked(workspaceId)
           && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members
           && request.auth.uid == request.resource.data.senderId
           // Trust anchors the update rule relies on — enforced at create so a raw-SDK member can't
@@ -279,18 +348,21 @@ service cloud.firestore {
           && request.resource.data.editCount == 0
           && request.resource.data.createdAt == request.time;
         allow delete: if request.auth != null && (
-          isDeletingOwner(workspaceId)
+          (isDeletingOwner(workspaceId) && (!freshLocked(workspaceId) || freshCancelled(workspaceId)))
           ||
           (request.auth.uid == resource.data.senderId
            && !wsDeleting(workspaceId)
+           && !freshLocked(workspaceId)
            && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members)
           ||
-          request.auth.uid == get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId
+          (request.auth.uid == get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId
+           && !freshLocked(workspaceId))
         );
         // Edit your OWN message only — sender-only (NOT the owner), within 24h, capped at 10 edits.
         // Round 12: no message edits while the workspace deletes.
         allow update: if request.auth != null
           && !wsDeleting(workspaceId)
+          && !freshLocked(workspaceId)
           // caller IS the EXISTING doc's sender (resource.data = pre-update; senderId cannot be reassigned via payload)
           && 'senderId' in resource.data
           && request.auth.uid == resource.data.senderId
@@ -329,6 +401,7 @@ service cloud.firestore {
           && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members;
         allow write: if request.auth != null
           && !wsDeleting(workspaceId)
+          && !freshLocked(workspaceId)
           && request.auth.uid == userId
           && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members;
       }
@@ -341,6 +414,7 @@ service cloud.firestore {
           && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members;
         allow write: if request.auth != null
           && !wsDeleting(workspaceId)
+          && !freshLocked(workspaceId)
           && request.auth.uid == userId
           && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members;
       }
@@ -353,6 +427,7 @@ service cloud.firestore {
           && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members;
         allow write: if request.auth != null
           && !wsDeleting(workspaceId)
+          && !freshLocked(workspaceId)
           && request.auth.uid == userId
           && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members;
       }
@@ -367,11 +442,19 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/workspaces/$(workspaceId))
         && (request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members
             || isDeletingOwner(workspaceId));
-      allow create, update: if request.auth != null
+      allow create: if request.auth != null
         && exists(/databases/$(database)/documents/workspaces/$(workspaceId))
         && get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId == request.auth.uid
         && !wsDeleting(workspaceId)
-        && importEpochAdmitted();
+        && freshTargetCreate(workspaceId)
+        && importEpochAdmitted()
+        && (!('importJobId' in request.resource.data)
+          || taggedTargetMatches(request.auth.uid, request.resource.data.importJobId, workspaceId));
+      allow update: if request.auth != null
+        && exists(/databases/$(database)/documents/workspaces/$(workspaceId))
+        && get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId == request.auth.uid
+        && !wsDeleting(workspaceId)
+        && !freshLocked(workspaceId);
     }
 
     // Drops collection
@@ -388,7 +471,10 @@ service cloud.firestore {
             || (!wsDeleting(request.resource.data.workspaceId)
                 && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(request.resource.data.workspaceId)).data.members))
         && request.resource.data.type != 'call'
-        && importEpochAdmitted();
+        && freshTargetCreate(request.resource.data.workspaceId)
+        && importEpochAdmitted()
+        && (!('importJobId' in request.resource.data)
+          || taggedTargetMatches(request.auth.uid, request.resource.data.importJobId, request.resource.data.workspaceId));
 
       // Read - authenticated users can read their own drops or workspace drops they're a member of.
       // ROUND 12: creator/member reads are gated off while the drop's workspace deletes; the
@@ -408,6 +494,9 @@ service cloud.firestore {
       // a workspaceId change is denied if the DESTINATION is deleting (checked on the post-state).
       allow update: if request.auth != null
         && !wsDeleting(resource.data.workspaceId)
+        && !recordStaged(resource.data.userId, resource.data)
+        && !freshLocked(resource.data.workspaceId)
+        && !freshLocked(request.resource.data.workspaceId)
         && (canMutateDrop() || (!isLockedDrop() && isDropWorkspaceMember()))
         && (!isForeverWrite() || isTrusted())
         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['locked']) || canMutateDrop())
@@ -423,8 +512,13 @@ service cloud.firestore {
       allow delete: if request.auth != null
         && resource.data.type != 'call'
         && (
-          isDeletingOwner(resource.data.workspaceId)
+          (isDeletingOwner(resource.data.workspaceId)
+            && (!recordStaged(resource.data.userId, resource.data) || recordCancelled(resource.data.userId, resource.data)))
+          || (recordStaged(resource.data.userId, resource.data)
+            && cancelledImporter(resource.data.userId, resource.data))
           || (!wsDeleting(resource.data.workspaceId)
+              && !recordStaged(resource.data.userId, resource.data)
+              && !freshLocked(resource.data.workspaceId)
               && (canMutateDrop()
                   || (isDropWorkspaceMember() && (!isLockedDrop() || isExpiredDrop()))))
         );
@@ -444,8 +538,11 @@ service cloud.firestore {
             && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(get(/databases/$(database)/documents/drops/$(dropId)).data.workspaceId)).data.members
             && request.auth.uid in get(/databases/$(database)/documents/drops/$(dropId)).data.callParticipantUids;
         }
-        allow read, create: if isCallMember();
+        allow read: if isCallMember();
+        allow create: if isCallMember()
+          && !freshLocked(get(/databases/$(database)/documents/drops/$(dropId)).data.workspaceId);
         allow update: if isCallMember()
+          && !freshLocked(get(/databases/$(database)/documents/drops/$(dropId)).data.workspaceId)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['offerA', 'offerB', 'answerA', 'answerB', 'candidatesFromA', 'candidatesFromB', 'politeRole', 'updatedAt']);
         allow delete: if false;
       }
@@ -463,8 +560,10 @@ service cloud.firestore {
             && request.auth.uid in get(/databases/$(database)/documents/drops/$(dropId)).data.callParticipantUids;
         }
         allow read: if isCallPresenceMember();
-        allow create: if isCallPresenceMember() && request.auth.uid == uid;
+        allow create: if isCallPresenceMember() && request.auth.uid == uid
+          && !freshLocked(get(/databases/$(database)/documents/drops/$(dropId)).data.workspaceId);
         allow update: if isCallPresenceMember()
+          && !freshLocked(get(/databases/$(database)/documents/drops/$(dropId)).data.workspaceId)
           && request.auth.uid == uid
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastSeen']);
         allow delete: if false;
@@ -490,11 +589,22 @@ service cloud.firestore {
         && !wsDeleting(request.resource.data.workspaceId)
         && (request.resource.data.workspaceId == null
             || request.auth.uid in get(/databases/$(database)/documents/workspaces/$(request.resource.data.workspaceId)).data.members)
-        && importEpochAdmitted();
+        && freshTargetCreate(request.resource.data.workspaceId)
+        && importEpochAdmitted()
+        && (!('importJobId' in request.resource.data)
+          || taggedTargetMatches(request.auth.uid, request.resource.data.importJobId, request.resource.data.workspaceId));
       allow delete: if request.auth != null && (
-        (request.auth.uid == resource.data.createdBy
+        (recordStaged(resource.data.createdBy, resource.data)
+          && cancelledImporter(resource.data.createdBy, resource.data))
+        || (isDeletingOwner(resource.data.workspaceId)
+          && (!recordStaged(resource.data.createdBy, resource.data) || recordCancelled(resource.data.createdBy, resource.data)))
+        || (!recordStaged(resource.data.createdBy, resource.data)
+          && !freshLocked(resource.data.workspaceId)
+          && request.auth.uid == resource.data.createdBy
           && !wsDeleting(resource.data.workspaceId))
-        || (resource.data.workspaceId != null
+        || (!recordStaged(resource.data.createdBy, resource.data)
+          && !freshLocked(resource.data.workspaceId)
+          && resource.data.workspaceId != null
           && exists(/databases/$(database)/documents/workspaces/$(resource.data.workspaceId))
           && get(/databases/$(database)/documents/workspaces/$(resource.data.workspaceId)).data.ownerId == request.auth.uid)
       );
@@ -570,9 +680,15 @@ service cloud.firestore {
     // /api/archive/import-fence Admin route. The fence owner (own userId) may read the
     // fence, its item ledger, and its manifest chunks; nobody else.
     match /importFences/{fenceId} {
-      allow read: if request.auth != null
-        && exists(/databases/$(database)/documents/importFences/$(fenceId))
-        && request.auth.uid == get(/databases/$(database)/documents/importFences/$(fenceId)).data.userId;
+      allow get: if request.auth != null && (
+        request.auth.uid == resource.data.userId
+        || resource.data.state == 'closed-success'
+        || (resource.data.state in ['open', 'closed-cancelled']
+          && resource.data.workspaceId is string
+          && exists(/databases/$(database)/documents/workspaces/$(resource.data.workspaceId))
+          && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(resource.data.workspaceId)).data.members)
+      );
+      allow list: if request.auth != null && request.auth.uid == resource.data.userId;
       allow write: if false;
 
       match /items/{itemId} {

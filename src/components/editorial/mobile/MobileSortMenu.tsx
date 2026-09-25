@@ -63,7 +63,8 @@ export function MobileSortMenu({ open, onClose, sortMode, onSortChange, theme }:
             animate={{ y: 0 }}
             exit={{ y: '100%' }}
             transition={{ duration: 0.28, ease: [0.4, 0, 0.2, 1] }}
-            className={`fixed inset-x-0 bottom-0 z-50 rounded-t-[14px] border-t ${tc.cardBg} ${tc.border} pb-[env(safe-area-inset-bottom)]`}
+            className={`fixed inset-x-0 bottom-0 z-50 rounded-t-[14px] border-t ${tc.cardBg} ${tc.border}`}
+            style={{ maxHeight: 'calc(100dvh - 12px)', overflowY: 'auto', paddingBottom: 'max(env(safe-area-inset-bottom), var(--archive-stack-clearance, 0px))' }}
           >
         <div className="mx-auto mt-2.5 mb-2 h-1 w-9 rounded-full bg-current opacity-20" />
         <p className={`px-5 pb-1.5 text-xs font-medium ${font} ${tc.muted}`}>Sort by</p>

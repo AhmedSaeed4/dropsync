@@ -15,6 +15,8 @@ import {
   Timestamp
 } from 'firebase/firestore';
 import { db } from './firebase';
+import { assertWorkspaceWritableById } from './archiveJournalVisibility';
+import { createArchiveStatusTracker, isArchiveRecordStaged, subscribeArchiveJournalTransitions } from './archiveJournalVisibility';
 import { Workspace } from '@/types';
 import { createWorkspaceKey, removeMemberFromWorkspaceKey } from './keys';
 import { getProfile } from './profiles';
@@ -174,6 +176,7 @@ export async function joinWorkspace(userId: string, inviteCode: string): Promise
 // The caller propagates the false result.
 export async function leaveWorkspace(userId: string, workspaceId: string, newOwnerId?: string): Promise<boolean> {
   try {
+    await assertWorkspaceWritableById(workspaceId);
     const workspaceRef = doc(db, WORKSPACES_COLLECTION, workspaceId);
 
     const outcome = await runTransaction(db, async (tx) => {
@@ -240,6 +243,7 @@ export async function kickWorkspaceMember(
   memberUid: string
 ): Promise<boolean> {
   try {
+    await assertWorkspaceWritableById(workspaceId);
     const workspaceRef = doc(db, WORKSPACES_COLLECTION, workspaceId);
     const snapshot = await getDoc(workspaceRef);
 
@@ -274,7 +278,15 @@ export function createWorkspacesListener(
 
   // ROUND 12: metadata-aware (progress writes and server reconciliation land as metadata
   // changes too) and the frozen job fields ride along so the UI can render the locked row.
-  return onSnapshot(q, (snapshot) => {
+  let project: (() => void) | null = null;
+  const tracker = createArchiveStatusTracker(() => project?.());
+  const releaseJournal = subscribeArchiveJournalTransitions(() => project?.());
+  const releaseWorkspaces = onSnapshot(q, (snapshot) => {
+    project = () => {
+    tracker.update(snapshot.docs.flatMap((item) => {
+      const data = item.data();
+      return typeof data.importJobId === 'string' ? [{ ownerId: data.ownerId as string, jobId: data.importJobId }] : [];
+    }));
     const workspaces: Workspace[] = [];
 
     snapshot.forEach((document) => {
@@ -293,17 +305,22 @@ export function createWorkspacesListener(
         deletingRecipients: Array.isArray(data.deletingRecipients) ? data.deletingRecipients as string[] : undefined,
         deleteDone: typeof data.deleteDone === 'number' ? data.deleteDone : undefined,
         deleteTotal: typeof data.deleteTotal === 'number' ? data.deleteTotal : undefined,
+        importJobId: typeof data.importJobId === 'string' ? data.importJobId : undefined,
+        isImporting: typeof data.importJobId === 'string' ? isArchiveRecordStaged(data.ownerId, data.importJobId) : false,
       });
     });
 
     // Sort by name
     workspaces.sort((a, b) => a.name.localeCompare(b.name));
     callback(workspaces);
+    };
+    project();
   }, (error) => {
     if (error?.code === 'permission-denied') return; // expected during sign-out teardown — ignore
     console.error('Workspaces listener error:', error);
     callback([]);
   });
+  return () => { releaseWorkspaces(); releaseJournal(); tracker.close(); };
 }
 
 // Get workspace by ID
