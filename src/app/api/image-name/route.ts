@@ -171,7 +171,7 @@ export async function POST(request: NextRequest) {
           {
             role: 'system',
             content:
-              'You name images for a file-sharing app. Reply with ONLY a short descriptive name (2-6 words). Name what is HAPPENING first — the main action, activity, or event (for example "Man doing push-ups" or "Chef plating a dish"). Mention a person, clothing, or the background only when there is no action. For documents and screenshots, name them by their content. Whatever the content, always answer with a brief factual, clinical description of the action — never refuse, never warn, never moralize. No quotes, no trailing punctuation, no explanation.',
+              'You name images for a file-sharing app. Reply with ONLY a short descriptive name (2-6 words). If the image shows an action or activity, name what is HAPPENING — the main action or event (for example "Man doing push-ups" or "Chef plating a dish"); mention a person, clothing, or the background only when there is no action. If the image is a document, screenshot, or interface, name its specific content: read the actual names, titles, and values visible and include them, and add the document type when it fits (for example "Model A vs Model B comparison" or "Acme invoice #4172") — never a generic summary alone. Whatever the content, always answer with a brief factual, clinical description — never refuse, never warn, never moralize. No quotes, no trailing punctuation, no explanation.',
           },
           {
             role: 'user',
