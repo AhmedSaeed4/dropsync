@@ -36,6 +36,8 @@ interface EditorialDropListProps {
   onDeleteCategory?: (categoryId: string, categoryName: string) => void;
   showChat?: boolean;
   currentWorkspace?: Workspace | null;
+  activeWorkspaceId?: string | null;
+  onSendToChat?: (drop: Drop) => void;
   workspaceMembers?: MemberInfo[];
   // Current space's drops — forwarded to EditorialDropItem for inline mention chips.
   allDrops?: Drop[];
@@ -200,6 +202,8 @@ const AnimatedDropList = memo(function AnimatedDropList({
   theme,
   currentUserId,
   currentWorkspace,
+  activeWorkspaceId,
+  onSendToChat,
   onDelete,
   onPin,
   onPreview,
@@ -221,6 +225,8 @@ const AnimatedDropList = memo(function AnimatedDropList({
   theme?: 'light' | 'dark' | 'minimal';
   currentUserId?: string;
   currentWorkspace?: Workspace | null;
+  activeWorkspaceId?: string | null;
+  onSendToChat?: (drop: Drop) => void;
   onDelete: (drop: Drop) => void;
   onPin: (drop: Drop) => Promise<void> | void;
   onPreview: (drop: Drop) => void;
@@ -257,6 +263,8 @@ const AnimatedDropList = memo(function AnimatedDropList({
               canMutate={!!currentUserId && (currentUserId === drop.userId || (!!currentWorkspace && currentUserId === currentWorkspace.ownerId))}
               onPin={onPin}
               onUnpin={onPin}
+              activeWorkspaceId={activeWorkspaceId}
+              onSendToChat={onSendToChat}
               allDrops={allDrops}
               onJoinCall={onJoinCall}
               members={workspaceMembers}
@@ -288,6 +296,8 @@ export function EditorialDropList({
   onDeleteCategory,
   showChat = false,
   currentWorkspace,
+  activeWorkspaceId,
+  onSendToChat,
   workspaceMembers,
   allDrops = [],
   onJoinCall,
@@ -1277,6 +1287,8 @@ export function EditorialDropList({
                   theme={theme}
                   currentUserId={currentUserId}
                   currentWorkspace={currentWorkspace}
+                  activeWorkspaceId={activeWorkspaceId}
+                  onSendToChat={onSendToChat}
                   onDelete={handleDeleteWithUndo}
                   onPin={handlePinDrop}
                   onPreview={onPreview}
@@ -1304,6 +1316,8 @@ export function EditorialDropList({
                   theme={theme}
                   currentUserId={currentUserId}
                   currentWorkspace={currentWorkspace}
+                  activeWorkspaceId={activeWorkspaceId}
+                  onSendToChat={onSendToChat}
                   onDelete={handleDeleteWithUndo}
                   onPin={handlePinDrop}
                   onPreview={onPreview}
@@ -1360,6 +1374,8 @@ export function EditorialDropList({
                     canMutate={!!currentUserId && (currentUserId === drop.userId || (!!currentWorkspace && currentUserId === currentWorkspace.ownerId))}
                     onPin={handlePinDrop}
                     onUnpin={handlePinDrop}
+                    activeWorkspaceId={activeWorkspaceId}
+                    onSendToChat={onSendToChat}
                     allDrops={allDrops}
                   />
                 ))}
@@ -1380,6 +1396,8 @@ export function EditorialDropList({
                     canMutate={!!currentUserId && (currentUserId === drop.userId || (!!currentWorkspace && currentUserId === currentWorkspace.ownerId))}
                     onPin={handlePinDrop}
                     onUnpin={handlePinDrop}
+                    activeWorkspaceId={activeWorkspaceId}
+                    onSendToChat={onSendToChat}
                     allDrops={allDrops}
                   />
                 ))}
@@ -1402,6 +1420,8 @@ export function EditorialDropList({
                       canMutate={!!currentUserId && (currentUserId === drop.userId || (!!currentWorkspace && currentUserId === currentWorkspace.ownerId))}
                       onPin={handlePinDrop}
                       onUnpin={handlePinDrop}
+                      activeWorkspaceId={activeWorkspaceId}
+                      onSendToChat={onSendToChat}
                       allDrops={allDrops}
                     />
                   ))}
@@ -1419,6 +1439,8 @@ export function EditorialDropList({
               theme={theme}
               currentUserId={currentUserId}
               currentWorkspace={currentWorkspace}
+              activeWorkspaceId={activeWorkspaceId}
+              onSendToChat={onSendToChat}
               onDelete={handleDeleteWithUndo}
               onPin={handlePinDrop}
               onPreview={onPreview}
@@ -1451,6 +1473,8 @@ export function EditorialDropList({
                     canMutate={!!currentUserId && (currentUserId === drop.userId || (!!currentWorkspace && currentUserId === currentWorkspace.ownerId))}
                     onPin={handlePinDrop}
                     onUnpin={handlePinDrop}
+                    activeWorkspaceId={activeWorkspaceId}
+                    onSendToChat={onSendToChat}
                     allDrops={allDrops}
                     onJoinCall={onJoinCall}
                     members={workspaceMembers}

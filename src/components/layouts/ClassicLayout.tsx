@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { Drop, Workspace, ExpirationOption } from '@/types';
+import { ChatDropRequest, Drop, Workspace, ExpirationOption } from '@/types';
 import { Header } from '@/components/Header';
 import { DropZone } from '@/components/DropZone';
 import { DropList } from '@/components/DropList';
@@ -50,6 +50,9 @@ interface ClassicLayoutProps {
   setLayoutMode: (l: LayoutMode) => void;
   showChat: boolean;
   setShowChat: (v: boolean) => void;
+  pendingChatDropRequest?: ChatDropRequest;
+  onSendDropToChat?: (drop: Drop) => void;
+  onChatDropHandled?: (requestId: number) => void;
   onToggleChat?: () => void;
   chatMode?: 'ai' | 'group';
   setChatMode: (v: 'ai' | 'group') => void;
@@ -160,6 +163,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
     theme, setTheme, themeColors,
     user, layoutMode, setLayoutMode,
     showChat, setShowChat,
+    pendingChatDropRequest, onSendDropToChat, onChatDropHandled,
     onToggleChat,
     chatMode = 'ai', setChatMode,
     unreadCount = 0,
@@ -404,6 +408,8 @@ export function ClassicLayout(props: ClassicLayoutProps) {
                 categories={categories}
                 onDeleteCategory={handleDeleteCategory}
                 currentWorkspace={currentWorkspace}
+                activeWorkspaceId={currentWorkspaceId}
+                onSendToChat={!isMobile && hoverable ? onSendDropToChat : undefined}
                 workspaceMembers={resolvedWorkspaceMembers}
                 allDrops={drops}
                 onJoinCall={onJoinCall}
@@ -417,7 +423,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
 
           <div className={`sticky top-0 self-start w-full flex flex-col min-h-0 transition-all duration-300 ease-out ${showChat ? 'lg:w-[480px]' : 'lg:w-80'}`}>
             {showChat ? (
-              <ChatPanel theme={theme} onClose={() => setShowChat(false)} onPreviewDrop={handlePreviewDrop} workspaceId={currentWorkspaceId} workspaceMembers={resolvedWorkspaceMembers} chatMode={chatMode} onChatModeChange={setChatMode} drops={drops} ownerId={currentWorkspace?.ownerId ?? null} presence={presenceMap} />
+              <ChatPanel theme={theme} onClose={() => setShowChat(false)} onPreviewDrop={handlePreviewDrop} workspaceId={currentWorkspaceId} workspaceMembers={resolvedWorkspaceMembers} chatMode={chatMode} onChatModeChange={setChatMode} drops={drops} ownerId={currentWorkspace?.ownerId ?? null} presence={presenceMap} pendingChatDropRequest={!isMobile && hoverable ? pendingChatDropRequest : undefined} onChatDropHandled={!isMobile && hoverable ? onChatDropHandled : undefined} />
             ) : (
               <div className="space-y-6">
             {/* Theme Toggle Panel */}

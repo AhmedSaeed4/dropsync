@@ -113,6 +113,13 @@ export interface Drop {
   callEndReason?: string;
 }
 
+export interface ChatDropRequest {
+  requestId: number;
+  workspaceId: string;
+  dropId: string;
+  userId: string;
+}
+
 export interface Category {
   id: string;
   name: string;

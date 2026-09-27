@@ -1,7 +1,7 @@
 'use client';
 
 import { memo, useRef, useState, useEffect } from 'react';
-import { Drop, Workspace, ExpirationOption } from '@/types';
+import { ChatDropRequest, Drop, Workspace, ExpirationOption } from '@/types';
 import { EditorialPreviewModal } from './EditorialPreviewModal';
 import { EditorialCreateWorkspaceModal } from './EditorialCreateWorkspaceModal';
 import { EditorialJoinWorkspaceModal } from './EditorialJoinWorkspaceModal';
@@ -71,6 +71,9 @@ interface EditorialLayoutProps {
   setLayoutMode: (l: LayoutMode) => void;
   showChat: boolean;
   setShowChat: (v: boolean) => void;
+  pendingChatDropRequest?: ChatDropRequest;
+  onSendDropToChat?: (drop: Drop) => void;
+  onChatDropHandled?: (requestId: number) => void;
   onToggleChat?: () => void;
   chatMode?: 'ai' | 'group';
   setChatMode: (v: 'ai' | 'group') => void;
@@ -182,6 +185,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
     theme, setTheme, themeColors,
     user, layoutMode, setLayoutMode,
     showChat, setShowChat,
+    pendingChatDropRequest, onSendDropToChat, onChatDropHandled,
     onToggleChat,
     chatMode = 'ai', setChatMode,
     unreadCount = 0,
@@ -596,6 +600,8 @@ export function EditorialLayout(props: EditorialLayoutProps) {
               onDeleteCategory={handleDeleteCategory}
               showChat={showChat}
               currentWorkspace={currentWorkspace}
+              activeWorkspaceId={currentWorkspaceId}
+              onSendToChat={hoverable ? onSendDropToChat : undefined}
               workspaceMembers={resolvedWorkspaceMembers}
               allDrops={drops}
               onJoinCall={onJoinCall}
@@ -629,6 +635,8 @@ export function EditorialLayout(props: EditorialLayoutProps) {
               drops={drops}
               ownerId={currentWorkspace?.ownerId ?? null}
               presence={presenceMap}
+              pendingChatDropRequest={hoverable ? pendingChatDropRequest : undefined}
+              onChatDropHandled={hoverable ? onChatDropHandled : undefined}
             />
           )}
         </div>
