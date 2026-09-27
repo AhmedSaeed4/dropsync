@@ -29,7 +29,7 @@ import { useInPanelMarkRead } from '@/hooks/useInPanelMarkRead';
 import { useMentionEditor } from '@/hooks/useMentionEditor';
 import { useVoiceTranscribe } from '@/hooks/useVoiceTranscribe';
 import { Toast } from '../Toast';
-import { Drop, GroupChatMessage } from '@/types';
+import { ChatDropRequest, Drop, GroupChatMessage } from '@/types';
 import { getEditorialThemeColors } from './editorialTheme';
 import { EditorialDropPickerRow } from './EditorialDropPickerRow';
 import { DropMentionContent, LinkedText } from '../DropMentionContent';
@@ -54,13 +54,15 @@ interface EditorialChatPanelProps {
   drops?: Drop[];
   ownerId?: string | null;
   presence?: PresenceMap;
+  pendingChatDropRequest?: ChatDropRequest;
+  onChatDropHandled?: (requestId: number) => void;
 }
 
 const AGENT_URL = process.env.NEXT_PUBLIC_AGENT_URL || 'http://localhost:8000';
 
 const WELCOME = 'Hi! I can help you manage your drops. Ask me to list drops, search content, check storage stats, or manage workspaces.';
 
-export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspaceMembers, chatMode: chatModeProp, onChatModeChange, drops, ownerId, presence }: EditorialChatPanelProps) {
+export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspaceMembers, chatMode: chatModeProp, onChatModeChange, drops, ownerId, presence, pendingChatDropRequest, onChatDropHandled }: EditorialChatPanelProps) {
   const tc = getEditorialThemeColors(theme);
 
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -113,6 +115,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   // per "Seen" tap — no live listener.
   const [seenInfo, setSeenInfo] = useState<{ loading: boolean; seenUids: Set<string>; error: boolean } | null>(null);
   const groupUnsubRef = useRef<(() => void) | null>(null);
+  const handledChatDropRequestIdsRef = useRef<Set<number>>(new Set());
   const systemNoticeRef = useRef<HTMLDivElement>(null);
   const hadNoticeRef = useRef(false);
 
@@ -138,10 +141,47 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   const displayDeletedClass = `${displayChipBase} ${tc.inactivePillBg} ${tc.muted} line-through cursor-not-allowed opacity-60`;
   // Displayed @member chip — blue, non-interactive (translucent so it reads on either bubble color).
   const displayUserClass = `${displayChipBase} bg-[#2563eb]/15 text-[#2563eb]`;
-  const groupMention = useMentionEditor({ content: groupInput, setContent: setGroupInput, allDrops: workspaceDrops, foundClassName: mentionFoundClass, deletedClassName: mentionDeletedClass, allMembers: workspaceMembers, excludeUid: userId, memberClassName: mentionMemberClass });
+  const groupMention = useMentionEditor({
+    content: groupInput,
+    setContent: setGroupInput,
+    allDrops: workspaceDrops,
+    foundClassName: mentionFoundClass,
+    deletedClassName: mentionDeletedClass,
+    allMembers: workspaceMembers,
+    excludeUid: userId,
+    memberClassName: mentionMemberClass,
+    enableExternalInsertion: !!onChatDropHandled,
+    externalCaretScope: workspaceId ?? undefined,
+  });
   // editMention is a single top-level instance (Rules of Hooks); its contentEditable renders only
   // for the message being edited (editingMsgId === msg.id).
   const editMention = useMentionEditor({ content: editDraft, setContent: setEditDraft, allDrops: workspaceDrops, foundClassName: mentionFoundClass, deletedClassName: mentionDeletedClass, memberClassName: mentionMemberClass });
+  const { editorMountKey, insertExternalDrop } = groupMention;
+
+
+  useEffect(() => {
+    const request = pendingChatDropRequest;
+    if (!request || chatMode !== 'group' || !onChatDropHandled) return;
+    if (handledChatDropRequestIdsRef.current.has(request.requestId)) return;
+
+    const acknowledge = () => {
+      handledChatDropRequestIdsRef.current.add(request.requestId);
+      onChatDropHandled(request.requestId);
+    };
+    if (!workspaceId || !userId || request.workspaceId !== workspaceId || request.userId !== userId) {
+      acknowledge();
+      return;
+    }
+
+    const drop = workspaceDrops.find((item) => item.id === request.dropId);
+    if (!drop || drop.workspaceId !== request.workspaceId || drop.isStaged || drop.type === 'call') {
+      acknowledge();
+      return;
+    }
+    const result = insertExternalDrop(drop, request.workspaceId);
+    if (result === 'not-ready') return;
+    acknowledge();
+  }, [pendingChatDropRequest, chatMode, workspaceId, userId, groupInput, workspaceDrops, editorMountKey, insertExternalDrop, onChatDropHandled]);
   // Voice-to-text mic — reuses the shared useVoiceTranscribe hook (extracted from TextModal).
   // onTranscript APPENDS to the currently-shown composer. Editorial's AI input is a <textarea>
   // (multi-line) so newlines are kept; the group composer is contentEditable (newlines → <br>).
@@ -1555,7 +1595,9 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
                     clearReply();
                   }
                 }}
-                onBlur={(e) => { groupMention.handleBlur(e); typing.clearTyping(); }}
+                onKeyUp={() => groupMention.snapshotExternalCaret()}
+                onMouseUp={() => groupMention.snapshotExternalCaret()}
+                onBlur={(e) => { groupMention.snapshotExternalCaret(); groupMention.handleBlur(e); typing.clearTyping(); }}
                 role="textbox"
                 aria-multiline="true"
                 className={`w-full px-4 py-3 text-[14px] ${tc.fontClass} ${tc.bg} ${tc.text} border ${tc.border} rounded-lg focus:outline-none focus:border-[#1a1a1a] whitespace-pre-wrap break-words leading-relaxed min-h-[48px] max-h-[120px] overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]`}

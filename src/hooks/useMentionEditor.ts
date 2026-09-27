@@ -126,6 +126,17 @@ function placeCaretAtEnd(el: HTMLElement) {
   }
 }
 
+function nodeIsInsideEditor(editor: HTMLElement, node: Node | null): boolean {
+  return !!node && (node === editor || editor.contains(node));
+}
+
+function rangeIsInsideEditor(range: Range, editor: HTMLElement): boolean {
+  return range.startContainer.isConnected &&
+    range.endContainer.isConnected &&
+    nodeIsInsideEditor(editor, range.startContainer) &&
+    nodeIsInsideEditor(editor, range.endContainer);
+}
+
 export interface UseMentionEditorOptions {
   content: string;
   setContent: Dispatch<SetStateAction<string>>;
@@ -145,6 +156,10 @@ export interface UseMentionEditorOptions {
   // Mobile Create multi-mount mode (D22) — see setEditorRef below. Omitted/undefined keeps the
   // classic single-editor detach semantics for every existing consumer (chat panels, modals).
   keepRefOnDetach?: boolean;
+  // Opt-in external drop insertion for the desktop group-chat composers only.
+  enableExternalInsertion?: boolean;
+  // Workspace scope attached to the saved caret range.
+  externalCaretScope?: string;
 }
 
 export function useMentionEditor({
@@ -158,6 +173,8 @@ export function useMentionEditor({
   excludeUid,
   memberClassName,
   keepRefOnDetach,
+  enableExternalInsertion = false,
+  externalCaretScope,
 }: UseMentionEditorOptions) {
   const editorRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -171,6 +188,7 @@ export function useMentionEditor({
   // range to replace. Chips are atomic, so a #query is always contiguous text in one text node.
   const mentionTextNodeRef = useRef<Text | null>(null);
   const mentionStartOffsetRef = useRef<number>(0);
+  const savedExternalCaretRef = useRef<{ range: Range; scope: string } | null>(null);
 
   const [showMention, setShowMention] = useState(false);
   const [mentionQuery, setMentionQuery] = useState('');
@@ -201,12 +219,28 @@ export function useMentionEditor({
   // one live node stays wired.
   const setEditorRef = useCallback((node: HTMLDivElement | null) => {
     if (node === null && keepRefOnDetach) return;
+    if (enableExternalInsertion && editorRef.current !== node) {
+      savedExternalCaretRef.current = null;
+    }
     editorRef.current = node;
     if (node) {
       lastSerializedRef.current = null;   // force the guard below to see `content` as new
       setMountKey((k) => k + 1);
     }
-  }, [keepRefOnDetach]);
+  }, [keepRefOnDetach, enableExternalInsertion]);
+
+  const snapshotExternalCaret = useCallback(() => {
+    if (!enableExternalInsertion || !externalCaretScope) return;
+    const editor = editorRef.current;
+    const selection = window.getSelection();
+    if (!editor || !selection || !selection.rangeCount ||
+        !nodeIsInsideEditor(editor, selection.anchorNode) ||
+        !nodeIsInsideEditor(editor, selection.focusNode)) return;
+    const range = selection.getRangeAt(0).cloneRange();
+    if (!rangeIsInsideEditor(range, editor)) return;
+    if (!range.collapsed) range.collapse(false);
+    savedExternalCaretRef.current = { range, scope: externalCaretScope };
+  }, [enableExternalInsertion, externalCaretScope]);
 
   const filteredMentionDrops = useMemo(() => {
     const q = mentionQuery.toLowerCase().trim();
@@ -272,6 +306,7 @@ export function useMentionEditor({
       lastSerializedRef.current = null;
     }
     if (content !== lastSerializedRef.current) {
+      if (enableExternalInsertion) savedExternalCaretRef.current = null;
       editor.innerHTML = renderContentToHtml(content, allDrops, allMembers || [], foundClassName, deletedClassName, memberClassName || '');
       lastSerializedRef.current = content;
       placeCaretAtEnd(editor);
@@ -281,10 +316,20 @@ export function useMentionEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [content, mountKey]);
 
+  useEffect(() => {
+    if (!enableExternalInsertion || !editorRef.current) return;
+    document.addEventListener('selectionchange', snapshotExternalCaret);
+    return () => {
+      document.removeEventListener('selectionchange', snapshotExternalCaret);
+      savedExternalCaretRef.current = null;
+    };
+  }, [enableExternalInsertion, mountKey, snapshotExternalCaret]);
+
   // DOM → EXTERNAL. Read-only on input: serialize and sync state. Never writes innerHTML back.
   const handleInput = () => {
     const editor = editorRef.current;
     if (!editor) return;
+    snapshotExternalCaret();
     const serialized = serializeNode(editor);
     lastSerializedRef.current = serialized;
     setContent(serialized);
@@ -432,6 +477,75 @@ export function useMentionEditor({
     mentionTextNodeRef.current = null;
   };
 
+  const insertExternalDrop = useCallback((
+    drop: Drop,
+    requestScope: string,
+  ): 'not-ready' | 'inserted' | 'invalid' => {
+    if (!enableExternalInsertion || !externalCaretScope || requestScope !== externalCaretScope) return 'invalid';
+    const editor = editorRef.current;
+    if (!editor || lastSerializedRef.current !== content) return 'not-ready';
+
+    const currentDrop = allDrops.find((item) => item.id === drop.id);
+    if (!currentDrop || currentDrop.isStaged || currentDrop.type === 'call' || currentDrop.workspaceId !== requestScope) {
+      return 'invalid';
+    }
+
+    const liveSelection = window.getSelection();
+    let insertionRange: Range | null = null;
+    if (liveSelection && liveSelection.rangeCount) {
+      const liveRange = liveSelection.getRangeAt(0);
+      if (rangeIsInsideEditor(liveRange, editor)) {
+        insertionRange = liveRange.cloneRange();
+        if (!insertionRange.collapsed) insertionRange.collapse(false);
+      }
+    }
+    if (!insertionRange) {
+      const saved = savedExternalCaretRef.current;
+      if (saved && saved.scope === requestScope && rangeIsInsideEditor(saved.range, editor)) {
+        insertionRange = saved.range.cloneRange();
+        if (!insertionRange.collapsed) insertionRange.collapse(false);
+      }
+    }
+    if (!insertionRange) {
+      insertionRange = document.createRange();
+      insertionRange.selectNodeContents(editor);
+      insertionRange.collapse(false);
+    }
+
+    editor.focus();
+    const selection = window.getSelection();
+    if (selection) {
+      selection.removeAllRanges();
+      selection.addRange(insertionRange);
+    }
+
+    const chip = createChipElement(currentDrop, foundClassName);
+    const zwsp = document.createTextNode(ZWSP);
+    insertionRange.insertNode(chip);
+    chip.parentNode?.insertBefore(zwsp, chip.nextSibling);
+
+    const newRange = document.createRange();
+    newRange.setStartAfter(zwsp);
+    newRange.collapse(true);
+    selection?.removeAllRanges();
+    selection?.addRange(newRange);
+    savedExternalCaretRef.current = { range: newRange.cloneRange(), scope: requestScope };
+
+    const serialized = serializeNode(editor);
+    lastSerializedRef.current = serialized;
+    setContent(serialized);
+
+    setShowMention(false);
+    setMentionQuery('');
+    setMentionIndex(0);
+    setShowUserMention(false);
+    setUserMentionQuery('');
+    setUserMentionIndex(0);
+    mentionTextNodeRef.current = null;
+    mentionStartOffsetRef.current = 0;
+    return 'inserted';
+  }, [enableExternalInsertion, externalCaretScope, content, allDrops, foundClassName, setContent]);
+
   const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (showUserMention && filteredMembers.length > 0) {
       if (e.key === 'ArrowUp') { e.preventDefault(); setUserMentionIndex((p) => Math.max(0, p - 1)); return; }
@@ -475,6 +589,9 @@ export function useMentionEditor({
     handleKeyDown,
     handleBlur,
     insertMention,
+    insertExternalDrop,
+    snapshotExternalCaret,
+    editorMountKey: mountKey,
     focusEditor,
     // @member picker API (composer-only; no-op where no member source is wired)
     userDropdownRef,

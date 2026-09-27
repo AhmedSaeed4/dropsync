@@ -3,14 +3,17 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { getEditorialThemeColors } from './editorial/editorialTheme';
+import type { Drop } from '@/types';
 
 interface DropContextMenuProps {
+  drop: Drop;
   x: number;
   y: number;
   isPinned: boolean;
   onPin: () => void;
   onUnpin: () => void;
   onClose: () => void;
+  onSendToChat?: (drop: Drop) => void;
   theme?: 'light' | 'dark' | 'minimal';
   editorial?: boolean;
   // When the drop is locked and the current user can't mutate it, the rules block pin/unpin —
@@ -23,7 +26,7 @@ interface DropContextMenuProps {
   isCall?: boolean;
 }
 
-export function DropContextMenu({ x, y, isPinned, onPin, onUnpin, onClose, theme = 'light', editorial, locked = false, canMutate = false, isCall = false }: DropContextMenuProps) {
+export function DropContextMenu({ drop, x, y, isPinned, onPin, onUnpin, onClose, onSendToChat, theme = 'light', editorial, locked = false, canMutate = false, isCall = false }: DropContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   // Pin/unpin is a mutation the Firestore rules reject for a non-creator on a locked drop, and call
   // drops can't be pinned at all (always-top; rules block it).
@@ -62,6 +65,13 @@ export function DropContextMenu({ x, y, isPinned, onPin, onUnpin, onClose, theme
     onClose();
   };
 
+  const handleSendToChat = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    onSendToChat?.(drop);
+    onClose();
+  };
+
   const stopAndClose = (e: React.MouseEvent) => {
     e.stopPropagation();
     e.preventDefault();
@@ -97,6 +107,15 @@ export function DropContextMenu({ x, y, isPinned, onPin, onUnpin, onClose, theme
                 <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5m-10.5 0h10.5m-10.5 0l.75-10.5h9l.75 10.5" />
               </svg>
               {isPinned ? 'Unpin drop' : 'Pin drop'}
+            </button>
+          )}
+          {onSendToChat && !pinBlocked && (
+            <button
+              type="button"
+              onClick={handleSendToChat}
+              className={"w-full px-3 py-2 text-left text-xs " + tc.fontClass + " " + tc.text + " hover:bg-[#1a1a1a]/5 transition-colors flex items-center gap-2"}
+            >
+              Send to chat
             </button>
           )}
         </div>
@@ -138,6 +157,21 @@ export function DropContextMenu({ x, y, isPinned, onPin, onUnpin, onClose, theme
               ? (isPinned ? 'Unpin drop' : 'Pin drop')
               : (isPinned ? 'UNPIN_DROP' : 'PIN_DROP')
             }
+          </button>
+        )}
+        {onSendToChat && !pinBlocked && (
+          <button
+            type="button"
+            onClick={handleSendToChat}
+            className={"w-full px-3 py-2 text-left flex items-center gap-2 transition-colors " + (
+              isMinimal
+                ? 'text-xs font-sans tracking-wide text-[#1A1A1A] hover:bg-[#1A1A1A]/10'
+                : isDark
+                  ? 'text-[10px] font-mono uppercase tracking-wider text-white hover:bg-white/10'
+                  : 'text-[10px] font-mono uppercase tracking-wider text-[#1A1A1A] hover:bg-[#1A1A1A]/10'
+            )}
+          >
+            {isMinimal ? 'Send to chat' : 'SEND_TO_CHAT'}
           </button>
         )}
       </div>

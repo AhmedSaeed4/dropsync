@@ -30,6 +30,8 @@ interface EditorialDropItemProps {
   currentUserId?: string;
   onPin?: (drop: Drop) => void;
   onUnpin?: (drop: Drop) => void;
+  activeWorkspaceId?: string | null;
+  onSendToChat?: (drop: Drop) => void;
   showMoveControls?: boolean;
   canMoveUp?: boolean;
   canMoveDown?: boolean;
@@ -178,6 +180,8 @@ export const EditorialDropItem = memo(function EditorialDropItem({
   currentUserId,
   onPin,
   onUnpin,
+  activeWorkspaceId,
+  onSendToChat,
   showMoveControls,
   canMoveUp,
   canMoveDown,
@@ -865,12 +869,14 @@ export const EditorialDropItem = memo(function EditorialDropItem({
       {/* Context menu */}
       {menuState && !drop.isStaged && !(drop.locked && !canMutate) && (
         <DropContextMenu
+          drop={drop}
           x={menuState.x}
           y={menuState.y}
           isPinned={!!drop.pinned}
           onPin={() => onPin?.(drop)}
           onUnpin={() => onUnpin?.(drop)}
           onClose={closeMenu}
+          onSendToChat={activeWorkspaceId != null && drop.workspaceId === activeWorkspaceId ? onSendToChat : undefined}
           theme={theme}
           editorial
           locked={!!drop.locked}

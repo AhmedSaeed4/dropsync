@@ -29,7 +29,7 @@ import { useInPanelMarkRead } from '@/hooks/useInPanelMarkRead';
 import { useMentionEditor } from '@/hooks/useMentionEditor';
 import { useVoiceTranscribe } from '@/hooks/useVoiceTranscribe';
 import { Toast } from '@/components/Toast';
-import { Drop, GroupChatMessage } from '@/types';
+import { ChatDropRequest, Drop, GroupChatMessage } from '@/types';
 import { DropPickerRow } from './DropPickerRow';
 import { DropMentionContent, LinkedText } from './DropMentionContent';
 
@@ -53,6 +53,8 @@ interface ChatPanelProps {
   drops?: Drop[];
   ownerId?: string | null;
   presence?: PresenceMap;
+  pendingChatDropRequest?: ChatDropRequest;
+  onChatDropHandled?: (requestId: number) => void;
 }
 
 const AGENT_URL = process.env.NEXT_PUBLIC_AGENT_URL || 'http://localhost:8000';
@@ -151,7 +153,7 @@ function getThemeStyles(theme: 'light' | 'dark' | 'minimal') {
 
 const WELCOME = 'Hi! I can help you manage your drops. Ask me to list drops, search content, check storage stats, or manage workspaces.';
 
-export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspaceMembers, chatMode: chatModeProp, onChatModeChange, drops, ownerId, presence }: ChatPanelProps) {
+export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspaceMembers, chatMode: chatModeProp, onChatModeChange, drops, ownerId, presence, pendingChatDropRequest, onChatDropHandled }: ChatPanelProps) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -205,6 +207,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
   // per "Seen" tap — no live listener.
   const [seenInfo, setSeenInfo] = useState<{ loading: boolean; seenUids: Set<string>; error: boolean } | null>(null);
   const groupUnsubRef = useRef<(() => void) | null>(null);
+  const handledChatDropRequestIdsRef = useRef<Set<number>>(new Set());
   const systemNoticeRef = useRef<HTMLDivElement>(null);
   const hadNoticeRef = useRef(false);
 
@@ -230,10 +233,47 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
   const mentionDeletedClass = `${mentionChipBase} line-through opacity-50 cursor-not-allowed`;
   // @member chips use a blue accent so they read distinctly from #[drop] chips (coral) while editing.
   const mentionMemberClass = `${mentionChipBase} ${theme === 'minimal' ? 'rounded-full font-sans bg-[#1A1A1A]' : 'font-mono bg-[#2563eb]'} text-white`;
-  const groupMention = useMentionEditor({ content: groupInput, setContent: setGroupInput, allDrops: workspaceDrops, foundClassName: mentionFoundClass, deletedClassName: mentionDeletedClass, allMembers: workspaceMembers, excludeUid: userId, memberClassName: mentionMemberClass });
+  const groupMention = useMentionEditor({
+    content: groupInput,
+    setContent: setGroupInput,
+    allDrops: workspaceDrops,
+    foundClassName: mentionFoundClass,
+    deletedClassName: mentionDeletedClass,
+    allMembers: workspaceMembers,
+    excludeUid: userId,
+    memberClassName: mentionMemberClass,
+    enableExternalInsertion: !!onChatDropHandled,
+    externalCaretScope: workspaceId ?? undefined,
+  });
   // editMention is a single top-level instance (Rules of Hooks); its contentEditable renders only
   // for the message being edited (editingMsgId === msg.id).
   const editMention = useMentionEditor({ content: editDraft, setContent: setEditDraft, allDrops: workspaceDrops, foundClassName: mentionFoundClass, deletedClassName: mentionDeletedClass, memberClassName: mentionMemberClass });
+  const { editorMountKey, insertExternalDrop } = groupMention;
+
+
+  useEffect(() => {
+    const request = pendingChatDropRequest;
+    if (!request || chatMode !== 'group' || !onChatDropHandled) return;
+    if (handledChatDropRequestIdsRef.current.has(request.requestId)) return;
+
+    const acknowledge = () => {
+      handledChatDropRequestIdsRef.current.add(request.requestId);
+      onChatDropHandled(request.requestId);
+    };
+    if (!workspaceId || !userId || request.workspaceId !== workspaceId || request.userId !== userId) {
+      acknowledge();
+      return;
+    }
+
+    const drop = workspaceDrops.find((item) => item.id === request.dropId);
+    if (!drop || drop.workspaceId !== request.workspaceId || drop.isStaged || drop.type === 'call') {
+      acknowledge();
+      return;
+    }
+    const result = insertExternalDrop(drop, request.workspaceId);
+    if (result === 'not-ready') return;
+    acknowledge();
+  }, [pendingChatDropRequest, chatMode, workspaceId, userId, groupInput, workspaceDrops, editorMountKey, insertExternalDrop, onChatDropHandled]);
   // Voice-to-text mic — reuses the shared useVoiceTranscribe hook (extracted from TextModal).
   // onTranscript APPENDS to the currently-shown composer: the group composer keeps raw text
   // (newlines render as <br>); the classic AI box is a single-line <input>, so flatten newlines.
@@ -1616,7 +1656,9 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
                       clearReply();
                     }
                   }}
-                  onBlur={(e) => { groupMention.handleBlur(e); typing.clearTyping(); }}
+                  onKeyUp={() => groupMention.snapshotExternalCaret()}
+                  onMouseUp={() => groupMention.snapshotExternalCaret()}
+                  onBlur={(e) => { groupMention.snapshotExternalCaret(); groupMention.handleBlur(e); typing.clearTyping(); }}
                   role="textbox"
                   aria-multiline="true"
                   className={`w-full px-3 py-2 text-xs ${s.fontClass} ${s.inputBg} ${s.inputText} border ${s.inputBorder} ${s.roundedClass} focus:outline-none focus:ring-1 ${s.focusRing} whitespace-pre-wrap break-words leading-relaxed min-h-[40px] max-h-[120px] overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]`}

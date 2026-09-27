@@ -27,6 +27,8 @@ interface DropItemProps {
   currentUserId?: string;
   onPin?: (drop: Drop) => void;
   onUnpin?: (drop: Drop) => void;
+  activeWorkspaceId?: string | null;
+  onSendToChat?: (drop: Drop) => void;
   // Current space's drops — used to resolve #[Name](id) mention chips inline.
   allDrops?: Drop[];
   // Creator/workspace owner — may still delete a locked drop. Non-creators see a faded gate.
@@ -64,7 +66,7 @@ function getFileContent(drop: Drop): string {
   return '';
 }
 
-export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect, selectionMode, theme = 'light', currentUserId, onPin, onUnpin, allDrops = [], canMutate = false, reminderGlow = false, onJoinCall, members = [], isReopenCallId, hoverable = false }: DropItemProps) {
+export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect, selectionMode, theme = 'light', currentUserId, onPin, onUnpin, activeWorkspaceId, onSendToChat, allDrops = [], canMutate = false, reminderGlow = false, onJoinCall, members = [], isReopenCallId, hoverable = false }: DropItemProps) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [copied, setCopied] = useState(false);
   const [decryptedContent, setDecryptedContent] = useState<string>('');
@@ -616,12 +618,14 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
       {/* Context menu */}
       {menuState && !drop.isStaged && !(drop.locked && !canMutate) && (
         <DropContextMenu
+          drop={drop}
           x={menuState.x}
           y={menuState.y}
           isPinned={!!drop.pinned}
           onPin={() => onPin?.(drop)}
           onUnpin={() => onUnpin?.(drop)}
           onClose={closeMenu}
+          onSendToChat={activeWorkspaceId != null && drop.workspaceId === activeWorkspaceId ? onSendToChat : undefined}
           theme={theme}
           locked={!!drop.locked}
           canMutate={canMutate}

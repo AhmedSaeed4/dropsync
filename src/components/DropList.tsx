@@ -26,6 +26,8 @@ interface DropListProps {
   categories?: Category[];
   onDeleteCategory?: (categoryId: string, categoryName: string) => void;
   currentWorkspace?: Workspace | null;
+  activeWorkspaceId?: string | null;
+  onSendToChat?: (drop: Drop) => void;
   workspaceMembers?: MemberInfo[];
   // Current space's drops — forwarded to DropItem for inline mention chips.
   allDrops?: Drop[];
@@ -38,7 +40,7 @@ interface DropListProps {
   onExportPersonal?: () => void;
 }
 
-export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspaces = [], theme = 'light', currentUserId, categories = [], onDeleteCategory, currentWorkspace, workspaceMembers, allDrops = [], onJoinCall, isReopenCallId, hoverable = false, onExportWorkspace, onExportPersonal }: DropListProps) {
+export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspaces = [], theme = 'light', currentUserId, categories = [], onDeleteCategory, currentWorkspace, activeWorkspaceId, onSendToChat, workspaceMembers, allDrops = [], onJoinCall, isReopenCallId, hoverable = false, onExportWorkspace, onExportPersonal }: DropListProps) {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   useEffect(() => {
@@ -559,6 +561,8 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
                   canMutate={!!currentUserId && (currentUserId === drop.userId || (!!currentWorkspace && currentUserId === currentWorkspace.ownerId))}
                   onPin={handlePinDrop}
                   onUnpin={handlePinDrop}
+                  activeWorkspaceId={activeWorkspaceId}
+                  onSendToChat={onSendToChat}
                   allDrops={allDrops}
                   onJoinCall={onJoinCall}
                   members={workspaceMembers}

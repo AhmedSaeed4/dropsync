@@ -26,7 +26,7 @@ import { lockScroll, unlockScroll, retractFooterIfUp, retractFooterImmediately }
 import { useDissolve } from '@/hooks/useDissolve';
 import { useMagnet } from '@/hooks/useMagnet';
 import { useIsWide } from '@/hooks/useIsWide';
-import { Drop, Workspace, ExpirationOption } from '@/types';
+import { ChatDropRequest, Drop, Workspace, ExpirationOption } from '@/types';
 import { initializeUserKeys, hasUserKeys, getUserKeys, ensurePublicKeyPublished } from '@/lib/keys';
 import { ensureProfilePublished } from '@/lib/profiles';
 import { decryptDrop, updateTextDrop, updateDropMetadata, moveDrop, getExpirationDate } from '@/lib/drops';
@@ -360,9 +360,20 @@ export default function Home() {
   const archiveManager = getArchiveTaskManager();
   const [showChat, setShowChat] = useState(false);
   const [chatMode, setChatMode] = useState<'ai' | 'group'>('ai');
+  const [pendingChatDropQueue, setPendingChatDropQueue] = useState<ChatDropRequest[]>([]);
+  const nextChatDropRequestIdRef = useRef(0);
   const [unreadCount, setUnreadCount] = useState(0);
   const unreadUnsubRef = useRef<(() => void) | null>(null);
   const prevShowChatRef = useRef(showChat);
+
+
+  useEffect(() => {
+    setPendingChatDropQueue((queue) => {
+      if (!showChat || !user?.uid || !currentWorkspaceId) return queue.length ? [] : queue;
+      const matching = queue.filter((request) => request.workspaceId === currentWorkspaceId && request.userId === user.uid);
+      return matching.length === queue.length ? queue : matching;
+    });
+  }, [showChat, currentWorkspaceId, user?.uid]);
 
   // Browser chat notifications (foreground only) — permission + mute preference.
   // Default: notifications ON once permission is granted (mute flag = off).
@@ -1419,6 +1430,30 @@ export default function Home() {
     return () => unsub();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
+
+  const handleSendDropToChat = useCallback((selectedDrop: Drop) => {
+    const userId = user?.uid;
+    if (!userId || !currentWorkspaceId || selectedDrop.workspaceId !== currentWorkspaceId) return;
+    const drop = drops.find((item) => item.id === selectedDrop.id);
+    if (!drop || drop.workspaceId !== currentWorkspaceId || drop.isStaged || drop.type === 'call') return;
+    const canMutate = userId === drop.userId || (!!currentWorkspace && userId === currentWorkspace.ownerId);
+    if (drop.locked && !canMutate) return;
+
+    const requestId = nextChatDropRequestIdRef.current + 1;
+    nextChatDropRequestIdRef.current = requestId;
+    setPendingChatDropQueue((queue) => [...queue, {
+      requestId,
+      workspaceId: currentWorkspaceId,
+      dropId: drop.id,
+      userId,
+    }]);
+    setChatMode('group');
+    setShowChat(true);
+  }, [user?.uid, currentWorkspaceId, currentWorkspace, drops]);
+
+  const handleChatDropHandled = useCallback((requestId: number) => {
+    setPendingChatDropQueue((queue) => queue.filter((request) => request.requestId !== requestId));
+  }, []);
 
   // Toggle chat panel — auto-switch to workspace tab when unreads exist.
   // Passed down as onToggleChat so the layout chat buttons hit this (and thus the
@@ -2764,11 +2799,17 @@ export default function Home() {
   }
 
   // Main app — delegate to layout component
+  const activeChatDropRequest = pendingChatDropQueue.find((request) => (
+    request.workspaceId === currentWorkspaceId && request.userId === user?.uid
+  ));
   const layoutProps = {
     theme, setTheme, themeColors,
     user, layoutMode, setLayoutMode: handleLayoutChange,
     showChat, setShowChat,
     chatMode, setChatMode,
+    pendingChatDropRequest: activeChatDropRequest,
+    onSendDropToChat: handleSendDropToChat,
+    onChatDropHandled: handleChatDropHandled,
     unreadCount,
     onToggleChat: handleToggleChat,
     notifPermission, notifMuted, onToggleNotifications: handleToggleNotifications,
