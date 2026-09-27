@@ -11,6 +11,7 @@ import { downloadBinaryFromUrl } from '@/lib/download';
 import { contentToPlainText } from '@/lib/dropTagUtils';
 import { DropMentionContent } from './DropMentionContent';
 import { LockedActionButton } from './LockedActionButton';
+import { ImageLightbox } from './ImageLightbox';
 
 interface PreviewModalProps {
   drop: Drop;
@@ -47,6 +48,8 @@ export function PreviewModal({ drop, onClose, onBack, canBack, theme = 'light', 
   const [shareCopied, setShareCopied] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  // Full-screen image viewer state — the image to show (null = closed).
+  const [viewer, setViewer] = useState<{ src: string; alt: string } | null>(null);
   const isImage = drop.mimeType?.startsWith('image/');
   const isVideo = drop.mimeType?.startsWith('video/');
   const isText = isTextFile(drop);
@@ -311,6 +314,7 @@ export function PreviewModal({ drop, onClose, onBack, canBack, theme = 'light', 
       className={`fixed inset-0 ${tc.overlayBg} flex items-center justify-center z-50 p-4 transition-colors duration-300 overscroll-contain`}
       onClick={(e) => e.target === e.currentTarget && onBack()}
     >
+      {viewer && <ImageLightbox src={viewer.src} alt={viewer.alt} onClose={() => setViewer(null)} />}
       <div className={`${tc.bgColor} border ${tc.borderColor} ${tc.roundedClass} w-full max-w-3xl max-h-[85vh] overflow-hidden flex flex-col transition-colors duration-300`}>
         {/* Header */}
         <div className={`border-b ${tc.borderColor} px-6 py-4 flex items-center justify-between ${tc.headerBg}`}>
@@ -426,15 +430,27 @@ export function PreviewModal({ drop, onClose, onBack, canBack, theme = 'light', 
               )}
               {drop.imageData && (
                 <div className="flex items-center justify-center">
-                  <img
-                    src={drop.imageData}
-                    alt="Attached image"
-                    className={`border ${tc.borderColor} object-contain ${tc.roundedClass} ${
-                      drop.isDrawing
-                        ? 'max-w-[80%] max-h-[50vh]'
-                        : 'max-w-full max-h-[50vh]'
-                    }`}
-                  />
+                  <div className="relative inline-block">
+                    <img
+                      src={drop.imageData}
+                      alt="Attached image"
+                      className={`border ${tc.borderColor} object-contain ${tc.roundedClass} ${
+                        drop.isDrawing
+                          ? 'max-w-[80%] max-h-[50vh]'
+                          : 'max-w-full max-h-[50vh]'
+                      }`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => { if (drop.imageData) setViewer({ src: drop.imageData, alt: drop.name }); }}
+                      className="absolute top-2 right-2 z-10 w-8 h-8 flex items-center justify-center bg-black/60 hover:bg-black/70 text-white rounded-full transition-colors"
+                      title="View full screen"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" />
+                      </svg>
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -443,11 +459,23 @@ export function PreviewModal({ drop, onClose, onBack, canBack, theme = 'light', 
           {/* Image Preview */}
           {!isLoading && drop.type === 'file' && isImage && drop.fileData && (
             <div className="flex items-center justify-center p-6 min-h-[300px]">
-              <img
-                src={drop.fileData}
-                alt={drop.name}
-                className={`max-w-full max-h-[60vh] border ${tc.borderColor} object-contain ${tc.roundedClass}`}
-              />
+              <div className="relative inline-block">
+                <img
+                  src={drop.fileData}
+                  alt={drop.name}
+                  className={`max-w-full max-h-[60vh] border ${tc.borderColor} object-contain ${tc.roundedClass}`}
+                />
+                <button
+                  type="button"
+                  onClick={() => { if (drop.fileData) setViewer({ src: drop.fileData, alt: drop.name }); }}
+                  className="absolute top-2 right-2 z-10 w-8 h-8 flex items-center justify-center bg-black/60 hover:bg-black/70 text-white rounded-full transition-colors"
+                  title="View full screen"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" />
+                  </svg>
+                </button>
+              </div>
             </div>
           )}
 

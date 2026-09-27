@@ -13,6 +13,7 @@ import { getEditorialThemeColors } from './editorialTheme';
 import { DropMentionContent } from '../DropMentionContent';
 import { LockedActionButton } from '../LockedActionButton';
 import { Tooltip } from '../Tooltip';
+import { ImageLightbox } from '../ImageLightbox';
 
 const YOUTUBE_PLAYER_TRANSITION = 'transition-[grid-template-rows] duration-300 ease-in-out';
 
@@ -58,6 +59,8 @@ export function EditorialPreviewModal({ drop, onClose, onBack, canBack, theme = 
   const [shareCopied, setShareCopied] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  // Full-screen image viewer state — the image to show (null = closed).
+  const [viewer, setViewer] = useState<{ src: string; alt: string } | null>(null);
   const isImage = drop.mimeType?.startsWith('image/');
   const isVideo = drop.mimeType?.startsWith('video/');
   const isText = isTextFile(drop);
@@ -302,6 +305,7 @@ export function EditorialPreviewModal({ drop, onClose, onBack, canBack, theme = 
       className={`fixed inset-0 bg-[#1a1a1a]/60 flex items-center justify-center z-50 p-4 transition-colors duration-300 overscroll-contain`}
       onClick={(e) => e.target === e.currentTarget && onBack()}
     >
+      {viewer && <ImageLightbox src={viewer.src} alt={viewer.alt} onClose={() => setViewer(null)} />}
       <div className={`${tc.bg} border ${tc.border} rounded-xl w-full max-w-3xl max-h-[85vh] overflow-hidden flex flex-col transition-colors duration-300 shadow-xl`}>
         {/* Header */}
         <div className={`border-b ${tc.border} px-5 py-4 flex items-center justify-between`}>
@@ -412,15 +416,27 @@ export function EditorialPreviewModal({ drop, onClose, onBack, canBack, theme = 
               )}
               {drop.imageData && (
                 <div className="flex items-center justify-center">
-                  <img
-                    src={drop.imageData}
-                    alt="Attached"
-                    className={`rounded-lg object-contain ${
-                      drop.isDrawing
-                        ? 'max-w-[80%] max-h-[50vh] border'
-                        : 'max-w-full h-auto'
-                    }`}
-                  />
+                  <div className="relative inline-block">
+                    <img
+                      src={drop.imageData}
+                      alt="Attached"
+                      className={`rounded-lg object-contain ${
+                        drop.isDrawing
+                          ? 'max-w-[80%] max-h-[50vh] border'
+                          : 'max-w-full h-auto'
+                      }`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => { if (drop.imageData) setViewer({ src: drop.imageData, alt: drop.name }); }}
+                      className="absolute top-2 right-2 z-10 w-8 h-8 flex items-center justify-center bg-black/60 hover:bg-black/70 text-white rounded-full transition-colors"
+                      title="View full screen"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" />
+                      </svg>
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -458,11 +474,23 @@ export function EditorialPreviewModal({ drop, onClose, onBack, canBack, theme = 
           {/* Image */}
           {!isLoading && isImage && drop.fileData && (
             <div className="p-5 flex items-center justify-center">
-              <img
-                src={drop.fileData}
-                alt={drop.name}
-                className="max-w-full max-h-[50vh] object-contain rounded-lg border ${tc.border}"
-              />
+              <div className="relative inline-block">
+                <img
+                  src={drop.fileData}
+                  alt={drop.name}
+                  className="max-w-full max-h-[50vh] object-contain rounded-lg border ${tc.border}"
+                />
+                <button
+                  type="button"
+                  onClick={() => { if (drop.fileData) setViewer({ src: drop.fileData, alt: drop.name }); }}
+                  className="absolute top-2 right-2 z-10 w-8 h-8 flex items-center justify-center bg-black/60 hover:bg-black/70 text-white rounded-full transition-colors"
+                  title="View full screen"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" />
+                  </svg>
+                </button>
+              </div>
             </div>
           )}
 

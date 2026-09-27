@@ -8,6 +8,7 @@ import { DropMentionContent } from '../../DropMentionContent';
 import { useVideoThumbnail } from '@/hooks/useVideoThumbnail';
 import { getEditorialThemeColors } from '../editorialTheme';
 import { LiveCallDropTile } from '../../call/LiveCallDropTile';
+import { ImageLightbox } from '../../ImageLightbox';
 import type { MemberInfo } from '@/lib/workspaces';
 
 type Theme = 'light' | 'dark' | 'minimal';
@@ -118,6 +119,8 @@ export function MobileDropCard({
   const [decryptedFileData, setDecryptedFileData] = useState<string>('');
   const [decryptedImageData, setDecryptedImageData] = useState<string>('');
   const [decryptError, setDecryptError] = useState(false);
+  // Full-screen image viewer — src of the image shown in the lightbox (null = closed).
+  const [viewerSrc, setViewerSrc] = useState<string | null>(null);
 
   const { ref: cardRef, inView } = useInView<HTMLDivElement>('1000px 0px');
   const hasDecrypted = useRef(false);
@@ -206,6 +209,15 @@ export function MobileDropCard({
   };
   const thumbnailSrc = getThumbnailSrc();
 
+  // Full-screen viewer opens ONLY for real drop images — image files + text-drop attached
+  // images. YouTube and video thumbnails never open it (D6).
+  const getLightboxImage = () => {
+    if (isImage && displayFileData) return displayFileData;
+    if (drop.type === 'text' && hasAttachedImage && displayImageData) return displayImageData;
+    return null;
+  };
+  const lightboxImage = getLightboxImage();
+
   // A call drop renders ONLY the live-call tile — never selectable, never sheeted (#21).
   if (drop.type === 'call') {
     return (
@@ -228,6 +240,7 @@ export function MobileDropCard({
       onClick={() => (selectionMode ? (!drop.isStaged && onSelect(drop.id)) : onPreview(drop))}
       className={`relative w-full select-none overflow-hidden border ${tc.cardBg} ${tc.border} rounded-[14px] transition-colors cursor-pointer`}
     >
+      {viewerSrc && <ImageLightbox src={viewerSrc} alt={drop.name} onClose={() => setViewerSrc(null)} />}
       {drop.isStaged && <span className="absolute left-2 top-2 z-20 bg-amber-700 px-1.5 py-0.5 text-[9px] text-white">STAGED</span>}
       {/* Pin badge — top-right (desktop parity :479-486) */}
       {drop.pinned && (
@@ -276,6 +289,18 @@ export function MobileDropCard({
                 </svg>
               </div>
             </div>
+          )}
+          {!selectionMode && lightboxImage && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); if (lightboxImage) setViewerSrc(lightboxImage); }}
+              className="absolute bottom-2 right-2 z-20 w-8 h-8 flex items-center justify-center bg-black/60 hover:bg-black/70 text-white rounded-full"
+              title="View full screen"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" />
+              </svg>
+            </button>
           )}
         </div>
       )}
