@@ -64,6 +64,23 @@ export function EditorialPreviewModal({ drop, onClose, onBack, canBack, theme = 
   const isImage = drop.mimeType?.startsWith('image/');
   const isVideo = drop.mimeType?.startsWith('video/');
   const isText = isTextFile(drop);
+  // The image this preview shows, if any — drives the keyboard F shortcut.
+  const viewerImage = drop.type === 'text' ? drop.imageData : (isImage ? drop.fileData : undefined);
+
+  // Keyboard shortcut: F toggles the full-screen image viewer — F opens, F again exits
+  // (Esc / ✕ / backdrop also exit).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if ((e.key === 'f' || e.key === 'F') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        if (viewer) setViewer(null);
+        else if (viewerImage) setViewer({ src: viewerImage, alt: drop.name });
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [viewer, viewerImage, drop.name]);
 
   const SUPPORTED_VIDEO_TYPES = new Set(['video/mp4', 'video/webm', 'video/ogg']);
   const isSupportedVideo = isVideo && SUPPORTED_VIDEO_TYPES.has(drop.mimeType || '');
