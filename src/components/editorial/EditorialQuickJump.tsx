@@ -211,6 +211,7 @@ export function EditorialQuickJump({
       if (ctrlOnly && !event.shiftKey && event.code === 'Space') requested = 'drops';
       if (ctrlOnly && !event.shiftKey && event.code === 'KeyW') requested = 'workspaces';
       if (ctrlOnly && event.shiftKey && event.code === 'Space') requested = 'workspaces';
+      if (event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && event.code === 'Space') requested = 'workspaces';
       if (requested) {
         if (editable && !ownInput) return;
         event.preventDefault();
