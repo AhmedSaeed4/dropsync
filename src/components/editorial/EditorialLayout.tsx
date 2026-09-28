@@ -16,6 +16,7 @@ import { EditorialStatusPanel } from './EditorialStatusPanel';
 import { EditorialThemeSelector } from './EditorialThemeSelector';
 import { EditorialSavedPaths } from './EditorialSavedPaths';
 import { getEditorialThemeColors } from './editorialTheme';
+import { EditorialQuickJump } from './EditorialQuickJump';
 import { retractFooterIfUp } from '../SmoothScrollProvider';
 import type { DropSortMode } from '@/lib/auth';
 
@@ -68,6 +69,7 @@ interface EditorialLayoutProps {
   };
   user: any;
   layoutMode: LayoutMode;
+  quickJumpExternalBlocked: boolean;
   setLayoutMode: (l: LayoutMode) => void;
   showChat: boolean;
   setShowChat: (v: boolean) => void;
@@ -183,7 +185,7 @@ interface EditorialLayoutProps {
 export function EditorialLayout(props: EditorialLayoutProps) {
   const {
     theme, setTheme, themeColors,
-    user, layoutMode, setLayoutMode,
+    user, layoutMode, setLayoutMode, quickJumpExternalBlocked,
     showChat, setShowChat,
     pendingChatDropRequest, onSendDropToChat, onChatDropHandled,
     onToggleChat,
@@ -487,6 +489,17 @@ export function EditorialLayout(props: EditorialLayoutProps) {
 
   return (
     <div className={`relative flex h-[100dvh] flex-col overflow-x-hidden ${tc.bg} transition-colors duration-500`}>
+      <EditorialQuickJump
+        theme={theme}
+        userId={user?.uid ?? null}
+        currentWorkspaceId={currentWorkspaceId}
+        workspaces={workspaces}
+        drops={drops}
+        dropsLoading={dropsLoading}
+        blocked={!!(quickJumpExternalBlocked || !user || encryptionInitializing || previewDrop || editDrop || moveDrops || showSettingsModal || showAuthModal || showVerifyModal || showCreateModal || showJoinModal || workspaceToDelete || workspaceToLeave || (activeCallDrop && !callMinimized) || (showChat && isMobile))}
+        onSwitchWorkspace={switchWorkspace}
+        onOpenRootDrop={handleOpenRootDrop}
+      />
       {/* Encryption initializing overlay */}
       {encryptionInitializing && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 overscroll-contain">

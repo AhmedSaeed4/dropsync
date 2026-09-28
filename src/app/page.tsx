@@ -1800,7 +1800,7 @@ export default function Home() {
   useEffect(() => {
     if (!footerActive) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== ' ') return;
+      if (e.key !== ' ' || e.ctrlKey || e.metaKey || e.altKey) return;
       const t = e.target as HTMLElement | null;
       if (!t) return;
       if (t.isContentEditable) return; // typing in a rich-text composer
@@ -2805,6 +2805,7 @@ export default function Home() {
   const layoutProps = {
     theme, setTheme, themeColors,
     user, layoutMode, setLayoutMode: handleLayoutChange,
+    quickJumpExternalBlocked: !!(showYoutubeBackfill || personalOptionsOpen || archiveMode || archivePanelJobId),
     showChat, setShowChat,
     chatMode, setChatMode,
     pendingChatDropRequest: activeChatDropRequest,
