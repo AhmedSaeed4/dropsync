@@ -95,6 +95,13 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   const [groupMessagesLoading, setGroupMessagesLoading] = useState(true);
   const [groupInput, setGroupInput] = useState('');
   const [groupSending, setGroupSending] = useState(false);
+  // R19 (Order 43): the group-send IN-FLIGHT lock. The ref is the authority — the
+  // groupSending state is only the button's visual signal. AliveRef lets an in-flight
+  // send's finally skip setState after unmount; the timer ref lets a new send or the
+  // unmount cleanup cancel a pending composer refocus.
+  const groupSendInFlightRef = useRef(false);
+  const groupSendAliveRef = useRef(true);
+  const groupSendFocusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [clearConfirm, setClearConfirm] = useState(false);
   const [systemNotice, setSystemNotice] = useState<string | null>(null);
   const [clearLoading, setClearLoading] = useState(false);
@@ -715,42 +722,57 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
 
   const handleGroupSend = async () => {
     const text = groupInput.trim();
-    if (groupSending || !userId || !workspaceId) return;
+    if (!userId || !workspaceId) return;
+    // R19 send lock: test-and-set SYNCHRONOUSLY, before any await or state setter. The
+    // groupSending state below is only the button's visual signal — it cannot render
+    // true until after this handler returns — so repeat clicks/Enter during the awaited
+    // permission checks must be blocked by this ref; each one that re-entered would run
+    // its own checks and post a duplicate message.
+    if (groupSendInFlightRef.current) return;
+    groupSendInFlightRef.current = true;
+    setGroupSending(true);
     try {
-      await assertWorkspaceWritableById(workspaceId);
-      for (const id of new Set(parseMessageContent(text).flatMap((part) => part.dropId ? [part.dropId] : []))) await assertDropWritableById(id);
-    } catch (error) { showSystemNotice(error instanceof Error ? error.message : 'This workspace is still importing.', 4000); return; }
+      try {
+        await assertWorkspaceWritableById(workspaceId);
+        for (const id of new Set(parseMessageContent(text).flatMap((part) => part.dropId ? [part.dropId] : []))) await assertDropWritableById(id);
+      } catch (error) { if (groupSendAliveRef.current) showSystemNotice(error instanceof Error ? error.message : 'This workspace is still importing.', 4000); return; }
 
-    // Sending (or clearing) ends any active typing state for this composer.
-    typing.clearTyping();
+      // Sending (or clearing) ends any active typing state for this composer.
+      typing.clearTyping();
 
-    if (text === '/clear') {
+      if (text === '/clear') {
+        setGroupInput('');
+        setReplyTo(null);
+        if (isOwner) {
+          setClearConfirm(true);
+        } else {
+          showSystemNotice('Only the workspace owner can clear the chat.', 4000);
+        }
+        return;
+      }
+
+      if (!text) {
+        setReplyTo(null);
+        return;
+      }
+
+      // Chips are already inline in groupInput as #[name](id) tokens (serialized by useMentionEditor),
+      // so the message body IS the trimmed input — no separate attachment prepend.
+      const senderName = auth.currentUser?.displayName || auth.currentUser?.email?.split('@')[0] || 'Unknown';
       setGroupInput('');
       setReplyTo(null);
-      if (isOwner) {
-        setClearConfirm(true);
-      } else {
-        showSystemNotice('Only the workspace owner can clear the chat.', 4000);
-      }
-      return;
+      // replyTo?.id is the quote pointer (CREATE only; plaintext id, never encrypted). Undefined when
+      // not replying → sendGroupMessage omits the key entirely (never writes null).
+      await sendGroupMessage(workspaceId, userId, senderName, text, replyTo?.id);
+      // Refocus the composer after a settled send (success or null), replacing any timer
+      // still pending from an earlier send. An unexpected throw skips this — the finally
+      // below just releases the lock.
+      if (groupSendFocusTimerRef.current) clearTimeout(groupSendFocusTimerRef.current);
+      groupSendFocusTimerRef.current = setTimeout(() => groupMention.editorRef.current?.focus(), 100);
+    } finally {
+      groupSendInFlightRef.current = false;
+      if (groupSendAliveRef.current) setGroupSending(false);
     }
-
-    if (!text) {
-      setReplyTo(null);
-      return;
-    }
-
-    // Chips are already inline in groupInput as #[name](id) tokens (serialized by useMentionEditor),
-    // so the message body IS the trimmed input — no separate attachment prepend.
-    const senderName = auth.currentUser?.displayName || auth.currentUser?.email?.split('@')[0] || 'Unknown';
-    setGroupInput('');
-    setReplyTo(null);
-    setGroupSending(true);
-    // replyTo?.id is the quote pointer (CREATE only; plaintext id, never encrypted). Undefined when
-    // not replying → sendGroupMessage omits the key entirely (never writes null).
-    await sendGroupMessage(workspaceId, userId, senderName, text, replyTo?.id);
-    setGroupSending(false);
-    setTimeout(() => groupMention.editorRef.current?.focus(), 100);
   };
 
   const handleClearChat = async () => {
@@ -884,9 +906,20 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
     };
   }, [clearConfirm, systemNotice]);
 
-  // Clear any pending notice timer on unmount so no setState fires afterward
-  useEffect(() => () => {
-    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+  // Clear any pending notice timer on unmount so no setState fires afterward.
+  // R19 (Order 43): also marks the panel dead for the group-send lock (an in-flight
+  // send's finally must not setState or refocus after unmount) and cancels a pending
+  // composer refocus. The setup arm re-marks the panel alive on every (re)mount —
+  // REQUIRED: React StrictMode (dev) runs this cleanup once right after mount while
+  // keeping the same instance and refs; without the arm aliveRef stays false forever
+  // and the first send leaves the button disabled (R19-D1).
+  useEffect(() => {
+    groupSendAliveRef.current = true;
+    return () => {
+      if (noticeTimer.current) clearTimeout(noticeTimer.current);
+      groupSendAliveRef.current = false;
+      if (groupSendFocusTimerRef.current) clearTimeout(groupSendFocusTimerRef.current);
+    };
   }, []);
 
   return (
