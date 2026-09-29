@@ -1800,7 +1800,7 @@ export default function Home() {
   useEffect(() => {
     if (!footerActive) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== ' ' || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.key !== ' ' || e.ctrlKey || e.metaKey || e.altKey || (layoutMode === 'editorial' && e.shiftKey)) return;
       const t = e.target as HTMLElement | null;
       if (!t) return;
       if (t.isContentEditable) return; // typing in a rich-text composer
@@ -1815,7 +1815,7 @@ export default function Home() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [footerActive]);
+  }, [footerActive, layoutMode]);
 
   // ToS consent: reactive read of users/{uid}.tosAcceptedVersion. onSnapshot (NOT a one-shot getDoc)
   // so it self-corrects the first-login race and auto-dismisses the gate in other open tabs. A read
