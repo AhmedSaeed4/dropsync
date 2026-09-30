@@ -3,7 +3,9 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import type { KeyboardEvent, FocusEvent, Dispatch, SetStateAction } from 'react';
 import { Drop } from '@/types';
-import { detectHashtagTrigger, detectMentionTrigger, parseMessageContent } from '@/lib/dropTagUtils';
+import { detectHashtagTrigger, detectMentionTrigger, parseMessageContent, serializeAgentDropTag } from '@/lib/dropTagUtils';
+import { useAgentExpiryClock } from '@/hooks/useAgentExpiryClock';
+import { isAgentDropEligible, type AgentDropScope } from '@/lib/agentDropEligibility';
 import type { MemberInfo } from '@/lib/workspaces';
 
 /**
@@ -26,7 +28,7 @@ function escapeHtml(s: string): string {
 }
 
 // DOM → token string. Walks child nodes; chips collapse back to #[Name](id), <br>/blocks → \n.
-function serializeNode(node: Node): string {
+function serializeNode(node: Node, agentLabels = false): string {
   let out = '';
   node.childNodes.forEach((child) => {
     if (child.nodeType === Node.TEXT_NODE) {
@@ -44,16 +46,16 @@ function serializeNode(node: Node): string {
           out += `@[${name}](${uid})`;
         } else {
           const id = el.getAttribute('data-chip-id') || '';
-          out += `#[${name}](${id})`;
+          out += agentLabels ? serializeAgentDropTag(name, id) : `#[${name}](${id})`;
         }
       } else if (el.tagName === 'BR') {
         out += '\n';
       } else if (el.tagName === 'DIV' || el.tagName === 'P') {
         // Block-level: browsers wrap Enter-created lines in <div>/<p>; treat as a newline.
         if (out.length > 0 && !out.endsWith('\n')) out += '\n';
-        out += serializeNode(el);
+        out += serializeNode(el, agentLabels);
       } else {
-        out += serializeNode(el);
+        out += serializeNode(el, agentLabels);
       }
     }
   });
@@ -71,8 +73,9 @@ function renderContentToHtml(
   foundClassName: string,
   deletedClassName: string,
   memberClassName: string,
+  agentLabels = false,
 ): string {
-  return parseMessageContent(content).map((part) => {
+  return parseMessageContent(content, agentLabels).map((part) => {
     if (part.type === 'text') {
       return escapeHtml(part.value || '').replace(/\n/g, '<br>');
     }
@@ -160,6 +163,27 @@ export interface UseMentionEditorOptions {
   enableExternalInsertion?: boolean;
   // Workspace scope attached to the saved caret range.
   externalCaretScope?: string;
+  agentScope?: AgentDropScope;
+  agentPickerEnabled?: boolean;
+}
+
+function insertUndoableAgentChip(editor: HTMLDivElement, range: Range, chip: HTMLSpanElement): Range {
+  editor.focus();
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+  // Native insertion keeps the atomic card on the browser undo stack.
+  if (!document.execCommand("insertHTML", false, chip.outerHTML + ZWSP)) {
+    range.deleteContents();
+    range.insertNode(chip);
+    const trailing = document.createTextNode(ZWSP);
+    chip.parentNode?.insertBefore(trailing, chip.nextSibling);
+    range.setStartAfter(trailing);
+    range.collapse(true);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  }
+  return selection && selection.rangeCount ? selection.getRangeAt(0).cloneRange() : range;
 }
 
 export function useMentionEditor({
@@ -175,6 +199,8 @@ export function useMentionEditor({
   keepRefOnDetach,
   enableExternalInsertion = false,
   externalCaretScope,
+  agentScope,
+  agentPickerEnabled = false,
 }: UseMentionEditorOptions) {
   const editorRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -193,6 +219,28 @@ export function useMentionEditor({
   const [showMention, setShowMention] = useState(false);
   const [mentionQuery, setMentionQuery] = useState('');
   const [mentionIndex, setMentionIndex] = useState(0);
+  const [agentPickerContext, setAgentPickerContext] = useState(externalCaretScope);
+  const [agentPickToken, setAgentPickToken] = useState(0);
+  const agentPickerOpen = showMention && (!agentScope || agentPickerContext === externalCaretScope);
+  const agentNearestExpiry = agentScope && agentPickerOpen ? allDrops.reduce<number | null>((nearest, drop) => {
+    if (!isAgentDropEligible(drop, agentScope) ||
+        !drop.name.toLowerCase().includes(mentionQuery.toLowerCase().trim()) || !drop.expiresAt) return nearest;
+    const expiry = drop.expiresAt.getTime();
+    return nearest === null ? expiry : Math.min(nearest, expiry);
+  }, null) : null;
+  const agentClockToken = useAgentExpiryClock(!!agentScope && agentPickerOpen, agentNearestExpiry, externalCaretScope ?? '');
+  useEffect(() => {
+    if (!agentScope) return;
+    const reset = setTimeout(() => {
+      setShowMention(false);
+      setMentionQuery('');
+      setMentionIndex(0);
+      mentionTextNodeRef.current = null;
+      savedExternalCaretRef.current = null;
+    }, 0);
+    return () => clearTimeout(reset);
+  }, [agentScope, externalCaretScope]);
+
   // @member picker state — mirrors the # drop-picker. Only one picker is open at a time.
   const [showUserMention, setShowUserMention] = useState(false);
   const [userMentionQuery, setUserMentionQuery] = useState('');
@@ -245,10 +293,17 @@ export function useMentionEditor({
   const filteredMentionDrops = useMemo(() => {
     const q = mentionQuery.toLowerCase().trim();
     let list = allDrops.filter((d) => d.id !== excludeDropId && !d.isStaged);
+    if (agentScope) {
+      // These signals intentionally invalidate live-clock eligibility with an unchanged cached array.
+      void agentClockToken;
+      void agentPickToken;
+      if (!showMention || !agentPickerEnabled || agentPickerContext !== externalCaretScope) return [];
+      list = list.filter(drop => isAgentDropEligible(drop, agentScope));
+    }
     if (q) list = list.filter((d) => d.name.toLowerCase().includes(q));
     const MAX_RESULTS = typeof window !== 'undefined' && window.innerWidth < 640 ? 5 : 8;
     return list.slice(0, MAX_RESULTS);
-  }, [allDrops, mentionQuery, excludeDropId]);
+  }, [allDrops, mentionQuery, excludeDropId, agentScope, agentPickerEnabled, agentPickerContext, externalCaretScope, agentClockToken, agentPickToken, showMention]);
 
   // @member picker list — self-excluded (excludeUid). Empty when no member source is wired, which is
   // how the edit box / drop-note editor stay @-free even though they share this hook.
@@ -307,7 +362,7 @@ export function useMentionEditor({
     }
     if (content !== lastSerializedRef.current) {
       if (enableExternalInsertion) savedExternalCaretRef.current = null;
-      editor.innerHTML = renderContentToHtml(content, allDrops, allMembers || [], foundClassName, deletedClassName, memberClassName || '');
+      editor.innerHTML = renderContentToHtml(content, allDrops, allMembers || [], foundClassName, deletedClassName, memberClassName || '', !!agentScope);
       lastSerializedRef.current = content;
       placeCaretAtEnd(editor);
     }
@@ -330,7 +385,7 @@ export function useMentionEditor({
     const editor = editorRef.current;
     if (!editor) return;
     snapshotExternalCaret();
-    const serialized = serializeNode(editor);
+    const serialized = serializeNode(editor, !!agentScope);
     lastSerializedRef.current = serialized;
     setContent(serialized);
 
@@ -342,7 +397,8 @@ export function useMentionEditor({
     if (sel && sel.rangeCount && node && editor.contains(node) && node.nodeType === Node.TEXT_NODE) {
       const textBefore = (node.textContent || '').slice(0, sel.anchorOffset);
       const hashTrigger = detectHashtagTrigger(textBefore);
-      if (hashTrigger && hashTrigger.query.length > 0) {
+      if ((!agentScope || agentPickerEnabled) && hashTrigger && hashTrigger.query.length > 0) {
+        if (agentScope) setAgentPickerContext(externalCaretScope);
         setShowMention(true);
         setMentionQuery(hashTrigger.query);
         mentionTextNodeRef.current = node as Text;
@@ -374,6 +430,44 @@ export function useMentionEditor({
   };
 
   const insertMention = (drop: Drop) => {
+    if (agentScope) {
+      const current = allDrops.find(item => item.id === drop.id);
+      if (!agentPickerEnabled || agentPickerContext !== externalCaretScope || !isAgentDropEligible(current, agentScope)) {
+        setAgentPickToken(value => value + 1);
+        return;
+      }
+      drop = current;
+    }
+    if (agentScope) {
+      const editor = editorRef.current;
+      if (!editor) return;
+      const selection = window.getSelection();
+      const node = mentionTextNodeRef.current;
+      const range = document.createRange();
+      if (node && editor.contains(node) && node.nodeType === Node.TEXT_NODE) {
+        const length = node.textContent?.length ?? 0;
+        const start = Math.min(mentionStartOffsetRef.current, length);
+        const end = selection?.anchorNode === node ? selection.anchorOffset : length;
+        range.setStart(node, start);
+        range.setEnd(node, Math.max(start, Math.min(end, length)));
+      } else if (selection?.rangeCount && rangeIsInsideEditor(selection.getRangeAt(0), editor)) {
+        range.setStart(selection.getRangeAt(0).startContainer, selection.getRangeAt(0).startOffset);
+        range.setEnd(selection.getRangeAt(0).endContainer, selection.getRangeAt(0).endOffset);
+      } else {
+        range.selectNodeContents(editor);
+        range.collapse(false);
+      }
+      const caret = insertUndoableAgentChip(editor, range, createChipElement(drop, foundClassName));
+      if (externalCaretScope) savedExternalCaretRef.current = { range: caret, scope: externalCaretScope };
+      const serialized = serializeNode(editor, true);
+      lastSerializedRef.current = serialized;
+      setContent(serialized);
+      setShowMention(false);
+      setMentionQuery('');
+      setMentionIndex(0);
+      mentionTextNodeRef.current = null;
+      return;
+    }
     if (allDrops.find((item) => item.id === drop.id)?.isStaged || !allDrops.some((item) => item.id === drop.id)) return;
     const editor = editorRef.current;
     if (!editor) return;
@@ -416,7 +510,7 @@ export function useMentionEditor({
     sel?.addRange(newRange);
 
     // Sync state from the mutated DOM (content will equal lastSerialized → no innerHTML rewrite).
-    const serialized = serializeNode(editor);
+    const serialized = serializeNode(editor, !!agentScope);
     lastSerializedRef.current = serialized;
     setContent(serialized);
 
@@ -546,7 +640,75 @@ export function useMentionEditor({
     return 'inserted';
   }, [enableExternalInsertion, externalCaretScope, content, allDrops, foundClassName, setContent]);
 
+  const insertAgentDrop = useCallback((
+    drop: Drop,
+    requestScope: string | null,
+    requestScopeKey: string,
+  ): 'not-ready' | 'inserted' | 'invalid' => {
+    if (!agentScope || !enableExternalInsertion || !externalCaretScope ||
+        requestScopeKey !== externalCaretScope || requestScope !== agentScope.workspaceId) return 'invalid';
+    const editor = editorRef.current;
+    if (!editor || lastSerializedRef.current !== content) return 'not-ready';
+
+    const currentDrop = allDrops.find((item) => item.id === drop.id);
+    if (!isAgentDropEligible(currentDrop, agentScope)) {
+      return 'invalid';
+    }
+
+    const liveSelection = window.getSelection();
+    let insertionRange: Range | null = null;
+    if (liveSelection && liveSelection.rangeCount) {
+      const liveRange = liveSelection.getRangeAt(0);
+      if (rangeIsInsideEditor(liveRange, editor)) {
+        insertionRange = liveRange.cloneRange();
+        if (!insertionRange.collapsed) insertionRange.collapse(false);
+      }
+    }
+    if (!insertionRange) {
+      const saved = savedExternalCaretRef.current;
+      if (saved && saved.scope === requestScopeKey && rangeIsInsideEditor(saved.range, editor)) {
+        insertionRange = saved.range.cloneRange();
+        if (!insertionRange.collapsed) insertionRange.collapse(false);
+      }
+    }
+    if (!insertionRange) {
+      insertionRange = document.createRange();
+      insertionRange.selectNodeContents(editor);
+      insertionRange.collapse(false);
+    }
+
+    editor.focus();
+    const selection = window.getSelection();
+    if (selection) {
+      selection.removeAllRanges();
+      selection.addRange(insertionRange);
+    }
+
+    const caret = insertUndoableAgentChip(editor, insertionRange, createChipElement(currentDrop, foundClassName));
+    savedExternalCaretRef.current = { range: caret, scope: requestScopeKey };
+
+    const serialized = serializeNode(editor, true);
+    lastSerializedRef.current = serialized;
+    setContent(serialized);
+
+    setShowMention(false);
+    setMentionQuery('');
+    setMentionIndex(0);
+    setShowUserMention(false);
+    setUserMentionQuery('');
+    setUserMentionIndex(0);
+    mentionTextNodeRef.current = null;
+    mentionStartOffsetRef.current = 0;
+    return 'inserted';
+  }, [agentScope, enableExternalInsertion, externalCaretScope, content, allDrops, foundClassName, setContent]);
+
   const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (agentScope && e.nativeEvent.isComposing) return;
+    if (agentScope && showMention && e.key === 'Escape') {
+      e.preventDefault();
+      setShowMention(false);
+      return;
+    }
     if (showUserMention && filteredMembers.length > 0) {
       if (e.key === 'ArrowUp') { e.preventDefault(); setUserMentionIndex((p) => Math.max(0, p - 1)); return; }
       if (e.key === 'ArrowDown') { e.preventDefault(); setUserMentionIndex((p) => Math.min(filteredMembers.length - 1, p + 1)); return; }
@@ -580,7 +742,7 @@ export function useMentionEditor({
     editorRef,
     setEditorRef,
     dropdownRef,
-    showMention,
+    showMention: agentPickerOpen,
     mentionQuery,
     mentionIndex,
     setMentionIndex,
@@ -590,6 +752,7 @@ export function useMentionEditor({
     handleBlur,
     insertMention,
     insertExternalDrop,
+    insertAgentDrop,
     snapshotExternalCaret,
     editorMountKey: mountKey,
     focusEditor,

@@ -9,6 +9,17 @@ export const USER_TAG_REGEX = /@\[([^\]]+)\]\(([^)]+)\)/g;
 // (e.g. extractMentionedUids) that only care about one kind.
 const ANY_TAG_REGEX = /(#\[([^\]]+)\]\(([^)]+)\))|(@\[([^\]]+)\]\(([^)]+)\))/g;
 
+const AGENT_TAG_REGEX = /(#\[((?:\\.|[^\]\\])*)\]\(([^)]+)\))|(@\[([^\]]+)\]\(([^)]+)\))/g;
+
+export function serializeAgentDropTag(name: string, dropId: string): string {
+  return `#[${name.replace(/\\/g, '\\\\').replace(/\]/g, '\\]')}](${dropId})`;
+}
+
+export function extractAgentDropRefs(content: string): string[] {
+  return Array.from(new Set(parseMessageContent(content, true)
+    .filter(part => part.dropId !== undefined).map(part => part.dropId!)));
+}
+
 export interface ParsedPart {
   type: 'text' | 'tag';
   value?: string;
@@ -17,18 +28,19 @@ export interface ParsedPart {
   uid?: string;      // @[name](uid) — a @member mention chip
 }
 
-export function parseMessageContent(content: string): ParsedPart[] {
+export function parseMessageContent(content: string, agentLabels = false): ParsedPart[] {
   const parts: ParsedPart[] = [];
   let lastIndex = 0;
   let match: RegExpExecArray | null;
-  ANY_TAG_REGEX.lastIndex = 0;
+  const regex = agentLabels ? AGENT_TAG_REGEX : ANY_TAG_REGEX;
+  regex.lastIndex = 0;
 
-  while ((match = ANY_TAG_REGEX.exec(content)) !== null) {
+  while ((match = regex.exec(content)) !== null) {
     if (match.index > lastIndex) {
       parts.push({ type: 'text', value: content.slice(lastIndex, match.index) });
     }
     if (match[2] !== undefined) {
-      parts.push({ type: 'tag', name: match[2], dropId: match[3] });
+      parts.push({ type: 'tag', name: agentLabels ? match[2].replace(/\\([\\\]])/g, '$1') : match[2], dropId: match[3] });
     } else {
       parts.push({ type: 'tag', name: match[5], uid: match[6] });
     }

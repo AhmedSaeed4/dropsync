@@ -1,5 +1,7 @@
 'use client';
 
+import { isAgentDropEligible } from '@/lib/agentDropEligibility';
+import { useAgentExpiryClock } from '@/hooks/useAgentExpiryClock';
 import { Drop } from '@/types';
 import { formatFileSize, getTimeRemaining, decryptDrop, getYouTubeVideoId } from '@/lib/drops';
 import { primeDecryptedPreview, prebuildVideoUrl } from '@/lib/previewPrime';
@@ -29,6 +31,7 @@ interface DropItemProps {
   onUnpin?: (drop: Drop) => void;
   activeWorkspaceId?: string | null;
   onSendToChat?: (drop: Drop) => void;
+  onSendToAgent?: (drop: Drop) => void;
   // Current space's drops — used to resolve #[Name](id) mention chips inline.
   allDrops?: Drop[];
   // Creator/workspace owner — may still delete a locked drop. Non-creators see a faded gate.
@@ -66,7 +69,7 @@ function getFileContent(drop: Drop): string {
   return '';
 }
 
-export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect, selectionMode, theme = 'light', currentUserId, onPin, onUnpin, activeWorkspaceId, onSendToChat, allDrops = [], canMutate = false, reminderGlow = false, onJoinCall, members = [], isReopenCallId, hoverable = false }: DropItemProps) {
+export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect, selectionMode, theme = 'light', currentUserId, onPin, onUnpin, activeWorkspaceId, onSendToChat, onSendToAgent, allDrops = [], canMutate = false, reminderGlow = false, onJoinCall, members = [], isReopenCallId, hoverable = false }: DropItemProps) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [copied, setCopied] = useState(false);
   const [decryptedContent, setDecryptedContent] = useState<string>('');
@@ -80,6 +83,23 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
   const isMinimal = theme === 'minimal';
 
   const { menuState, closeMenu, contextMenuProps } = useContextMenu();
+  const agentScope = { workspaceId: activeWorkspaceId ?? null, userId: currentUserId, ready: !!onSendToAgent };
+  const agentEntryAvailable = isAgentDropEligible(drop, agentScope);
+  useAgentExpiryClock(!!menuState && !!onSendToAgent, drop.expiresAt?.getTime() ?? null,
+    JSON.stringify([currentUserId, activeWorkspaceId]),
+    drop.locked && !canMutate ? closeMenu : undefined);
+
+  const hadAgentMenuRef = useRef(false);
+  useEffect(() => {
+    if (!menuState) { hadAgentMenuRef.current = false; return; }
+    const lostOnlyEntry = hadAgentMenuRef.current && drop.locked && !canMutate && !agentEntryAvailable;
+    hadAgentMenuRef.current = agentEntryAvailable;
+    if (lostOnlyEntry) {
+      const close = setTimeout(closeMenu, 0);
+      return () => clearTimeout(close);
+    }
+  }, [menuState, drop.locked, canMutate, agentEntryAvailable, closeMenu]);
+
   // Win B hover pre-stage (desktop): a settled mouse on a video card pre-builds its blob
   // URL so the click finds it staged. Sweeping past never triggers (100 ms settle).
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -616,7 +636,7 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
       )}
 
       {/* Context menu */}
-      {menuState && !drop.isStaged && !(drop.locked && !canMutate) && (
+      {menuState && !drop.isStaged && (!(drop.locked && !canMutate) || agentEntryAvailable) && (
         <DropContextMenu
           drop={drop}
           x={menuState.x}
@@ -626,6 +646,9 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
           onUnpin={() => onUnpin?.(drop)}
           onClose={closeMenu}
           onSendToChat={activeWorkspaceId != null && drop.workspaceId === activeWorkspaceId ? onSendToChat : undefined}
+          onSendToAgent={agentEntryAvailable ? (selectedDrop) => {
+            if (isAgentDropEligible(selectedDrop, agentScope)) onSendToAgent?.(selectedDrop);
+          } : undefined}
           theme={theme}
           locked={!!drop.locked}
           canMutate={canMutate}
@@ -634,7 +657,7 @@ export function DropItem({ drop, onDelete, onPreview, onEdit, selected, onSelect
 
       {/* Locked hint: when the menu is suppressed (locked drop, non-creator), show a brief
           auto-dismissing hint at the gesture point instead of a silent dead-end. */}
-      {menuState && !drop.isStaged && drop.locked && !canMutate && (
+      {menuState && !drop.isStaged && drop.locked && !canMutate && !agentEntryAvailable && (
         <LockedHintTooltip x={menuState.x} y={menuState.y} onClose={closeMenu} />
       )}
     </div>

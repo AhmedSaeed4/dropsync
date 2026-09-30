@@ -26,7 +26,8 @@ import { lockScroll, unlockScroll, retractFooterIfUp, retractFooterImmediately }
 import { useDissolve } from '@/hooks/useDissolve';
 import { useMagnet } from '@/hooks/useMagnet';
 import { useIsWide } from '@/hooks/useIsWide';
-import { ChatDropRequest, Drop, Workspace, ExpirationOption } from '@/types';
+import { isAgentDropEligible } from '@/lib/agentDropEligibility';
+import { AgentDropRequest, ChatDropRequest, Drop, Workspace, ExpirationOption } from '@/types';
 import { initializeUserKeys, hasUserKeys, getUserKeys, ensurePublicKeyPublished } from '@/lib/keys';
 import { ensureProfilePublished } from '@/lib/profiles';
 import { decryptDrop, updateTextDrop, updateDropMetadata, moveDrop, getExpirationDate } from '@/lib/drops';
@@ -362,6 +363,18 @@ export default function Home() {
   const [chatMode, setChatMode] = useState<'ai' | 'group'>('ai');
   const [pendingChatDropQueue, setPendingChatDropQueue] = useState<ChatDropRequest[]>([]);
   const nextChatDropRequestIdRef = useRef(0);
+  const [pendingAgentDropQueue, setPendingAgentDropQueue] = useState<AgentDropRequest[]>([]);
+  const nextAgentDropRequestIdRef = useRef(0);
+  useEffect(() => {
+    const clearStale = setTimeout(() => setPendingAgentDropQueue(queue => {
+      const matching = queue.filter(request => showChat && chatMode === 'ai' &&
+        request.userId === user?.uid && request.workspaceId === currentWorkspaceId &&
+        request.panelKey === layoutMode);
+      return matching.length === queue.length ? queue : matching;
+    }), 0);
+    return () => clearTimeout(clearStale);
+  }, [showChat, chatMode, user?.uid, currentWorkspaceId, layoutMode]);
+
   const [unreadCount, setUnreadCount] = useState(0);
   const unreadUnsubRef = useRef<(() => void) | null>(null);
   const prevShowChatRef = useRef(showChat);
@@ -1450,6 +1463,27 @@ export default function Home() {
     setChatMode('group');
     setShowChat(true);
   }, [user?.uid, currentWorkspaceId, currentWorkspace, drops]);
+
+  const handleSendDropToAgent = useCallback((selectedDrop: Drop) => {
+    const drop = drops.find(item => item.id === selectedDrop.id);
+    const scope = {
+      userId: user?.uid, workspaceId: currentWorkspaceId,
+      ready: !dropsLoading && (currentWorkspaceId === null ||
+        (currentWorkspace?.id === currentWorkspaceId && currentWorkspace.deleting !== true)),
+    };
+    if (!isAgentDropEligible(drop, scope) || !user?.uid) return;
+    const requestId = ++nextAgentDropRequestIdRef.current;
+    setPendingAgentDropQueue(queue => [...queue, {
+      requestId, dropId: drop.id, workspaceId: currentWorkspaceId,
+      userId: user.uid, panelKey: layoutMode,
+    }]);
+    setChatMode('ai');
+    setShowChat(true);
+  }, [drops, dropsLoading, user?.uid, currentWorkspaceId, currentWorkspace, layoutMode]);
+
+  const handleAgentDropHandled = useCallback((requestId: number) => {
+    setPendingAgentDropQueue(queue => queue.filter(request => request.requestId !== requestId));
+  }, []);
 
   const handleChatDropHandled = useCallback((requestId: number) => {
     setPendingChatDropQueue((queue) => queue.filter((request) => request.requestId !== requestId));
@@ -2809,6 +2843,10 @@ export default function Home() {
     showChat, setShowChat,
     chatMode, setChatMode,
     pendingChatDropRequest: activeChatDropRequest,
+    pendingAgentDropRequest: pendingAgentDropQueue.find(request =>
+      request.workspaceId === currentWorkspaceId && request.userId === user?.uid && request.panelKey === layoutMode),
+    onSendDropToAgent: handleSendDropToAgent,
+    onAgentDropHandled: handleAgentDropHandled,
     onSendDropToChat: handleSendDropToChat,
     onChatDropHandled: handleChatDropHandled,
     unreadCount,

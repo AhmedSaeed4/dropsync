@@ -84,13 +84,13 @@ export function subscribeToMessages(
 ): () => void {
   const q = query(
     collection(db, CHATS_COLLECTION, userId, 'conversations', convId, 'messages'),
-    orderBy('createdAt', 'asc'),
+    orderBy('createdAt', 'desc'),
     limit(maxMessages),
   );
 
   return onSnapshot(q, (snapshot) => {
     const messages: ChatMessage[] = [];
-    snapshot.forEach((document) => {
+    [...snapshot.docs].reverse().forEach((document) => {
       const data = document.data();
       messages.push({
         id: document.id,

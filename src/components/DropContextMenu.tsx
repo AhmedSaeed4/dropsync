@@ -14,6 +14,7 @@ interface DropContextMenuProps {
   onUnpin: () => void;
   onClose: () => void;
   onSendToChat?: (drop: Drop) => void;
+  onSendToAgent?: (drop: Drop) => void;
   theme?: 'light' | 'dark' | 'minimal';
   editorial?: boolean;
   // When the drop is locked and the current user can't mutate it, the rules block pin/unpin —
@@ -26,7 +27,7 @@ interface DropContextMenuProps {
   isCall?: boolean;
 }
 
-export function DropContextMenu({ drop, x, y, isPinned, onPin, onUnpin, onClose, onSendToChat, theme = 'light', editorial, locked = false, canMutate = false, isCall = false }: DropContextMenuProps) {
+export function DropContextMenu({ drop, x, y, isPinned, onPin, onUnpin, onClose, onSendToChat, onSendToAgent, theme = 'light', editorial, locked = false, canMutate = false, isCall = false }: DropContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   // Pin/unpin is a mutation the Firestore rules reject for a non-creator on a locked drop, and call
   // drops can't be pinned at all (always-top; rules block it).
@@ -69,6 +70,13 @@ export function DropContextMenu({ drop, x, y, isPinned, onPin, onUnpin, onClose,
     e.stopPropagation();
     e.preventDefault();
     onSendToChat?.(drop);
+    onClose();
+  };
+
+  const handleSendToAgent = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    onSendToAgent?.(drop);
     onClose();
   };
 
@@ -116,6 +124,15 @@ export function DropContextMenu({ drop, x, y, isPinned, onPin, onUnpin, onClose,
               className={"w-full px-3 py-2 text-left text-xs " + tc.fontClass + " " + tc.text + " hover:bg-[#1a1a1a]/5 transition-colors flex items-center gap-2"}
             >
               Send to chat
+            </button>
+          )}
+          {onSendToAgent && (
+            <button
+              type="button"
+              onClick={handleSendToAgent}
+              className={"w-full px-3 py-2 text-left text-xs " + tc.fontClass + " " + tc.text + " hover:bg-[#1a1a1a]/5 transition-colors flex items-center gap-2"}
+            >
+              Send to agent
             </button>
           )}
         </div>
@@ -172,6 +189,21 @@ export function DropContextMenu({ drop, x, y, isPinned, onPin, onUnpin, onClose,
             )}
           >
             {isMinimal ? 'Send to chat' : 'SEND_TO_CHAT'}
+          </button>
+        )}
+        {onSendToAgent && (
+          <button
+            type="button"
+            onClick={handleSendToAgent}
+            className={"w-full px-3 py-2 text-left flex items-center gap-2 transition-colors " + (
+              isMinimal
+                ? 'text-xs font-sans tracking-wide text-[#1A1A1A] hover:bg-[#1A1A1A]/10'
+                : isDark
+                  ? 'text-[10px] font-mono uppercase tracking-wider text-white hover:bg-white/10'
+                  : 'text-[10px] font-mono uppercase tracking-wider text-[#1A1A1A] hover:bg-[#1A1A1A]/10'
+            )}
+          >
+            {isMinimal ? 'Send to agent' : 'SEND_TO_AGENT'}
           </button>
         )}
       </div>

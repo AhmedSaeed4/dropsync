@@ -1,7 +1,7 @@
 'use client';
 
 import { memo, useRef, useState, useEffect } from 'react';
-import { ChatDropRequest, Drop, Workspace, ExpirationOption } from '@/types';
+import { AgentDropRequest, ChatDropRequest, Drop, Workspace, ExpirationOption } from '@/types';
 import { EditorialPreviewModal } from './EditorialPreviewModal';
 import { EditorialCreateWorkspaceModal } from './EditorialCreateWorkspaceModal';
 import { EditorialJoinWorkspaceModal } from './EditorialJoinWorkspaceModal';
@@ -74,6 +74,9 @@ interface EditorialLayoutProps {
   showChat: boolean;
   setShowChat: (v: boolean) => void;
   pendingChatDropRequest?: ChatDropRequest;
+  pendingAgentDropRequest?: AgentDropRequest;
+  onSendDropToAgent?: (drop: Drop) => void;
+  onAgentDropHandled?: (requestId: number) => void;
   onSendDropToChat?: (drop: Drop) => void;
   onChatDropHandled?: (requestId: number) => void;
   onToggleChat?: () => void;
@@ -188,6 +191,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
     user, layoutMode, setLayoutMode, quickJumpExternalBlocked,
     showChat, setShowChat,
     pendingChatDropRequest, onSendDropToChat, onChatDropHandled,
+    pendingAgentDropRequest, onSendDropToAgent, onAgentDropHandled,
     onToggleChat,
     chatMode = 'ai', setChatMode,
     unreadCount = 0,
@@ -615,6 +619,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
               currentWorkspace={currentWorkspace}
               activeWorkspaceId={currentWorkspaceId}
               onSendToChat={hoverable ? onSendDropToChat : undefined}
+              onSendToAgent={hoverable && !dropsLoading && (currentWorkspaceId === null || (currentWorkspace?.id === currentWorkspaceId && currentWorkspace.deleting !== true)) ? onSendDropToAgent : undefined}
               workspaceMembers={resolvedWorkspaceMembers}
               allDrops={drops}
               onJoinCall={onJoinCall}
@@ -648,7 +653,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
               drops={drops}
               ownerId={currentWorkspace?.ownerId ?? null}
               presence={presenceMap}
-              pendingChatDropRequest={hoverable ? pendingChatDropRequest : undefined}
+              pendingChatDropRequest={hoverable ? pendingChatDropRequest : undefined} agentCapability={hoverable} agentScopeReady={!dropsLoading && (currentWorkspaceId === null || (currentWorkspace?.id === currentWorkspaceId && currentWorkspace.deleting !== true))} pendingAgentDropRequest={hoverable ? pendingAgentDropRequest : undefined} onAgentDropHandled={hoverable ? onAgentDropHandled : undefined}
               onChatDropHandled={hoverable ? onChatDropHandled : undefined}
             />
           )}

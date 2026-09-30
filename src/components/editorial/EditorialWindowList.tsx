@@ -105,7 +105,7 @@ export const EditorialWindowList = memo(function EditorialWindowList({
   currentUserId,
   currentWorkspace,
   activeWorkspaceId,
-  onSendToChat,
+  onSendToChat, onSendToAgent,
   onDelete,
   onPin,
   onPreview,
@@ -132,6 +132,7 @@ export const EditorialWindowList = memo(function EditorialWindowList({
   currentWorkspace?: Workspace | null;
   activeWorkspaceId?: string | null;
   onSendToChat?: (drop: Drop) => void;
+  onSendToAgent?: (drop: Drop) => void;
   onDelete: (drop: Drop) => void;
   onPin: (drop: Drop) => Promise<void> | void;
   onPreview: (drop: Drop) => void;
@@ -214,7 +215,7 @@ export const EditorialWindowList = memo(function EditorialWindowList({
       theme,
        currentUserId,
       activeWorkspaceId,
-      onSendToChat,
+      onSendToChat, onSendToAgent,
       reminderGlow: isReminderGlowingForViewer(drop, currentUserId ?? null, now),
       canMutate: !!currentUserId && (currentUserId === drop.userId || (!!currentWorkspace && currentUserId === currentWorkspace.ownerId)),
       onPin,
