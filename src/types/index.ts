@@ -120,6 +120,14 @@ export interface ChatDropRequest {
   userId: string;
 }
 
+export interface AgentDropRequest {
+  requestId: number;
+  workspaceId: string | null;
+  dropId: string;
+  userId: string;
+  panelKey: string;
+}
+
 export interface Category {
   id: string;
   name: string;

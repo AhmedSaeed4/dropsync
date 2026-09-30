@@ -21,7 +21,7 @@ import {
   ChatMessage,
 } from '@/lib/chat';
 import { subscribeToGroupMessages, sendGroupMessage, editGroupMessage, deleteGroupMessage, clearGroupChat, getSeenBy } from '@/lib/groupChat';
-import { parseMessageContent } from '@/lib/dropTagUtils';
+import { parseMessageContent, extractAgentDropRefs } from '@/lib/dropTagUtils';
 import { assertDropWritableById, assertWorkspaceWritableById } from '@/lib/archiveJournalVisibility';
 import { streamAgentChat, AgentStoppedError, AgentRateLimitError, AgentTransientError } from '@/lib/agentActivity';
 import { useSmoothStream } from '@/hooks/useSmoothStream';
@@ -29,10 +29,10 @@ import { useInPanelMarkRead } from '@/hooks/useInPanelMarkRead';
 import { useMentionEditor } from '@/hooks/useMentionEditor';
 import { useVoiceTranscribe } from '@/hooks/useVoiceTranscribe';
 import { Toast } from '../Toast';
-import { ChatDropRequest, Drop, GroupChatMessage } from '@/types';
+import { AgentDropRequest, ChatDropRequest, Drop, GroupChatMessage } from '@/types';
 import { getEditorialThemeColors } from './editorialTheme';
 import { EditorialDropPickerRow } from './EditorialDropPickerRow';
-import { DropMentionContent, LinkedText } from '../DropMentionContent';
+import { DropMentionContent } from '../DropMentionContent';
 
 // Coral-signature treatment for markdown links in AI assistant text (Round 11): opens in
 // a new tab and matches every other app link instead of the browser-default blue.
@@ -55,6 +55,10 @@ interface EditorialChatPanelProps {
   ownerId?: string | null;
   presence?: PresenceMap;
   pendingChatDropRequest?: ChatDropRequest;
+  pendingAgentDropRequest?: AgentDropRequest;
+  onAgentDropHandled?: (requestId: number) => void;
+  agentCapability?: boolean;
+  agentScopeReady?: boolean;
   onChatDropHandled?: (requestId: number) => void;
 }
 
@@ -62,7 +66,7 @@ const AGENT_URL = process.env.NEXT_PUBLIC_AGENT_URL || 'http://localhost:8000';
 
 const WELCOME = 'Hi! I can help you manage your drops. Ask me to list drops, search content, check storage stats, or manage workspaces.';
 
-export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspaceMembers, chatMode: chatModeProp, onChatModeChange, drops, ownerId, presence, pendingChatDropRequest, onChatDropHandled }: EditorialChatPanelProps) {
+export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspaceMembers, chatMode: chatModeProp, onChatModeChange, drops, ownerId, presence, pendingChatDropRequest, onChatDropHandled, pendingAgentDropRequest, onAgentDropHandled, agentCapability = false, agentScopeReady = false }: EditorialChatPanelProps) {
   const tc = getEditorialThemeColors(theme);
 
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -148,6 +152,62 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   const displayDeletedClass = `${displayChipBase} ${tc.inactivePillBg} ${tc.muted} line-through cursor-not-allowed opacity-60`;
   // Displayed @member chip — blue, non-interactive (translucent so it reads on either bubble color).
   const displayUserClass = `${displayChipBase} bg-[#2563eb]/15 text-[#2563eb]`;
+  const agentDrops = useMemo(() => drops ?? [], [drops]);
+  const agentScope = useMemo(() => ({
+    workspaceId: workspaceId ?? null, userId, ready: agentScopeReady,
+  }), [workspaceId, userId, agentScopeReady]);
+  const agentContextKey = JSON.stringify([userId ?? null, workspaceId ?? null, activeConvId]);
+  const agentCaretKey = JSON.stringify([agentContextKey, chatMode, agentCapability]);
+  const aiMention = useMentionEditor({
+    content: input, setContent: setInput, allDrops: agentDrops,
+    foundClassName: mentionFoundClass, deletedClassName: mentionDeletedClass,
+    enableExternalInsertion: agentCapability,
+    externalCaretScope: agentCaretKey,
+    agentScope: agentCapability ? agentScope : undefined,
+    agentPickerEnabled: agentCapability,
+  });
+  const { insertAgentDrop, editorMountKey: agentEditorMountKey } = aiMention;
+  const handledAgentDropIdsRef = useRef(new Set<number>());
+  const pendingAgentContextRef = useRef<{ requestId: number; context: string } | null>(null);
+  const agentDraftContextRef = useRef(agentContextKey);
+  useEffect(() => {
+    if (agentDraftContextRef.current === agentContextKey) return;
+    if (!extractAgentDropRefs(input).length) {
+      agentDraftContextRef.current = agentContextKey;
+      return;
+    }
+    const clear = setTimeout(() => {
+      agentDraftContextRef.current = agentContextKey;
+      setInput('');
+    }, 0);
+    return () => clearTimeout(clear);
+  }, [agentContextKey, input]);
+  useEffect(() => {
+    const request = pendingAgentDropRequest;
+    if (!request || !onAgentDropHandled || handledAgentDropIdsRef.current.has(request.requestId)) return;
+    const acknowledge = () => {
+      handledAgentDropIdsRef.current.add(request.requestId);
+      onAgentDropHandled(request.requestId);
+    };
+    const previous = pendingAgentContextRef.current;
+    if (previous?.requestId === request.requestId && previous.context !== agentContextKey) {
+      acknowledge();
+      return;
+    }
+    pendingAgentContextRef.current = { requestId: request.requestId, context: agentContextKey };
+    if (!agentCapability || chatMode !== 'ai' || request.userId !== userId ||
+        request.workspaceId !== (workspaceId ?? null)) {
+      acknowledge();
+      return;
+    }
+    const drop = agentDrops.find(item => item.id === request.dropId);
+    if (!drop) { acknowledge(); return; }
+    const result = extractAgentDropRefs(input).length && agentDraftContextRef.current !== agentContextKey
+      ? 'not-ready' : insertAgentDrop(drop, request.workspaceId, agentCaretKey);
+    if (result !== 'not-ready') acknowledge();
+  }, [pendingAgentDropRequest, onAgentDropHandled, agentCapability, chatMode, userId, workspaceId,
+    agentDrops, agentContextKey, agentCaretKey, insertAgentDrop, agentEditorMountKey, input]);
+
   const groupMention = useMentionEditor({
     content: groupInput,
     setContent: setGroupInput,
@@ -484,11 +544,12 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
 
   // Auto-resize AI textarea (the AI branch's <textarea ref={aiTextareaRef}>)
   useEffect(() => {
-    if (aiTextareaRef.current) {
-      aiTextareaRef.current.style.height = 'auto';
-      aiTextareaRef.current.style.height = Math.min(aiTextareaRef.current.scrollHeight, 120) + 'px';
+    const editor = agentCapability ? aiMention.editorRef.current : aiTextareaRef.current;
+    if (editor) {
+      editor.style.height = 'auto';
+      editor.style.height = Math.min(editor.scrollHeight, 120) + 'px';
     }
-  }, [input]);
+  }, [input, agentCapability, aiMention.editorMountKey, aiMention.editorRef]);
 
   // Auto-grow the group contentEditable — same 120px cap the AI textarea uses. The emerge wrapper
   // already hosted a self-growing textarea, so this is the SAME behavior, not a new one.
@@ -558,6 +619,8 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   const handleSend = async () => {
     const text = input.trim();
     if (!text || loading || !userId) return;
+    const dropRefs = agentCapability ? extractAgentDropRefs(text) : [];
+    if (dropRefs.length && agentDraftContextRef.current !== agentContextKey) return;
 
     const requestEpoch = ++aiReplyEpochRef.current;
     const controller = new AbortController();
@@ -591,6 +654,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
         url: AGENT_URL,
         token: idToken,
         message: text,
+        ...(dropRefs.length ? { drop_refs: dropRefs } : {}),
         history: messages.map((m) => ({ role: m.role, content: m.content })),
         signal: controller.signal,
         onActivity: (label) => {
@@ -687,7 +751,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
       if (aiAbortRef.current === controller) aiAbortRef.current = null;
       setLoading(false);
       setActivity(null);
-      requestAnimationFrame(() => aiTextareaRef.current?.focus());
+      requestAnimationFrame(() => (agentCapability ? aiMention.editorRef.current : aiTextareaRef.current)?.focus());
     }
   };
 
@@ -1175,7 +1239,9 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
                     <ReactMarkdown remarkPlugins={[remarkBreaks]} components={{ a: markdownLink }}>{msg.content}</ReactMarkdown>
                   </div>
                 ) : (
-                  <div className={`whitespace-pre-wrap break-words ${tc.fontClass}`}><LinkedText text={msg.content} /></div>
+                  <div className={`whitespace-pre-wrap break-words ${tc.fontClass}`}><DropMentionContent content={msg.content} agentLabels allDrops={agentDrops}
+                    onPreview={drop => onPreviewDrop?.(drop.id, drop.workspaceId)}
+                    foundClassName={displayFoundClass} deletedClassName={displayDeletedClass} /></div>
                 )}
               </div>
             </div>
@@ -1637,6 +1703,43 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
               />
             </div>
           ) : (
+            (agentCapability ? (
+            <div className="relative flex-1">
+              {aiMention.showMention && aiMention.filteredMentionDrops.length > 0 && (
+                <div
+                  ref={aiMention.dropdownRef}
+                  className={`absolute bottom-full left-0 right-0 mb-1 z-50 max-h-[240px] overflow-y-auto rounded-md border ${tc.border} ${tc.bg} shadow-lg`}
+                  style={{ touchAction: 'pan-y' }}
+                >
+                  {aiMention.filteredMentionDrops.map((drop, idx) => (
+                    <EditorialDropPickerRow
+                      key={drop.id}
+                      drop={drop}
+                      selected={idx === aiMention.mentionIndex}
+                      attached={false}
+                        agentMetadataOnly
+                      onSelect={aiMention.insertMention}
+                      theme={theme}
+                    />
+                  ))}
+                </div>
+              )}
+              {!input && <span className="pointer-events-none absolute left-4 top-3 opacity-30">Type a message...</span>}
+              <div ref={aiMention.setEditorRef} contentEditable suppressContentEditableWarning
+                role="textbox" aria-label="Agent message" aria-multiline="true"
+                onInput={aiMention.handleInput} onBlur={aiMention.handleBlur}
+                onKeyDown={event => {
+                  aiMention.handleKeyDown(event);
+                  if (!event.defaultPrevented && !event.nativeEvent.isComposing &&
+                      event.key === 'Enter' && !event.shiftKey) {
+                    event.preventDefault();
+                    handleSend();
+                  }
+                }}
+                className={`w-full px-4 py-3 text-[14px] ${tc.fontClass} ${tc.bg} ${tc.text} border ${tc.border} rounded-lg focus:outline-none focus:border-[#1a1a1a] whitespace-pre-wrap break-words min-h-[46px] max-h-[120px] overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]`}
+                style={{ maxHeight: '120px', touchAction: 'none' }} />
+            </div>
+            ) : (
             <textarea
               ref={aiTextareaRef}
               value={input}
@@ -1647,6 +1750,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
               className={`flex-1 px-4 py-3 text-[14px] ${tc.fontClass} ${tc.bg} ${tc.text} border ${tc.border} rounded-lg resize-none focus:outline-none focus:border-[#1a1a1a] disabled:opacity-50 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] ${theme === 'dark' ? 'placeholder:text-white/30' : 'placeholder:text-[#1A1A1A]/30'}`}
               style={{ maxHeight: '120px', touchAction: 'none' }}
             />
+            ))
           )}
           <button
             type="button"

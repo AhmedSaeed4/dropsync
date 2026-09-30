@@ -1,5 +1,7 @@
 'use client';
 
+import { isAgentDropEligible } from '@/lib/agentDropEligibility';
+import { useAgentExpiryClock } from '@/hooks/useAgentExpiryClock';
 import { Drop } from '@/types';
 import { formatFileSize, getTimeRemaining, decryptDrop, getYouTubeVideoId } from '@/lib/drops';
 import { primeDecryptedPreview, prebuildVideoUrl } from '@/lib/previewPrime';
@@ -32,6 +34,7 @@ interface EditorialDropItemProps {
   onUnpin?: (drop: Drop) => void;
   activeWorkspaceId?: string | null;
   onSendToChat?: (drop: Drop) => void;
+  onSendToAgent?: (drop: Drop) => void;
   showMoveControls?: boolean;
   canMoveUp?: boolean;
   canMoveDown?: boolean;
@@ -181,7 +184,7 @@ export const EditorialDropItem = memo(function EditorialDropItem({
   onPin,
   onUnpin,
   activeWorkspaceId,
-  onSendToChat,
+  onSendToChat, onSendToAgent,
   showMoveControls,
   canMoveUp,
   canMoveDown,
@@ -237,6 +240,23 @@ export const EditorialDropItem = memo(function EditorialDropItem({
   const mentionDeletedClass = `${chipBase} ${tc.inactivePillBg} ${tc.muted} line-through cursor-not-allowed`;
 
   const { menuState, closeMenu, contextMenuProps } = useContextMenu();
+  const agentScope = { workspaceId: activeWorkspaceId ?? null, userId: currentUserId, ready: !!onSendToAgent };
+  const agentEntryAvailable = isAgentDropEligible(drop, agentScope);
+  useAgentExpiryClock(!!menuState && !!onSendToAgent, drop.expiresAt?.getTime() ?? null,
+    JSON.stringify([currentUserId, activeWorkspaceId]),
+    drop.locked && !canMutate ? closeMenu : undefined);
+
+  const hadAgentMenuRef = useRef(false);
+  useEffect(() => {
+    if (!menuState) { hadAgentMenuRef.current = false; return; }
+    const lostOnlyEntry = hadAgentMenuRef.current && drop.locked && !canMutate && !agentEntryAvailable;
+    hadAgentMenuRef.current = agentEntryAvailable;
+    if (lostOnlyEntry) {
+      const close = setTimeout(closeMenu, 0);
+      return () => clearTimeout(close);
+    }
+  }, [menuState, drop.locked, canMutate, agentEntryAvailable, closeMenu]);
+
 
   const isImage = drop.mimeType?.startsWith('image/');
   const isVideo = drop.mimeType?.startsWith('video/');
@@ -867,7 +887,7 @@ export const EditorialDropItem = memo(function EditorialDropItem({
       )}
 
       {/* Context menu */}
-      {menuState && !drop.isStaged && !(drop.locked && !canMutate) && (
+      {menuState && !drop.isStaged && (!(drop.locked && !canMutate) || agentEntryAvailable) && (
         <DropContextMenu
           drop={drop}
           x={menuState.x}
@@ -877,6 +897,9 @@ export const EditorialDropItem = memo(function EditorialDropItem({
           onUnpin={() => onUnpin?.(drop)}
           onClose={closeMenu}
           onSendToChat={activeWorkspaceId != null && drop.workspaceId === activeWorkspaceId ? onSendToChat : undefined}
+          onSendToAgent={agentEntryAvailable ? (selectedDrop) => {
+            if (isAgentDropEligible(selectedDrop, agentScope)) onSendToAgent?.(selectedDrop);
+          } : undefined}
           theme={theme}
           editorial
           locked={!!drop.locked}
@@ -886,7 +909,7 @@ export const EditorialDropItem = memo(function EditorialDropItem({
 
       {/* Locked hint: when the menu is suppressed (locked drop, non-creator), show a brief
           auto-dismissing hint at the gesture point instead of a silent dead-end. */}
-      {menuState && !drop.isStaged && drop.locked && !canMutate && (
+      {menuState && !drop.isStaged && drop.locked && !canMutate && !agentEntryAvailable && (
         <LockedHintTooltip x={menuState.x} y={menuState.y} onClose={closeMenu} />
       )}
     </div>

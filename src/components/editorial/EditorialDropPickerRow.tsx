@@ -10,11 +10,12 @@ interface EditorialDropPickerRowProps {
   drop: Drop;
   selected: boolean;
   attached: boolean;
+  agentMetadataOnly?: boolean;
   onSelect: (drop: Drop) => void;
   theme: 'light' | 'dark' | 'minimal';
 }
 
-export function EditorialDropPickerRow({ drop, selected, attached, onSelect, theme }: EditorialDropPickerRowProps) {
+export function EditorialDropPickerRow({ drop, selected, attached, onSelect, theme, agentMetadataOnly = false }: EditorialDropPickerRowProps) {
   const tc = getEditorialThemeColors(theme);
 
   const [decryptedContent, setDecryptedContent] = useState<string>('');
@@ -28,6 +29,7 @@ export function EditorialDropPickerRow({ drop, selected, attached, onSelect, the
 
   // Decrypt content if encrypted — mirrors EditorialDropItem.tsx pattern
   useEffect(() => {
+    if (agentMetadataOnly) return;
     let cancelled = false;
     async function decrypt() {
       const currentUserId = auth.currentUser?.uid;
@@ -64,17 +66,17 @@ export function EditorialDropPickerRow({ drop, selected, attached, onSelect, the
     }
     decrypt();
     return () => { cancelled = true; };
-  }, [drop]);
+  }, [drop, agentMetadataOnly]);
 
   // Display variables — mirrors EditorialDropItem.tsx
-  const displayContent = drop.encrypted
+  const displayContent = agentMetadataOnly ? '' : drop.encrypted
     ? (decryptError ? '' : decryptedContent)
     : (drop.content || '');
-  const displayFileData = drop.encrypted ? decryptedFileData : (drop.fileData || '');
-  const displayImageData = decryptedImageData;
+  const displayFileData = agentMetadataOnly ? '' : drop.encrypted ? decryptedFileData : (drop.fileData || '');
+  const displayImageData = agentMetadataOnly ? '' : decryptedImageData;
 
   // YouTube thumbnail detection
-  const youtubeVideoId = drop.type === 'text' ? getYouTubeVideoId(displayContent) : null;
+  const youtubeVideoId = !agentMetadataOnly && drop.type === 'text' ? getYouTubeVideoId(displayContent) : null;
 
   return (
     <button
@@ -124,7 +126,7 @@ export function EditorialDropPickerRow({ drop, selected, attached, onSelect, the
           {drop.type === 'file' && drop.fileSize && (
             <span>{formatFileSize(drop.fileSize).toLowerCase()}</span>
           )}
-          {drop.type === 'text' && (
+          {!agentMetadataOnly && drop.type === 'text' && (
             <span>{`${displayContent.length} chars`}</span>
           )}
           {drop.creatorName && (
@@ -146,7 +148,7 @@ export function EditorialDropPickerRow({ drop, selected, attached, onSelect, the
           </div>
         )}
         {/* Encrypted + not yet decrypted */}
-        {drop.type === 'text' && !displayContent && drop.encrypted && !decryptError && (
+        {!agentMetadataOnly && drop.type === 'text' && !displayContent && drop.encrypted && !decryptError && (
           <div className={`mt-0.5 text-xs ${tc.fontClass} ${selected ? tc.activePillText : tc.muted}`}>
             {'…'}
           </div>

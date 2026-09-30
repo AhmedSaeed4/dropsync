@@ -38,6 +38,7 @@ interface EditorialDropListProps {
   currentWorkspace?: Workspace | null;
   activeWorkspaceId?: string | null;
   onSendToChat?: (drop: Drop) => void;
+  onSendToAgent?: (drop: Drop) => void;
   workspaceMembers?: MemberInfo[];
   // Current space's drops — forwarded to EditorialDropItem for inline mention chips.
   allDrops?: Drop[];
@@ -203,7 +204,7 @@ const AnimatedDropList = memo(function AnimatedDropList({
   currentUserId,
   currentWorkspace,
   activeWorkspaceId,
-  onSendToChat,
+  onSendToChat, onSendToAgent,
   onDelete,
   onPin,
   onPreview,
@@ -227,6 +228,7 @@ const AnimatedDropList = memo(function AnimatedDropList({
   currentWorkspace?: Workspace | null;
   activeWorkspaceId?: string | null;
   onSendToChat?: (drop: Drop) => void;
+  onSendToAgent?: (drop: Drop) => void;
   onDelete: (drop: Drop) => void;
   onPin: (drop: Drop) => Promise<void> | void;
   onPreview: (drop: Drop) => void;
@@ -265,6 +267,7 @@ const AnimatedDropList = memo(function AnimatedDropList({
               onUnpin={onPin}
               activeWorkspaceId={activeWorkspaceId}
               onSendToChat={onSendToChat}
+              onSendToAgent={onSendToAgent}
               allDrops={allDrops}
               onJoinCall={onJoinCall}
               members={workspaceMembers}
@@ -297,7 +300,7 @@ export function EditorialDropList({
   showChat = false,
   currentWorkspace,
   activeWorkspaceId,
-  onSendToChat,
+  onSendToChat, onSendToAgent,
   workspaceMembers,
   allDrops = [],
   onJoinCall,
@@ -1289,6 +1292,7 @@ export function EditorialDropList({
                   currentWorkspace={currentWorkspace}
                   activeWorkspaceId={activeWorkspaceId}
                   onSendToChat={onSendToChat}
+                  onSendToAgent={onSendToAgent}
                   onDelete={handleDeleteWithUndo}
                   onPin={handlePinDrop}
                   onPreview={onPreview}
@@ -1318,6 +1322,7 @@ export function EditorialDropList({
                   currentWorkspace={currentWorkspace}
                   activeWorkspaceId={activeWorkspaceId}
                   onSendToChat={onSendToChat}
+                  onSendToAgent={onSendToAgent}
                   onDelete={handleDeleteWithUndo}
                   onPin={handlePinDrop}
                   onPreview={onPreview}
@@ -1376,6 +1381,7 @@ export function EditorialDropList({
                     onUnpin={handlePinDrop}
                     activeWorkspaceId={activeWorkspaceId}
                     onSendToChat={onSendToChat}
+                    onSendToAgent={onSendToAgent}
                     allDrops={allDrops}
                   />
                 ))}
@@ -1398,6 +1404,7 @@ export function EditorialDropList({
                     onUnpin={handlePinDrop}
                     activeWorkspaceId={activeWorkspaceId}
                     onSendToChat={onSendToChat}
+                    onSendToAgent={onSendToAgent}
                     allDrops={allDrops}
                   />
                 ))}
@@ -1422,6 +1429,7 @@ export function EditorialDropList({
                       onUnpin={handlePinDrop}
                       activeWorkspaceId={activeWorkspaceId}
                       onSendToChat={onSendToChat}
+                      onSendToAgent={onSendToAgent}
                       allDrops={allDrops}
                     />
                   ))}
@@ -1441,6 +1449,7 @@ export function EditorialDropList({
               currentWorkspace={currentWorkspace}
               activeWorkspaceId={activeWorkspaceId}
               onSendToChat={onSendToChat}
+              onSendToAgent={onSendToAgent}
               onDelete={handleDeleteWithUndo}
               onPin={handlePinDrop}
               onPreview={onPreview}
@@ -1475,6 +1484,7 @@ export function EditorialDropList({
                     onUnpin={handlePinDrop}
                     activeWorkspaceId={activeWorkspaceId}
                     onSendToChat={onSendToChat}
+                    onSendToAgent={onSendToAgent}
                     allDrops={allDrops}
                     onJoinCall={onJoinCall}
                     members={workspaceMembers}

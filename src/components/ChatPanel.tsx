@@ -21,7 +21,7 @@ import {
   ChatMessage,
 } from '@/lib/chat';
 import { subscribeToGroupMessages, sendGroupMessage, editGroupMessage, deleteGroupMessage, clearGroupChat, getSeenBy } from '@/lib/groupChat';
-import { parseMessageContent } from '@/lib/dropTagUtils';
+import { parseMessageContent, extractAgentDropRefs } from '@/lib/dropTagUtils';
 import { assertDropWritableById, assertWorkspaceWritableById } from '@/lib/archiveJournalVisibility';
 import { streamAgentChat, AgentStoppedError, AgentRateLimitError, AgentTransientError } from '@/lib/agentActivity';
 import { useSmoothStream } from '@/hooks/useSmoothStream';
@@ -29,9 +29,9 @@ import { useInPanelMarkRead } from '@/hooks/useInPanelMarkRead';
 import { useMentionEditor } from '@/hooks/useMentionEditor';
 import { useVoiceTranscribe } from '@/hooks/useVoiceTranscribe';
 import { Toast } from '@/components/Toast';
-import { ChatDropRequest, Drop, GroupChatMessage } from '@/types';
+import { AgentDropRequest, ChatDropRequest, Drop, GroupChatMessage } from '@/types';
 import { DropPickerRow } from './DropPickerRow';
-import { DropMentionContent, LinkedText } from './DropMentionContent';
+import { DropMentionContent } from './DropMentionContent';
 
 // Coral-signature treatment for markdown links in AI assistant text (Round 11): opens in
 // a new tab and matches every other app link instead of the browser-default blue.
@@ -54,6 +54,10 @@ interface ChatPanelProps {
   ownerId?: string | null;
   presence?: PresenceMap;
   pendingChatDropRequest?: ChatDropRequest;
+  pendingAgentDropRequest?: AgentDropRequest;
+  onAgentDropHandled?: (requestId: number) => void;
+  agentCapability?: boolean;
+  agentScopeReady?: boolean;
   onChatDropHandled?: (requestId: number) => void;
 }
 
@@ -153,7 +157,7 @@ function getThemeStyles(theme: 'light' | 'dark' | 'minimal') {
 
 const WELCOME = 'Hi! I can help you manage your drops. Ask me to list drops, search content, check storage stats, or manage workspaces.';
 
-export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspaceMembers, chatMode: chatModeProp, onChatModeChange, drops, ownerId, presence, pendingChatDropRequest, onChatDropHandled }: ChatPanelProps) {
+export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspaceMembers, chatMode: chatModeProp, onChatModeChange, drops, ownerId, presence, pendingChatDropRequest, onChatDropHandled, pendingAgentDropRequest, onAgentDropHandled, agentCapability = false, agentScopeReady = false }: ChatPanelProps) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -240,6 +244,62 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
   const mentionDeletedClass = `${mentionChipBase} line-through opacity-50 cursor-not-allowed`;
   // @member chips use a blue accent so they read distinctly from #[drop] chips (coral) while editing.
   const mentionMemberClass = `${mentionChipBase} ${theme === 'minimal' ? 'rounded-full font-sans bg-[#1A1A1A]' : 'font-mono bg-[#2563eb]'} text-white`;
+  const agentDrops = useMemo(() => drops ?? [], [drops]);
+  const agentScope = useMemo(() => ({
+    workspaceId: workspaceId ?? null, userId, ready: agentScopeReady,
+  }), [workspaceId, userId, agentScopeReady]);
+  const agentContextKey = JSON.stringify([userId ?? null, workspaceId ?? null, activeConvId]);
+  const agentCaretKey = JSON.stringify([agentContextKey, chatMode, agentCapability]);
+  const aiMention = useMentionEditor({
+    content: input, setContent: setInput, allDrops: agentDrops,
+    foundClassName: mentionFoundClass, deletedClassName: mentionDeletedClass,
+    enableExternalInsertion: agentCapability,
+    externalCaretScope: agentCaretKey,
+    agentScope: agentCapability ? agentScope : undefined,
+    agentPickerEnabled: agentCapability,
+  });
+  const { insertAgentDrop, editorMountKey: agentEditorMountKey } = aiMention;
+  const handledAgentDropIdsRef = useRef(new Set<number>());
+  const pendingAgentContextRef = useRef<{ requestId: number; context: string } | null>(null);
+  const agentDraftContextRef = useRef(agentContextKey);
+  useEffect(() => {
+    if (agentDraftContextRef.current === agentContextKey) return;
+    if (!extractAgentDropRefs(input).length) {
+      agentDraftContextRef.current = agentContextKey;
+      return;
+    }
+    const clear = setTimeout(() => {
+      agentDraftContextRef.current = agentContextKey;
+      setInput('');
+    }, 0);
+    return () => clearTimeout(clear);
+  }, [agentContextKey, input]);
+  useEffect(() => {
+    const request = pendingAgentDropRequest;
+    if (!request || !onAgentDropHandled || handledAgentDropIdsRef.current.has(request.requestId)) return;
+    const acknowledge = () => {
+      handledAgentDropIdsRef.current.add(request.requestId);
+      onAgentDropHandled(request.requestId);
+    };
+    const previous = pendingAgentContextRef.current;
+    if (previous?.requestId === request.requestId && previous.context !== agentContextKey) {
+      acknowledge();
+      return;
+    }
+    pendingAgentContextRef.current = { requestId: request.requestId, context: agentContextKey };
+    if (!agentCapability || chatMode !== 'ai' || request.userId !== userId ||
+        request.workspaceId !== (workspaceId ?? null)) {
+      acknowledge();
+      return;
+    }
+    const drop = agentDrops.find(item => item.id === request.dropId);
+    if (!drop) { acknowledge(); return; }
+    const result = extractAgentDropRefs(input).length && agentDraftContextRef.current !== agentContextKey
+      ? 'not-ready' : insertAgentDrop(drop, request.workspaceId, agentCaretKey);
+    if (result !== 'not-ready') acknowledge();
+  }, [pendingAgentDropRequest, onAgentDropHandled, agentCapability, chatMode, userId, workspaceId,
+    agentDrops, agentContextKey, agentCaretKey, insertAgentDrop, agentEditorMountKey, input]);
+
   const groupMention = useMentionEditor({
     content: groupInput,
     setContent: setGroupInput,
@@ -536,6 +596,8 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
   const handleSend = async () => {
     const text = input.trim();
     if (!text || loading || !userId) return;
+    const dropRefs = agentCapability ? extractAgentDropRefs(text) : [];
+    if (dropRefs.length && agentDraftContextRef.current !== agentContextKey) return;
 
     const requestEpoch = ++aiReplyEpochRef.current;
     const controller = new AbortController();
@@ -569,6 +631,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
         url: AGENT_URL,
         token: idToken,
         message: text,
+        ...(dropRefs.length ? { drop_refs: dropRefs } : {}),
         history: messages.map((m) => ({ role: m.role, content: m.content })),
         signal: controller.signal,
         onActivity: (label) => {
@@ -663,7 +726,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
       setLoading(false);
       setActivity(null);
       requestAnimationFrame(() => {
-        inputRef.current?.focus();
+        (agentCapability ? aiMention.editorRef.current : inputRef.current)?.focus();
       });
     }
   };
@@ -958,7 +1021,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
   const animationClass = isExiting ? s.exitAnimation : s.enterAnimation;
 
   return (
-    <div ref={panelRef} onClick={() => (chatMode === 'group' ? groupMention.editorRef.current : inputRef.current)?.focus()} className={`relative flex flex-col h-[520px] overflow-hidden ${s.panelBorderWidth} ${s.borderColor} ${s.panelBg} ${s.panelShadow} ${animationClass} ${s.roundedClass} ${theme === 'minimal' ? 'minimal-scroll' : ''}`}>
+    <div ref={panelRef} onClick={() => (chatMode === 'group' ? groupMention.editorRef.current : agentCapability ? aiMention.editorRef.current : inputRef.current)?.focus()} className={`relative flex flex-col h-[520px] overflow-hidden ${s.panelBorderWidth} ${s.borderColor} ${s.panelBg} ${s.panelShadow} ${animationClass} ${s.roundedClass} ${theme === 'minimal' ? 'minimal-scroll' : ''}`}>
       {/* Header */}
       <div className={`border-b ${s.borderColor} px-4 py-3 ${s.headerBg} flex items-center justify-between shrink-0`}>
         <div className="flex items-center gap-2">
@@ -1186,7 +1249,9 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
                     <ReactMarkdown remarkPlugins={[remarkBreaks]} components={{ a: markdownLink }}>{msg.content}</ReactMarkdown>
                   </div>
                 ) : (
-                  <div className="whitespace-pre-wrap break-words"><LinkedText text={msg.content} /></div>
+                  <div className="whitespace-pre-wrap break-words"><DropMentionContent content={msg.content} agentLabels allDrops={agentDrops}
+                    onPreview={drop => onPreviewDrop?.(drop.id, drop.workspaceId)}
+                    foundClassName={displayFoundClass} deletedClassName={displayDeletedClass} /></div>
                 )}
               </div>
             </div>
@@ -1545,6 +1610,46 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
             onSubmit={(e) => { e.preventDefault(); handleSend(); }}
             className="flex gap-2"
           >
+            {agentCapability ? (
+            <div className="relative flex-1 min-w-0">
+                {aiMention.showMention && aiMention.filteredMentionDrops.length > 0 && (
+                  <div
+                    ref={aiMention.dropdownRef}
+                    className={`absolute bottom-full left-0 right-0 z-50 mb-1 max-h-[240px] overflow-y-auto border ${s.borderColor} ${s.panelBg} ${s.roundedClass} shadow-lg`}
+                    style={{ touchAction: 'pan-y' }}
+                  >
+                    {aiMention.filteredMentionDrops.map((drop, idx) => (
+                      <DropPickerRow
+                        key={drop.id}
+                        drop={drop}
+                        selected={idx === aiMention.mentionIndex}
+                        attached={false}
+                        agentMetadataOnly
+                        onSelect={aiMention.insertMention}
+                        theme={theme}
+                      />
+                    ))}
+                  </div>
+                )}
+              {!input && <span className="pointer-events-none absolute left-3 top-2 text-xs opacity-30">{theme === 'minimal' ? 'Ask anything...' : 'QUERY...'}</span>}
+              <div ref={aiMention.setEditorRef} contentEditable suppressContentEditableWarning
+                role="textbox" aria-label="Agent message" aria-multiline="false"
+                onInput={aiMention.handleInput} onBlur={aiMention.handleBlur}
+                onPaste={event => {
+                  event.preventDefault();
+                  document.execCommand('insertText', false, event.clipboardData.getData('text/plain').replace(/[\r\n]+/g, ' '));
+                  aiMention.handleInput();
+                }}
+                onKeyDown={event => {
+                  aiMention.handleKeyDown(event);
+                  if (!event.defaultPrevented && !event.nativeEvent.isComposing && event.key === 'Enter') {
+                    event.preventDefault();
+                    handleSend();
+                  }
+                }}
+                className={`flex-1 px-3 py-2 text-xs ${s.inputBg} ${s.inputText} ${s.placeholder} ${s.fontClass} tracking-wider border ${s.inputBorder} ${s.roundedClass} focus:outline-none focus:ring-1 ${s.focusRing} disabled:opacity-50`} />
+            </div>
+            ) : (
             <input
               ref={inputRef}
               type="text"
@@ -1553,6 +1658,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
               placeholder={theme === 'minimal' ? 'Ask anything...' : 'QUERY...'}
               className={`flex-1 px-3 py-2 text-xs ${s.inputBg} ${s.inputText} ${s.placeholder} ${s.fontClass} tracking-wider border ${s.inputBorder} ${s.roundedClass} focus:outline-none focus:ring-1 ${s.focusRing} disabled:opacity-50`}
             />
+            )}
             <button
               type="button"
               onPointerDown={(e) => e.preventDefault()}

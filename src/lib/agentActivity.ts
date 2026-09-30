@@ -115,6 +115,7 @@ export interface StreamAgentChatOptions {
   token: string;
   message: string;
   history: { role: 'user' | 'assistant'; content: string }[];
+  drop_refs?: string[];
   /** AbortSignal — the panels wire this to the Stop button, panel close, and unmount. */
   signal?: AbortSignal;
   /** Called with the translated label as the agent's activity changes (throttled). */
@@ -176,6 +177,7 @@ export async function streamAgentChat({
   token,
   message,
   history,
+  drop_refs,
   signal,
   onActivity,
   onDelta,
@@ -276,7 +278,7 @@ export async function streamAgentChat({
       // Per-SEND idempotency key: a START lost to a network hiccup retries with
       // the same key and re-attaches to the same run — never a second run.
       const clientRequestId = crypto.randomUUID();
-      const runId = await startRun(url, token, message, history, clientRequestId, signal);
+      const runId = await startRun(url, token, message, history, clientRequestId, signal, drop_refs);
       currentRunId = runId;
       // Instant-Stop closure: if the user aborted BEFORE the START response
       // arrived (the {once} listener fired into a null currentRunId and so
@@ -312,6 +314,7 @@ export async function streamAgentChat({
           token,
           message,
           history,
+          drop_refs,
           signal,
           onActivity: applyLabel,
           onDelta,
@@ -479,12 +482,13 @@ async function streamOneShot({
   token,
   message,
   history,
+  drop_refs,
   signal,
   onActivity,
   onDelta,
   onDeltaReset,
 }: StreamAgentChatOptions): Promise<AgentChatResult> {
-  const body = JSON.stringify({ message, history });
+  const body = JSON.stringify({ message, history, ...(drop_refs?.length ? { drop_refs } : {}) });
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
 
   let res: Response;
@@ -528,8 +532,9 @@ async function startRun(
   history: StreamAgentChatOptions['history'],
   clientRequestId: string,
   signal: AbortSignal | undefined,
+  drop_refs?: string[],
 ): Promise<string> {
-  const body = JSON.stringify({ message, history, client_request_id: clientRequestId });
+  const body = JSON.stringify({ message, history, client_request_id: clientRequestId, ...(drop_refs?.length ? { drop_refs } : {}) });
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
   // 4 attempts, ~0/0.5/1/2s apart.
   for (const delay of [0, 500, 1000, 2000]) {
