@@ -10,6 +10,7 @@ import { createShare } from '@/lib/shares';
 import { downloadBinaryFromUrl } from '@/lib/download';
 import { contentToPlainText } from '@/lib/dropTagUtils';
 import { getEditorialThemeColors } from './editorialTheme';
+import { TextRenderSurface } from '../TextRenderSurface';
 import { DropMentionContent } from '../DropMentionContent';
 import { LockedActionButton } from '../LockedActionButton';
 import { Tooltip } from '../Tooltip';
@@ -419,15 +420,24 @@ export function EditorialPreviewModal({ drop, onClose, onBack, canBack, theme = 
                     >
                       {fullscreenIcon}
                     </button>
-                    <pre className={`text-sm ${tc.fontClass} ${tc.text} leading-relaxed whitespace-pre-wrap break-all ${isFullscreen ? 'h-full overflow-y-auto' : ''}`}>
-                      <DropMentionContent
-                        content={drop.content}
-                        allDrops={allDrops}
-                        onPreview={onPreview}
-                        foundClassName={`inline-flex items-center mx-0.5 my-0.5 px-1.5 py-0.5 align-middle rounded text-[13px] ${tc.fontClass} ${tc.activePillBg} ${tc.activePillText} hover:opacity-80`}
-                        deletedClassName={`inline-flex items-center mx-0.5 my-0.5 px-1.5 py-0.5 align-middle rounded text-[13px] ${tc.fontClass} ${tc.inactivePillBg} ${tc.muted} line-through cursor-not-allowed`}
-                      />
-                    </pre>
+                    <TextRenderSurface
+                      key={drop.id}
+                      content={drop.content}
+                      name={drop.name}
+                      theme={theme}
+                      isFullscreen={isFullscreen}
+                      editorial
+                    >
+                      <pre className={`text-sm ${tc.fontClass} ${tc.text} leading-relaxed whitespace-pre-wrap break-all ${isFullscreen ? 'h-full overflow-y-auto' : ''}`}>
+                        <DropMentionContent
+                          content={drop.content}
+                          allDrops={allDrops}
+                          onPreview={onPreview}
+                          foundClassName={`inline-flex items-center mx-0.5 my-0.5 px-1.5 py-0.5 align-middle rounded text-[13px] ${tc.fontClass} ${tc.activePillBg} ${tc.activePillText} hover:opacity-80`}
+                          deletedClassName={`inline-flex items-center mx-0.5 my-0.5 px-1.5 py-0.5 align-middle rounded text-[13px] ${tc.fontClass} ${tc.inactivePillBg} ${tc.muted} line-through cursor-not-allowed`}
+                        />
+                      </pre>
+                    </TextRenderSurface>
                   </div>
                 </div>
               )}
@@ -463,9 +473,18 @@ export function EditorialPreviewModal({ drop, onClose, onBack, canBack, theme = 
           {!isLoading && isText && drop.fileData && (
             <div className="p-5">
               <div className={`border ${tc.border} ${tc.bg} rounded-lg p-4`}>
-                <pre className={`text-sm ${tc.fontClass} ${tc.text} whitespace-pre-wrap break-all max-h-[50vh] overflow-auto`}>
-                  {textContent}
-                </pre>
+                <TextRenderSurface
+                  key={drop.id}
+                  content={textContent}
+                  name={drop.name}
+                  theme={theme}
+                  mimeType={drop.mimeType}
+                  editorial
+                >
+                  <pre className={`text-sm ${tc.fontClass} ${tc.text} whitespace-pre-wrap break-all max-h-[50vh] overflow-auto`}>
+                    {textContent}
+                  </pre>
+                </TextRenderSurface>
               </div>
             </div>
           )}

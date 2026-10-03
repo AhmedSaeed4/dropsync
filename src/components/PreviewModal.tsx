@@ -9,6 +9,7 @@ import { formatFileSize, getYouTubeVideoId, updateDropMetadata, isReminderGlowin
 import { createShare } from '@/lib/shares';
 import { downloadBinaryFromUrl } from '@/lib/download';
 import { contentToPlainText } from '@/lib/dropTagUtils';
+import { TextRenderSurface } from './TextRenderSurface';
 import { DropMentionContent } from './DropMentionContent';
 import { LockedActionButton } from './LockedActionButton';
 import { ImageLightbox } from './ImageLightbox';
@@ -433,15 +434,23 @@ export function PreviewModal({ drop, onClose, onBack, canBack, theme = 'light', 
                     >
                       {fullscreenIcon}
                     </button>
-                    <pre className={`${isMinimal ? 'text-sm font-sans' : 'text-sm font-mono'} ${tc.textColor} leading-relaxed whitespace-pre-wrap break-all ${isFullscreen ? 'h-full overflow-y-auto' : ''}`}>
-                      <DropMentionContent
-                        content={drop.content}
-                        allDrops={allDrops}
-                        onPreview={onPreview}
-                        foundClassName={`inline-flex items-center mx-0.5 my-0.5 px-1.5 py-0.5 align-middle text-[13px] ${isMinimal ? 'rounded-full font-sans' : 'font-mono'} ${isMinimal ? 'bg-[#1A1A1A]' : 'bg-[#FF5A47]'} text-white hover:opacity-80`}
-                        deletedClassName={`inline-flex items-center mx-0.5 my-0.5 px-1.5 py-0.5 align-middle text-[13px] ${isMinimal ? 'rounded-full font-sans' : 'font-mono'} bg-[#1A1A1A]/10 ${tc.textMuted2} line-through cursor-not-allowed`}
-                      />
-                    </pre>
+                    <TextRenderSurface
+                      key={drop.id}
+                      content={drop.content}
+                      name={drop.name}
+                      theme={theme}
+                      isFullscreen={isFullscreen}
+                    >
+                      <pre className={`${isMinimal ? 'text-sm font-sans' : 'text-sm font-mono'} ${tc.textColor} leading-relaxed whitespace-pre-wrap break-all ${isFullscreen ? 'h-full overflow-y-auto' : ''}`}>
+                        <DropMentionContent
+                          content={drop.content}
+                          allDrops={allDrops}
+                          onPreview={onPreview}
+                          foundClassName={`inline-flex items-center mx-0.5 my-0.5 px-1.5 py-0.5 align-middle text-[13px] ${isMinimal ? 'rounded-full font-sans' : 'font-mono'} ${isMinimal ? 'bg-[#1A1A1A]' : 'bg-[#FF5A47]'} text-white hover:opacity-80`}
+                          deletedClassName={`inline-flex items-center mx-0.5 my-0.5 px-1.5 py-0.5 align-middle text-[13px] ${isMinimal ? 'rounded-full font-sans' : 'font-mono'} bg-[#1A1A1A]/10 ${tc.textMuted2} line-through cursor-not-allowed`}
+                        />
+                      </pre>
+                    </TextRenderSurface>
                   </div>
                 </div>
               )}
@@ -500,9 +509,17 @@ export function PreviewModal({ drop, onClose, onBack, canBack, theme = 'light', 
           {!isLoading && drop.type === 'file' && isText && drop.fileData && (
             <div className="p-6">
               <div className={`border ${tc.borderColor} ${tc.bgColor} p-4 ${tc.roundedClass}`}>
-                <pre className={`${isMinimal ? 'text-sm font-sans' : 'text-sm font-mono'} ${tc.textColor} whitespace-pre-wrap overflow-x-auto`}>
-                  {textContent}
-                </pre>
+                <TextRenderSurface
+                  key={drop.id}
+                  content={textContent}
+                  name={drop.name}
+                  theme={theme}
+                  mimeType={drop.mimeType}
+                >
+                  <pre className={`${isMinimal ? 'text-sm font-sans' : 'text-sm font-mono'} ${tc.textColor} whitespace-pre-wrap overflow-x-auto`}>
+                    {textContent}
+                  </pre>
+                </TextRenderSurface>
               </div>
             </div>
           )}
