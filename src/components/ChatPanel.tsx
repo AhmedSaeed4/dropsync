@@ -8,6 +8,7 @@ import { auth } from '@/lib/firebase';
 import { getLenis, lockScroll, unlockScroll } from './SmoothScrollProvider';
 import { useTypingStatus, formatTypingText } from '@/hooks/useTypingStatus';
 import { useNearBottom } from '@/hooks/useNearBottom';
+import { useFollowStream } from '@/hooks/useFollowStream';
 import { useDelayedUnmount } from '@/hooks/useDelayedUnmount';
 import type { PresenceMap } from '@/hooks/usePresence';
 import { formatLastSeen } from '@/lib/presence';
@@ -364,6 +365,9 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
   const unsubRef = useRef<(() => void) | null>(null);
   // Scroll-to-message + flash-highlight for quote-reply jumps (shared with EditorialChatPanel).
   const { setMessageRef, jumpToMessage, flashId } = useMessageScroll(scrollRef);
+  // USER-INTENT gate for the stream-follow snap (Order 51): wheel-up / touch-drag away from
+  // the bottom kills the follow; returning to bottom, the jump button, or a send re-arms it.
+  const follow = useFollowStream(scrollRef);
   const s = getThemeStyles(theme);
   const isOwner = !!userId && ownerId === userId;
   // Display chip classes — translucent fills, since a rendered chip can land on EITHER the sender's
@@ -410,12 +414,20 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    // Follow the stream only when already pinned near the bottom — a reader scrolled up
-    // during a long reveal isn't yanked down on every reveal tick.
-    if (el.scrollHeight - el.scrollTop - el.clientHeight <= 120) {
-      el.scrollTop = el.scrollHeight;
-    }
-  }, [messages, loading, smooth.revealed]);
+    // Three gates: USER INTENT is always required (follow.following — a wheel-up or an upward
+    // content drag killed it; a return to the bottom, the jump button, or a fresh send re-armed
+    // it). Then EITHER near-bottom (the 120px backstop for programmatic scrolls — quote-reply
+    // jumps) OR the fresh-send window: loading with no reveal text yet. handleSend just resumed
+    // following, and the sender's own bubble + loader row land BELOW a view that may be scrolled
+    // arbitrarily far up — snap under them regardless of distance so a send always delivers the
+    // "jumps to the bottom" promise (Order 51 checklist item 5), for any bubble height. The
+    // window closes when the first reveal text arrives (smooth.hasText) and the two-condition
+    // gate rules again; a drag up during the window still kills following via touchmove.
+    if (!follow.following) return;
+    const freshSend = loading && !smooth.hasText;
+    if (!freshSend && el.scrollHeight - el.scrollTop - el.clientHeight > 120) return;
+    el.scrollTop = el.scrollHeight;
+  }, [messages, loading, smooth.revealed, follow.following, smooth.hasText]);
 
   // Auto-switch to AI mode when workspace is deselected
   useEffect(() => {
@@ -455,15 +467,16 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
 
   // Group typing indicator (panel-level — only the open panel subscribes) + members-popover state.
   const typing = useTypingStatus(workspaceId, userId, workspaceMembers);
-  // atBottom drives the typing-pill vs scroll-to-bottom-button swap (group only). Additive — it only
-  // observes scroll position and never touches the existing scrollTop = scrollHeight auto-scroll.
+  // atBottom drives the typing-pill vs scroll-to-bottom-button swap (the pill is group-only; the
+  // button serves BOTH chat modes). Additive — it only observes scroll position and never touches
+  // the existing scrollTop = scrollHeight auto-scroll.
   const atBottom = useNearBottom(scrollRef);
   // Fade-OUT: keep each overlay mounted ~180ms past its exit so a pure-opacity fade-out can play
   // before the real unmount (React otherwise removes instantly). shouldRender gates the element;
   // isExiting swaps in the fade-out class. Object access (not destructured) — classic has its own
   // isExiting state at the top of this component.
   const pillVisible = chatMode === 'group' && atBottom && typing.typingUsers.length > 0;
-  const scrollVisible = chatMode === 'group' && !atBottom;
+  const scrollVisible = !atBottom;
   const pill = useDelayedUnmount(pillVisible, 180);
   const scroll = useDelayedUnmount(scrollVisible, 180);
   const [showMembers, setShowMembers] = useState(false);
@@ -607,6 +620,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
     setActivity(null);
     setSavedMsgId(null);
     smooth.reset();
+    follow.resume();
 
     let convId = activeConvId;
     if (!convId) {
@@ -1568,7 +1582,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
           </div>
 
       {/* Input */}
-      <div className={`border-t ${s.borderColor} p-3 shrink-0 ${chatMode === 'group' ? 'relative' : ''}`}>
+      <div className={`border-t ${s.borderColor} p-3 shrink-0 relative`}>
         {/* Typing indicator — a zero-space overlay above the composer (group + at bottom + someone
             typing). Plain dots + muted text, no background (the original in-flow look). Anchored to
             this relative input wrapper (never position:fixed — a transform on an ancestor would trap
@@ -1585,16 +1599,18 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
             <span className="text-[10px]">{formatTypingText(typing.typingUsers.map((u) => u.displayName))}</span>
           </div>
         )}
-        {/* Scroll-to-bottom button — shown only when scrolled up (group + !atBottom). Mutually
-            exclusive with the pill (atBottom vs !atBottom). Clicking smooth-scrolls the list to the
-            bottom → atBottom flips true → this hides and the pill re-shows if still typing. The
-            typing badge (coral dot, top corner) reuses typing-bounce so a scrolled-up user still sees
-            activity. pointer-events-auto (clickable, unlike the pill). Same opaque members-popover bg. */}
+        {/* Scroll-to-bottom button — shown only when scrolled up (either chat mode + !atBottom; the
+            typing pill stays group-only, so in ai mode this is the only overlay). Mutually exclusive
+            with the pill (atBottom vs !atBottom). Clicking smooth-scrolls the list to the bottom AND
+            re-arms stream-following → atBottom flips true → this hides and the pill re-shows if
+            still typing. The typing badge (coral dot, top corner) reuses typing-bounce so a
+            scrolled-up user still sees activity. pointer-events-auto (clickable, unlike the pill).
+            Same opaque members-popover bg. */}
         {scroll.shouldRender && (
           <button
             type="button"
             aria-label="Scroll to bottom"
-            onClick={() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })}
+            onClick={() => { follow.resume(); scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }); }}
             className={`absolute bottom-full right-3 mb-2 flex items-center justify-center w-9 h-9 rounded-full shadow-md pointer-events-auto cursor-pointer ${scroll.isExiting ? 'animate-typing-fade-out' : 'animate-typing-fade'} z-10 ${theme === 'dark' ? 'bg-[#2A2A2A]' : 'bg-white'}`}
           >
             <svg className={`w-5 h-5 ${theme === 'dark' ? 'text-white' : 'text-[#1A1A1A]'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
