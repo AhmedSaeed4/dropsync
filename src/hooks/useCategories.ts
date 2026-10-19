@@ -36,8 +36,7 @@ export function useCategories(workspaceId: string | null, userId?: string | null
       return { success: false, error: 'Category has drops. Cannot delete.' };
     }
 
-    const success = await deleteCategory(categoryId);
-    return { success };
+    return deleteCategory(categoryId);
   };
 
   return {

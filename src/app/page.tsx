@@ -1726,6 +1726,7 @@ export default function Home() {
     const result = await removeCategory(categoryId, categoryName);
     if (!result.success) {
       console.error('Failed to delete category:', result.error);
+      setArchiveNotice(result.error ?? 'Failed to delete the category.');
     }
   };
 

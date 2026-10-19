@@ -68,14 +68,19 @@ export async function createCategory(
 }
 
 // Delete a category (only if no drops use it)
-export async function deleteCategory(categoryId: string): Promise<boolean> {
+export async function deleteCategory(categoryId: string): Promise<{ success: boolean; error?: string }> {
   try {
     await assertCategoryWritableById(categoryId);
     await deleteDoc(doc(db, CATEGORIES_COLLECTION, categoryId));
-    return true;
+    return { success: true };
   } catch (error) {
     console.error('Error deleting category:', error);
-    return false;
+    const code = (error as { code?: string })?.code;
+    const message = error instanceof Error ? error.message : '';
+    if (code === 'permission-denied' || message.includes('Missing or insufficient permissions')) {
+      return { success: false, error: 'You do not have permission to delete this category.' };
+    }
+    return { success: false, error: message || 'Failed to delete the category.' };
   }
 }
 
