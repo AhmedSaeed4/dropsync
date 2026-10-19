@@ -575,6 +575,8 @@ service cloud.firestore {
     // stage runs client-side as the owner); the deleting owner keeps read (enumeration) via
     // isDeletingOwner. Personal categories (workspaceId == null) are unaffected (a missing
     // workspace is never "deleting"). A job-naming import create requires the OPEN fence.
+    // ROUND 26 (D27): a clean workspace category (not staged, not freshLocked, not
+    // mid-deletion) may also be deleted by ANY workspace member.
     match /categories/{categoryId} {
       allow read: if request.auth != null && (
         (request.auth.uid == resource.data.createdBy
@@ -607,6 +609,12 @@ service cloud.firestore {
           && resource.data.workspaceId != null
           && exists(/databases/$(database)/documents/workspaces/$(resource.data.workspaceId))
           && get(/databases/$(database)/documents/workspaces/$(resource.data.workspaceId)).data.ownerId == request.auth.uid)
+        || (!recordStaged(resource.data.createdBy, resource.data)
+          && !freshLocked(resource.data.workspaceId)
+          && resource.data.workspaceId != null
+          && !wsDeleting(resource.data.workspaceId)
+          && exists(/databases/$(database)/documents/workspaces/$(resource.data.workspaceId))
+          && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(resource.data.workspaceId)).data.members)
       );
     }
 
