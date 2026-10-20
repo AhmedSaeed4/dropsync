@@ -9,9 +9,9 @@ import { Drop, Workspace, Category } from '@/types';
 import { EditorialDropItem } from './EditorialDropItem';
 import { UndoToast } from '@/components/UndoToast';
 import { Toast } from '@/components/Toast';
-import { deleteDrop, moveDrop, copyDrop, pinDrop, unpinDrop, isReminderFiredShared, isReminderGlowingForViewer } from '@/lib/drops';
+import { pinDrop, unpinDrop, isReminderFiredShared, isReminderGlowingForViewer } from '@/lib/drops';
+import { startDropOperation } from '@/lib/operationCenter';
 import { usePendingDeletions, requestDelete, undo, dismiss } from '@/lib/pendingDeletions';
-import { ensureCategoriesForTarget } from '@/lib/categories';
 import { dropMatchesSearchQuery } from '@/lib/youtubeLabels';
 import { EditorialMoveDropModal } from './EditorialMoveDropModal';
 import { getEditorialThemeColors } from './editorialTheme';
@@ -323,8 +323,6 @@ export function EditorialDropList({
     }));
     return () => cancelAnimationFrame(frame);
   }, [drops]);
-  const [deleting, setDeleting] = useState(false);
-  const [holdDone, setHoldDone] = useState(false);
   // Single-drop delete-with-undo state lives in the shared module store (PR #168) so it survives a
   // classic<->editorial layout switch / client-side nav mid-30s-window. `pending` is the request-
   // time hide + the 30s timer; `deletedDropIds` (the tombstone) hides drops whose delete has
@@ -333,7 +331,6 @@ export function EditorialDropList({
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [bulkMoveDrops, setBulkMoveDrops] = useState<Drop[] | null>(null);
-  const [moveLoading, setMoveLoading] = useState(false);
   const [pinLimitToast, setPinLimitToast] = useState(false);
   const [mentionFilter, setMentionFilter] = useState<MemberInfo | null>(null);
   const [mentionSearch, setMentionSearch] = useState('');
@@ -396,25 +393,25 @@ export function EditorialDropList({
     }
   };
 
-  const handleBulkDelete = async () => {
+  // D10 AMENDED on desktop (record §4 D28, 2026-10-20): the hold gesture still confirms,
+  // then the bar closes and the operations panel card takes over — the 650 ms "Deleted ✓"
+  // blink is gone here. The phone (MobileDropsView) keeps the original D10 sequence.
+  const handleBulkDelete = () => {
     if (selectedIds.size === 0) return;
 
-    setDeleting(true);
     const selectedDrops = filteredDrops.filter(d => selectedIds.has(d.id) && !d.isStaged);
     if (selectedDrops.length !== selectedIds.size) return;
 
-    await Promise.all(selectedDrops.map(drop => deleteDrop(drop)));
-
-    setDeleting(false);
-    setHoldDone(true);
-    // D10 (owner-ordered sequence): "Deleting..." ran while the deletes landed; now the
-    // green "Deleted ✓" beat plays, then the toolbar closes out.
-    window.setTimeout(() => {
-      setSelectedIds(new Set());
-      setSelectionMode(false);
-      onDelete();
-      setHoldDone(false);
-    }, 650);
+    startDropOperation({
+      kind: 'delete',
+      drops: selectedDrops,
+      targetWorkspaceId: null,
+      targetName: '',
+      currentUserId: currentUserId ?? '',
+      onSettled: onDelete,
+    });
+    setSelectedIds(new Set());
+    setSelectionMode(false);
   };
 
   const cancelSelection = () => {
@@ -1185,8 +1182,8 @@ export function EditorialDropList({
                     <HoldToDeleteButton
                       variant="full"
                       count={selectedIds.size}
-                      deleting={deleting}
-                      done={holdDone}
+                      deleting={false}
+                      done={false}
                       onHoldComplete={handleBulkDelete}
                       className={`h-7 px-3 ${tc.roundedClass} hover:bg-red-600 transition-colors ${font}`}
                     />
@@ -1538,61 +1535,31 @@ export function EditorialDropList({
           currentWorkspaceId={bulkMoveDrops[0].workspaceId}
           onMove={async (selectedDrops, targetWorkspaceId) => {
             if (!currentUserId) return;
-            setMoveLoading(true);
-            let catMap = new Map<string, string>();
-            try {
-              const allCatNames = Array.from(new Set(
-                selectedDrops.flatMap(d => d.categories || (d.category ? [d.category] : []))
-              ));
-              if (allCatNames.length > 0) {
-                catMap = await ensureCategoriesForTarget(targetWorkspaceId, currentUserId!, allCatNames);
-              }
-            } catch (error) {
-              console.error('Category pre-resolution failed:', error);
-              setMoveLoading(false);
-              alert('Failed to prepare categories. Please try again.');
-              return;
-            }
-            const results = await Promise.all(selectedDrops.map(d => moveDrop(d, targetWorkspaceId, currentUserId!, catMap)));
-            setMoveLoading(false);
-            const failures = results.filter(r => !r.success);
-            if (failures.length === 0) {
-              setBulkMoveDrops(null);
-              setSelectedIds(new Set());
-              setSelectionMode(false);
-              onDelete();
-            } else {
-              alert(`${failures.length}/${selectedDrops.length} drops failed to move: ${failures[0].error}`);
-            }
+            startDropOperation({
+              kind: 'move',
+              drops: selectedDrops,
+              targetWorkspaceId,
+              targetName: workspaces.find(w => w.id === targetWorkspaceId)?.name ?? 'Personal',
+              currentUserId,
+              onSettled: onDelete,
+            });
+            setBulkMoveDrops(null);
+            setSelectedIds(new Set());
+            setSelectionMode(false);
           }}
           onCopy={async (selectedDrops, targetWorkspaceId) => {
             if (!currentUserId) return;
-            setMoveLoading(true);
-            let catMap = new Map<string, string>();
-            try {
-              const allCatNames = Array.from(new Set(
-                selectedDrops.flatMap(d => d.categories || (d.category ? [d.category] : []))
-              ));
-              if (allCatNames.length > 0) {
-                catMap = await ensureCategoriesForTarget(targetWorkspaceId, currentUserId!, allCatNames);
-              }
-            } catch (error) {
-              console.error('Category pre-resolution failed:', error);
-              setMoveLoading(false);
-              alert('Failed to prepare categories. Please try again.');
-              return;
-            }
-            const results = await Promise.all(selectedDrops.map(d => copyDrop(d, targetWorkspaceId, currentUserId!, catMap)));
-            setMoveLoading(false);
-            const failures = results.filter(r => !r.success);
-            if (failures.length === 0) {
-              setBulkMoveDrops(null);
-              setSelectedIds(new Set());
-              setSelectionMode(false);
-              onDelete();
-            } else {
-              alert(`${failures.length}/${selectedDrops.length} drops failed to copy: ${failures[0].error}`);
-            }
+            startDropOperation({
+              kind: 'copy',
+              drops: selectedDrops,
+              targetWorkspaceId,
+              targetName: workspaces.find(w => w.id === targetWorkspaceId)?.name ?? 'Personal',
+              currentUserId,
+              onSettled: onDelete,
+            });
+            setBulkMoveDrops(null);
+            setSelectedIds(new Set());
+            setSelectionMode(false);
           }}
           onClose={() => setBulkMoveDrops(null)}
           theme={theme}

@@ -57,6 +57,7 @@ import { CURRENT_TERMS_VERSION } from '@/lib/termsVersion';
 import { TermsConsentGate } from '@/components/TermsConsentGate';
 import { WorkspaceArchiveModal } from '@/components/WorkspaceArchiveModal';
 import { ArchiveChipStack } from '@/components/ArchiveChipStack';
+import { OperationsPanel } from '@/components/OperationsPanel';
 import { ArchiveProgressPanel } from '@/components/ArchiveProgressPanel';
 import { getArchiveTaskManager, type ArchiveJobDescriptor } from '@/lib/archiveTaskManager';
 import { requestArchiveSaveHandle } from '@/lib/archiveFormat';
@@ -2966,6 +2967,7 @@ export default function Home() {
         onBack={() => setArchivePanelJobId(null)} />}
       <ArchiveChipStack editorial={layoutMode === 'editorial'} callPill={!!activeCallDrop && callMinimized}
         onOpen={(jobId, showAll) => { setArchivePanelShowAll(!!showAll); setArchivePanelJobId(jobId); }} />
+      <OperationsPanel theme={theme} />
       {footerActive && <Footer onHideFooter={onHideFooter} />}
       {activeCallDrop && callMinimized && hoverable && (
         <LiveCallMinimizedPill

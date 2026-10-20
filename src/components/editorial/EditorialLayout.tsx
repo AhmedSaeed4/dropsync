@@ -32,6 +32,7 @@ const MemoEditorialThemeSelector = memo(EditorialThemeSelector);
 const MemoEditorialSavedPaths = memo(EditorialSavedPaths);
 import { EditorialTextModal } from './EditorialTextModal';
 import { EditorialMoveDropModal } from './EditorialMoveDropModal';
+import { startDropOperation } from '@/lib/operationCenter';
 import WorkspaceOptionsModal from '@/components/WorkspaceOptionsModal';
 import { useModalBackClose } from '@/hooks/useModalBackClose';
 import { useIsMobile } from '@/hooks/useIsMobile';
@@ -233,7 +234,6 @@ export function EditorialLayout(props: EditorialLayoutProps) {
   dropsRef.current = drops;
   // Move drop state
   const [moveDrops, setMoveDrops] = useState<Drop[] | null>(null);
-  const [moveLoading, setMoveLoading] = useState(false);
   const [wordAnimEnabled, setWordAnimEnabled] = useState(true);
   const [wordAnimStyle, setWordAnimStyle] = useState('cascade');
   const [wordAnimHold, setWordAnimHold] = useState(35000);
@@ -294,7 +294,6 @@ export function EditorialLayout(props: EditorialLayoutProps) {
   // unchanged; the parent decides what closing means). Preview-originated: re-open the preview.
   // Bulk (list) flow: no return memory → back to the list, exactly as before.
   const handleCloseMoveModal = () => {
-    if (moveLoading) return;
     const returnDrop = moveReturnDrop;
     setMoveDrops(null);
     setMoveReturnDrop(null);
@@ -304,69 +303,99 @@ export function EditorialLayout(props: EditorialLayoutProps) {
   const handleMoveDrop = async (drops: Drop[], targetWorkspaceId: string | null) => {
     if (!user || !drops.length) return;
     if (drops.some((drop) => drop.isStaged) || currentWorkspace?.isImporting) { alert('This item is still importing.'); return; }
-    setMoveLoading(true);
-    let catMap = new Map<string, string>();
-    try {
-      const allCatNames = Array.from(new Set(
-        drops.flatMap(d => d.categories || (d.category ? [d.category] : []))
-      ));
-      if (allCatNames.length > 0) {
-        catMap = await ensureCategoriesForTarget(targetWorkspaceId, user.uid, allCatNames);
+    // D28h: EditorialMobileShell shares this handler. The phone keeps the old blocking flow
+    // (its own modal spinner, no operations card) — only the ≥768px desktop path hands off.
+    if (isPhone) {
+      let catMap = new Map<string, string>();
+      try {
+        const allCatNames = Array.from(new Set(
+          drops.flatMap(d => d.categories || (d.category ? [d.category] : []))
+        ));
+        if (allCatNames.length > 0) {
+          catMap = await ensureCategoriesForTarget(targetWorkspaceId, user.uid, allCatNames);
+        }
+      } catch (error) {
+        console.error('Category pre-resolution failed:', error);
+        alert('Failed to prepare categories. Please try again.');
+        return;
       }
-    } catch (error) {
-      console.error('Category pre-resolution failed:', error);
-      setMoveLoading(false);
-      alert('Failed to prepare categories. Please try again.');
+      const results = await Promise.all(drops.map(d => moveDrop(d, targetWorkspaceId, user.uid, catMap)));
+      const failures = results.filter(r => !r.success);
+      if (failures.length === 0) {
+        const previewOriginated = !!moveReturnDrop;
+        setMoveDrops(null);
+        setMoveReturnDrop(null);
+        if (previewOriginated) {
+          setPreviewDrop(null);
+          setPreviewLoading(false);
+        }
+        refreshDrops();
+      } else {
+        alert(`${failures.length}/${drops.length} drops failed to move: ${failures[0].error}`);
+      }
       return;
     }
-    const results = await Promise.all(drops.map(d => moveDrop(d, targetWorkspaceId, user.uid, catMap)));
-    setMoveLoading(false);
-    const failures = results.filter(r => !r.success);
-    if (failures.length === 0) {
-      const previewOriginated = !!moveReturnDrop;
-      setMoveDrops(null);
-      setMoveReturnDrop(null); // the drop left this workspace — no preview return
-      if (previewOriginated) {
-        setPreviewDrop(null);
-        setPreviewLoading(false);
-      }
-      refreshDrops();
-    } else {
-      alert(`${failures.length}/${drops.length} drops failed to move: ${failures[0].error}`);
+    const previewOriginated = !!moveReturnDrop;
+    setMoveDrops(null);
+    setMoveReturnDrop(null); // the drop left this workspace — no preview return
+    if (previewOriginated) {
+      setPreviewDrop(null);
+      setPreviewLoading(false);
     }
+    startDropOperation({
+      kind: 'move',
+      drops,
+      targetWorkspaceId,
+      targetName: workspaces.find(w => w.id === targetWorkspaceId)?.name ?? 'Personal',
+      currentUserId: user.uid,
+      onSettled: refreshDrops,
+    });
   };
 
   const handleCopyDrop = async (drops: Drop[], targetWorkspaceId: string | null) => {
     if (!user || !drops.length) return;
-    if (drops.some((drop) => drop.isStaged) || currentWorkspace?.isImporting) { alert('This item is still importing.'); return; }
-    setMoveLoading(true);
-    let catMap = new Map<string, string>();
-    try {
-      const allCatNames = Array.from(new Set(
-        drops.flatMap(d => d.categories || (d.category ? [d.category] : []))
-      ));
-      if (allCatNames.length > 0) {
-        catMap = await ensureCategoriesForTarget(targetWorkspaceId, user.uid, allCatNames);
+    // D28h: phone keeps the old blocking copy flow (including its staged guard).
+    if (isPhone) {
+      if (drops.some((drop) => drop.isStaged) || currentWorkspace?.isImporting) { alert('This item is still importing.'); return; }
+      let catMap = new Map<string, string>();
+      try {
+        const allCatNames = Array.from(new Set(
+          drops.flatMap(d => d.categories || (d.category ? [d.category] : []))
+        ));
+        if (allCatNames.length > 0) {
+          catMap = await ensureCategoriesForTarget(targetWorkspaceId, user.uid, allCatNames);
+        }
+      } catch (error) {
+        console.error('Category pre-resolution failed:', error);
+        alert('Failed to prepare categories. Please try again.');
+        return;
       }
-    } catch (error) {
-      console.error('Category pre-resolution failed:', error);
-      setMoveLoading(false);
-      alert('Failed to prepare categories. Please try again.');
+      const results = await Promise.all(drops.map(d => copyDrop(d, targetWorkspaceId, user.uid, catMap)));
+      const failures = results.filter(r => !r.success);
+      if (failures.length === 0) {
+        const returnDrop = moveReturnDrop;
+        setMoveDrops(null);
+        setMoveReturnDrop(null);
+        if (returnDrop) returnToPreview(returnDrop);
+        refreshDrops();
+      } else {
+        alert(`${failures.length}/${drops.length} drops failed to copy: ${failures[0].error}`);
+      }
       return;
     }
-    const results = await Promise.all(drops.map(d => copyDrop(d, targetWorkspaceId, user.uid, catMap)));
-    setMoveLoading(false);
-    const failures = results.filter(r => !r.success);
-    if (failures.length === 0) {
-      const returnDrop = moveReturnDrop;
-      setMoveDrops(null);
-      setMoveReturnDrop(null);
-      // The original still exists in this workspace — return to its preview (the copy is not shown).
-      if (returnDrop) returnToPreview(returnDrop);
-      refreshDrops();
-    } else {
-      alert(`${failures.length}/${drops.length} drops failed to copy: ${failures[0].error}`);
-    }
+    const returnDrop = moveReturnDrop;
+    setMoveDrops(null);
+    setMoveReturnDrop(null);
+    // The original still exists in this workspace — return to its preview (the copy is not shown).
+    if (returnDrop) returnToPreview(returnDrop);
+    startDropOperation({
+      kind: 'copy',
+      drops,
+      targetWorkspaceId,
+      targetName: workspaces.find(w => w.id === targetWorkspaceId)?.name ?? 'Personal',
+      currentUserId: user.uid,
+      onSettled: refreshDrops,
+    });
   };
 
   const tc = getEditorialThemeColors(theme);

@@ -7,9 +7,9 @@ import { DropItem } from './DropItem';
 import { UndoToast } from './UndoToast';
 import { Toast } from './Toast';
 import { CategoryFilter } from './CategoryFilter';
-import { deleteDrop, moveDrop, copyDrop, pinDrop, unpinDrop, isReminderGlowingForViewer } from '@/lib/drops';
+import { pinDrop, unpinDrop, isReminderGlowingForViewer } from '@/lib/drops';
+import { startDropOperation } from '@/lib/operationCenter';
 import { usePendingDeletions, requestDelete, undo, dismiss } from '@/lib/pendingDeletions';
-import { ensureCategoriesForTarget } from '@/lib/categories';
 import { dropMatchesSearchQuery } from '@/lib/youtubeLabels';
 import { MoveDropModal } from '@/components/MoveDropModal';
 import { MemberInfo } from '@/lib/workspaces';
@@ -74,7 +74,6 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
     document.addEventListener('pointerdown', onDocPointerDown);
     return () => document.removeEventListener('pointerdown', onDocPointerDown);
   }, [confirmBulkDelete]);
-  const [deleting, setDeleting] = useState(false);
   // Single-drop delete-with-undo state lives in the shared module store (PR #168) so it survives a
   // classic<->editorial layout switch / client-side nav mid-30s-window. `pending` is the request-
   // time hide + the 30s timer; `deletedDropIds` (the tombstone) hides drops whose delete has
@@ -83,7 +82,6 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [bulkMoveDrops, setBulkMoveDrops] = useState<Drop[] | null>(null);
-  const [moveLoading, setMoveLoading] = useState(false);
   const [pinLimitToast, setPinLimitToast] = useState(false);
   const [mentionFilter, setMentionFilter] = useState<MemberInfo | null>(null);
   const [mentionSearch, setMentionSearch] = useState('');
@@ -146,19 +144,22 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
     handleBulkDelete();
   };
 
-  const handleBulkDelete = async () => {
+  const handleBulkDelete = () => {
     if (selectedIds.size === 0) return;
 
-    setDeleting(true);
     const selectedDrops = filteredDrops.filter(d => selectedIds.has(d.id) && !d.isStaged);
     if (selectedDrops.length !== selectedIds.size) { setConfirmBulkDelete(false); return; }
 
-    await Promise.all(selectedDrops.map(drop => deleteDrop(drop)));
-
+    startDropOperation({
+      kind: 'delete',
+      drops: selectedDrops,
+      targetWorkspaceId: null,
+      targetName: '',
+      currentUserId: currentUserId ?? '',
+      onSettled: onDelete,
+    });
     setSelectedIds(new Set());
     setSelectionMode(false);
-    onDelete();
-    setDeleting(false);
     setConfirmBulkDelete(false);
   };
 
@@ -516,15 +517,12 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
                   <button
                     ref={bulkDeleteRef}
                     onClick={handleBulkDeleteClick}
-                    disabled={deleting}
-                    className={`${tc.fontClass} ${isMinimal ? 'text-[#FF5A47] hover:text-[#1A1A1A]' : 'text-[#FF5A47] hover:text-white'} transition-colors disabled:opacity-50 flex items-center gap-2`}
+                    className={`${tc.fontClass} ${isMinimal ? 'text-[#FF5A47] hover:text-[#1A1A1A]' : 'text-[#FF5A47] hover:text-white'} transition-colors flex items-center gap-2`}
                   >
                     {!isMinimal && <span className="w-2 h-2 bg-[#FF5A47]" />}
-                    {deleting
-                      ? (isMinimal ? 'Deleting...' : 'DELETING...')
-                      : confirmBulkDelete
-                        ? (isMinimal ? `Confirm delete ${selectedIds.size}` : `CONFIRM_DELETE_${selectedIds.size}`)
-                        : (isMinimal ? `Delete ${selectedIds.size}` : `DELETE_${selectedIds.size}`)}
+                    {confirmBulkDelete
+                      ? (isMinimal ? `Confirm delete ${selectedIds.size}` : `CONFIRM_DELETE_${selectedIds.size}`)
+                      : (isMinimal ? `Delete ${selectedIds.size}` : `DELETE_${selectedIds.size}`)}
                   </button>
                 </>
               )}
@@ -610,61 +608,31 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
           currentWorkspaceId={bulkMoveDrops[0].workspaceId}
           onMove={async (selectedDrops, targetWorkspaceId) => {
             if (!currentUserId) return;
-            setMoveLoading(true);
-            let catMap = new Map<string, string>();
-            try {
-              const allCatNames = Array.from(new Set(
-                selectedDrops.flatMap(d => d.categories || (d.category ? [d.category] : []))
-              ));
-              if (allCatNames.length > 0) {
-                catMap = await ensureCategoriesForTarget(targetWorkspaceId, currentUserId!, allCatNames);
-              }
-            } catch (error) {
-              console.error('Category pre-resolution failed:', error);
-              setMoveLoading(false);
-              alert('Failed to prepare categories. Please try again.');
-              return;
-            }
-            const results = await Promise.all(selectedDrops.map(d => moveDrop(d, targetWorkspaceId, currentUserId!, catMap)));
-            setMoveLoading(false);
-            const failures = results.filter(r => !r.success);
-            if (failures.length === 0) {
-              setBulkMoveDrops(null);
-              setSelectedIds(new Set());
-              setSelectionMode(false);
-              onDelete();
-            } else {
-              alert(`${failures.length}/${selectedDrops.length} drops failed to move: ${failures[0].error}`);
-            }
+            startDropOperation({
+              kind: 'move',
+              drops: selectedDrops,
+              targetWorkspaceId,
+              targetName: workspaces.find(w => w.id === targetWorkspaceId)?.name ?? 'Personal',
+              currentUserId,
+              onSettled: onDelete,
+            });
+            setBulkMoveDrops(null);
+            setSelectedIds(new Set());
+            setSelectionMode(false);
           }}
           onCopy={async (selectedDrops, targetWorkspaceId) => {
             if (!currentUserId) return;
-            setMoveLoading(true);
-            let catMap = new Map<string, string>();
-            try {
-              const allCatNames = Array.from(new Set(
-                selectedDrops.flatMap(d => d.categories || (d.category ? [d.category] : []))
-              ));
-              if (allCatNames.length > 0) {
-                catMap = await ensureCategoriesForTarget(targetWorkspaceId, currentUserId!, allCatNames);
-              }
-            } catch (error) {
-              console.error('Category pre-resolution failed:', error);
-              setMoveLoading(false);
-              alert('Failed to prepare categories. Please try again.');
-              return;
-            }
-            const results = await Promise.all(selectedDrops.map(d => copyDrop(d, targetWorkspaceId, currentUserId!, catMap)));
-            setMoveLoading(false);
-            const failures = results.filter(r => !r.success);
-            if (failures.length === 0) {
-              setBulkMoveDrops(null);
-              setSelectedIds(new Set());
-              setSelectionMode(false);
-              onDelete();
-            } else {
-              alert(`${failures.length}/${selectedDrops.length} drops failed to copy: ${failures[0].error}`);
-            }
+            startDropOperation({
+              kind: 'copy',
+              drops: selectedDrops,
+              targetWorkspaceId,
+              targetName: workspaces.find(w => w.id === targetWorkspaceId)?.name ?? 'Personal',
+              currentUserId,
+              onSettled: onDelete,
+            });
+            setBulkMoveDrops(null);
+            setSelectedIds(new Set());
+            setSelectionMode(false);
           }}
           onClose={() => setBulkMoveDrops(null)}
           theme={theme}
