@@ -19,6 +19,9 @@ interface Props {
 // above every layer (z-index 60). The click-note is the mock's screen-level toast:
 // portaled to <body> and pinned bottom-center, so it can never be clipped by the
 // dropdown panel or the viewport edge (the v1 bug).
+// Round 28 fix: ONE span owns truncation AND shimmer (the mock's structure) — a nested
+// inner paint span split the ellipsis onto a solid-ink wrapper and let the name tail
+// collide with the status. Do not split the name across two spans again.
 export function DeletingWorkspaceRow({ workspace, theme, variant, isOwnerView }: Props) {
   const [shake, setShake] = useState(false);
   const [note, setNote] = useState(false);
@@ -57,7 +60,7 @@ export function DeletingWorkspaceRow({ workspace, theme, variant, isOwnerView }:
 
   return (
     <div
-      className={`ws-deleting ${shake ? 'ws-deleting-shake' : ''}`}
+      className={`ws-deleting gap-2 ${shake ? 'ws-deleting-shake' : ''}`}
       onClick={deny}
       data-testid={`deleting-row-${workspace.id}`}
     >
@@ -65,11 +68,14 @@ export function DeletingWorkspaceRow({ workspace, theme, variant, isOwnerView }:
         <svg className={`w-3.5 h-3.5 shrink-0 opacity-55 ${isDark ? 'text-white/90' : 'text-[#1A1A1A]'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0a2 2 0 014 0zM7 10a2 2 0 11-4 0a2 2 0 014 0z" />
         </svg>
-        <span className={`truncate ${variant === 'editorial' ? 'text-sm' : ''}`}>
-          <span className="shimmer-text" style={inkVars}>{workspace.name}</span>
+        <span
+          className={`shimmer-text truncate min-w-0 ${variant === 'editorial' ? 'text-sm' : ''}`}
+          style={inkVars}
+        >
+          {workspace.name}
         </span>
       </div>
-      <div className="flex items-center gap-1 shrink-0">
+      <div className="flex items-center gap-1 shrink-0 z-10">
         {paused && (
           <button
             onClick={(e) => {
