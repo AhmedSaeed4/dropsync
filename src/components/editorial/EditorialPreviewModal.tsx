@@ -514,7 +514,7 @@ export function EditorialPreviewModal({ drop, onClose, onBack, canBack, theme = 
                 <img
                   src={drop.fileData}
                   alt={drop.name}
-                  className="max-w-full max-h-[50vh] object-contain rounded-lg border ${tc.border}"
+                  className="max-w-full max-h-[50vh] object-contain rounded-lg"
                 />
                 <button
                   type="button"
