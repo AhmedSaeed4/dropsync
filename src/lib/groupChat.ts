@@ -10,6 +10,7 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocFromServer,
   getDocs,
   increment,
   setDoc,
@@ -30,6 +31,8 @@ import { encryptData, decryptData } from './crypto';
 import { getWorkspaceKey } from './keys';
 import { extractMentionedUids } from './dropTagUtils';
 import { GroupChatMessage } from '@/types';
+import type { StickerEnvelope } from '@/types/stickers';
+import { hasStickerFields, readStickerEnvelope } from './groupMessagePresentation';
 
 const MAX_MESSAGES = 200;
 
@@ -76,6 +79,17 @@ export function subscribeToGroupMessages(
 
     for (const document of snapshot.docs) {
       const data = document.data();
+      const stickerEnvelope = readStickerEnvelope(data);
+      if (stickerEnvelope.kind === 'sticker') {
+        messages.push({
+          id: document.id, senderId: data.senderId || '', senderName: data.senderName || 'Unknown',
+          content: '', encrypted: !!data.encrypted, iv: data.iv || '',
+          createdAt: data.createdAt?.toDate() || new Date(),
+          edited: false, editedAt: null, editCount: typeof data.editCount === 'number' ? data.editCount : 0,
+          replyToMessageId: data.replyToMessageId || undefined, ...stickerEnvelope,
+        });
+        continue; // Never decrypt or display a sticker message's invisible ciphertext.
+      }
 
       if (!cachedKey || !data.encrypted) {
         messages.push({
@@ -90,6 +104,7 @@ export function subscribeToGroupMessages(
           editedAt: data.editedAt?.toDate() ?? null,
           editCount: typeof data.editCount === 'number' ? data.editCount : 0,
           replyToMessageId: data.replyToMessageId || undefined,
+          ...stickerEnvelope,
         });
         continue;
       }
@@ -108,6 +123,7 @@ export function subscribeToGroupMessages(
           editedAt: data.editedAt?.toDate() ?? null,
           editCount: typeof data.editCount === 'number' ? data.editCount : 0,
           replyToMessageId: data.replyToMessageId || undefined,
+          ...stickerEnvelope,
         });
       } catch {
         messages.push({
@@ -122,11 +138,12 @@ export function subscribeToGroupMessages(
           editedAt: data.editedAt?.toDate() ?? null,
           editCount: typeof data.editCount === 'number' ? data.editCount : 0,
           replyToMessageId: data.replyToMessageId || undefined,
+          ...stickerEnvelope,
         });
       }
     }
 
-    callback(messages);
+    if (!cancelled) callback(messages);
   }, (error) => {
     // Permission denied = user left workspace or doesn't have access
     console.error('Group chat subscription error:', error.message);
@@ -149,6 +166,7 @@ export async function sendGroupMessage(
   senderName: string,
   content: string,
   replyToMessageId?: string,
+  stickerEnvelope?: StickerEnvelope,
 ): Promise<string | null> {
   try {
     await assertWorkspaceWritableById(workspaceId);
@@ -158,11 +176,18 @@ export async function sendGroupMessage(
       return null;
     }
 
-    const { encrypted, iv } = await encryptData(content, workspaceKey);
+    if (stickerEnvelope) {
+      const envelope = readStickerEnvelope(stickerEnvelope as unknown as Record<string, unknown>);
+      if (!envelope.stickerId || !envelope.stickerWidth || !envelope.stickerHeight) return null;
+      const sticker = await getDocFromServer(doc(db, 'workspaces', workspaceId, 'stickers', envelope.stickerId));
+      if (!sticker.exists() || sticker.get('status') !== 'ready'
+        || sticker.get('width') !== envelope.stickerWidth || sticker.get('height') !== envelope.stickerHeight) return null;
+    }
+    const { encrypted, iv } = await encryptData(stickerEnvelope ? '' : content, workspaceKey);
     // @[displayName](uid) chips live in the PLAINTEXT body; collect their uids for the plaintext,
     // create-only `mentionedUids` field. The notify route intersects these with current members
     // (abuse boundary) so a uid forged into the body still can't push to a non-member.
-    const mentionedUids = extractMentionedUids(content);
+    const mentionedUids = stickerEnvelope ? [] : extractMentionedUids(content);
 
     // Reply is a CREATE: it gets a fresh serverTimestamp() createdAt. replyToMessageId is a plaintext
     // pointer (NEVER encrypted) written ONLY when present — omit the key entirely when undefined so
@@ -181,6 +206,10 @@ export async function sendGroupMessage(
                                  // missing-field branch for new messages
         createdAt: serverTimestamp(),
         ...(replyToMessageId ? { replyToMessageId } : {}),
+        ...(stickerEnvelope ? {
+          kind: 'sticker', stickerId: stickerEnvelope.stickerId,
+          stickerWidth: stickerEnvelope.stickerWidth, stickerHeight: stickerEnvelope.stickerHeight,
+        } : {}),
         // @member mentions — plaintext + create-only. The update rule's hasOnly (:191) makes this
         // immutable after create (same as replyToMessageId) — that's why v1 is composer-only.
         // Omitted entirely when nobody is @mentioned, so it never stores null/empty.
@@ -263,6 +292,9 @@ export async function editGroupMessage(
   newPlaintext: string,
 ): Promise<boolean> {
   try {
+    const ref = doc(db, 'workspaces', workspaceId, 'messages', messageId);
+    const target = await getDocFromServer(ref);
+    if (!target.exists() || hasStickerFields(target.data())) return false;
     await assertWorkspaceWritableById(workspaceId);
     const workspaceKey = await getWorkspaceKey(workspaceId, userId);
     if (!workspaceKey) {
@@ -270,7 +302,6 @@ export async function editGroupMessage(
       return false;
     }
     const { encrypted, iv } = await encryptData(newPlaintext, workspaceKey); // ONE call → fresh iv
-    const ref = doc(db, 'workspaces', workspaceId, 'messages', messageId);
     await assertWorkspaceWritableById(workspaceId);
     await updateDoc(ref, {
       content: encrypted,

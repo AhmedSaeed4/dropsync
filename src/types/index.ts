@@ -165,4 +165,9 @@ export interface GroupChatMessage {
   // immutable after create; editing a replied message preserves the pointer). Like editedAt it is
   // display-only context and MUST NEVER feed the unread counter / read-state / foreground listener.
   replyToMessageId?: string;
+  // Create-only sticker envelope; absent kind preserves all legacy text messages.
+  kind?: 'sticker';
+  stickerId?: string;
+  stickerWidth?: number;
+  stickerHeight?: number;
 }

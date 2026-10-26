@@ -55,7 +55,7 @@ messaging.onBackgroundMessage((payload) => {
     return;
   }
   self.registration.showNotification(d.senderName || 'New message', {
-    body: 'Sent a message in ' + (d.workspaceName || 'workspace'),
+    body: (d.messageKind === 'sticker' ? 'Sent a sticker in ' : 'Sent a message in ') + (d.workspaceName || 'workspace'),
     tag: 'dropsync-chat-' + wsId,
     data: { workspaceId: wsId },
     icon: '/icon.svg?v=2',

@@ -10,6 +10,7 @@ import { getImportFenceOutstanding } from './importFenceClient';
 import { runDeletionJob, isDeletionPaused } from './workspaceDeletion';
 import { withUserArchiveLock } from './archiveJobLock';
 import { getArchiveTaskManager } from './archiveTaskManager';
+import { cleanupWorkspaceStickers } from './stickers';
 
 const USERS_COLLECTION = 'users';
 const USER_KEYS_COLLECTION = 'userKeys';
@@ -352,6 +353,12 @@ async function deleteAccountUnderHeldLock(
           const workspaceDropsSnap = await getDocs(workspaceDropsQuery);
           for (const dropDoc of workspaceDropsSnap.docs) {
             await deleteDropWithAttachments(dropDoc);
+          }
+          // Solo-account deletion has its own parent-removal path; retain auth/key on failure.
+          const stickersCleaned = await cleanupWorkspaceStickers(workspaceDoc.id).catch(() => false);
+          if (!stickersCleaned) {
+            await abortAccountBarrier();
+            return { success: false, error: "Sticker storage cleanup is pending. Please try again before deleting your account." };
           }
           // ROUND 12 (F5): the key cleanup is CHECKED + retried and the workspace-doc
           // delete WAITS for the confirmed ack — a swallowed failure could orphan the key.

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback, useId } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import { ThinkingOrb } from 'thinking-orbs';
@@ -22,6 +22,12 @@ import {
   ChatMessage,
 } from '@/lib/chat';
 import { subscribeToGroupMessages, sendGroupMessage, editGroupMessage, deleteGroupMessage, clearGroupChat, getSeenBy } from '@/lib/groupChat';
+import { useIsPhone } from "@/hooks/useIsPhone";
+import { useWorkspaceStickers } from "@/hooks/useWorkspaceStickers";
+import type { WorkspaceSticker } from "@/types/stickers";
+import { WorkspaceStickerPanel, type StickerCloseReason } from "./WorkspaceStickerPanel";
+import { StickerMessage } from "./StickerMessage";
+import { isStickerMessage } from '@/lib/groupMessagePresentation';
 import { parseMessageContent, extractAgentDropRefs } from '@/lib/dropTagUtils';
 import { assertDropWritableById, assertWorkspaceWritableById } from '@/lib/archiveJournalVisibility';
 import { streamAgentChat, AgentStoppedError, AgentRateLimitError, AgentTransientError } from '@/lib/agentActivity';
@@ -139,6 +145,46 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   const workspaceDrops = useMemo(() => (drops || []).filter(d => d.workspaceId === workspaceId), [drops, workspaceId]);
   // Declared early so the editor hook below can self-exclude the current user from the @ picker.
   const userId = auth.currentUser?.uid;
+  const isPhone = useIsPhone();
+  const stickerCatalog = useWorkspaceStickers(workspaceId,userId,chatMode === 'group');
+  const stickerScope = useMemo(() => ({
+    key:chatMode === 'group' && workspaceId && userId ? userId + ':' + workspaceId : '',
+    alive:false,
+  }),[workspaceId,userId,chatMode]);
+  const [openStickerScope,setOpenStickerScope] = useState<object | null>(null);
+  const stickerOpen = !!stickerScope.key && openStickerScope === stickerScope && !stickerCatalog.revoked;
+  const stickerTriggerRef = useRef<HTMLButtonElement>(null);
+  const stickerFocusBlockedRef = useRef(false);
+  const stickerComposerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    stickerFocusBlockedRef.current = stickerOpen;
+    return () => { stickerFocusBlockedRef.current = false; };
+  },[stickerOpen]);
+  const stickerPanelId = useId();
+  const [groupSnapshotScope,setGroupSnapshotScope] = useState('');
+  useEffect(() => {
+    stickerScope.alive = true;
+    return () => {
+      stickerScope.alive = false;
+      if (groupSendFocusTimerRef.current) {
+        clearTimeout(groupSendFocusTimerRef.current); groupSendFocusTimerRef.current = null;
+      }
+    };
+  },[stickerScope]);
+  useEffect(() => {
+    if (!stickerCatalog.revoked) return;
+    let cancelled = false;
+    queueMicrotask(() => { if (!cancelled) setOpenStickerScope(null); });
+    return () => { cancelled = true; };
+  },[stickerCatalog.revoked]);
+  const closeStickers = useCallback((reason: StickerCloseReason) => {
+    if (!stickerScope.alive) return;
+    setOpenStickerScope(null);
+    stickerFocusBlockedRef.current = false;
+    if (reason === 'escape' || reason === 'button' || (isPhone && reason === 'sent')) {
+      stickerTriggerRef.current?.focus({ preventScroll:true });
+    }
+  },[stickerScope,isPhone]);
   // Editor chip classes — solid pills on the editor's single-bg surface.
   const mentionChipBase = `inline-flex items-center mx-0.5 px-1.5 py-0.5 align-middle rounded text-[13px] leading-none ${tc.fontClass}`;
   const mentionFoundClass = `${mentionChipBase} ${tc.activePillBg} ${tc.activePillText}`;
@@ -446,12 +492,17 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
 
     setGroupMessagesLoading(true);
 
+    let cancelled = false;
+    const snapshotScope = userId + ':' + workspaceId;
     groupUnsubRef.current = subscribeToGroupMessages(workspaceId, userId, (msgs) => {
+      if (cancelled || auth.currentUser?.uid !== userId) return;
+      setGroupSnapshotScope(snapshotScope);
       setGroupMessages(msgs);
       setGroupMessagesLoading(false);
     });
 
     return () => {
+      cancelled = true;
       if (groupUnsubRef.current) {
         groupUnsubRef.current();
         groupUnsubRef.current = null;
@@ -846,7 +897,48 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
       // still pending from an earlier send. An unexpected throw skips this — the finally
       // below just releases the lock.
       if (groupSendFocusTimerRef.current) clearTimeout(groupSendFocusTimerRef.current);
-      groupSendFocusTimerRef.current = setTimeout(() => groupMention.editorRef.current?.focus(), 100);
+      groupSendFocusTimerRef.current = setTimeout(() => {
+        if (stickerScope.alive && !stickerFocusBlockedRef.current) groupMention.editorRef.current?.focus();
+      }, 100);
+    } finally {
+      groupSendInFlightRef.current = false;
+      if (groupSendAliveRef.current) setGroupSending(false);
+    }
+  };
+
+  // Sticker sends use the same synchronous authority as text. The captured scope
+  // prevents a late completion from clearing another workspace's reply or focusing it.
+  const handleStickerSend = async (selected: WorkspaceSticker) => {
+    if (!userId || !workspaceId || !stickerScope.alive || stickerCatalog.revoked) return;
+    if (groupSendInFlightRef.current) return;
+    groupSendInFlightRef.current = true;
+    setGroupSending(true);
+    const alive = () => stickerScope.alive && auth.currentUser?.uid === userId;
+    const quoted = replyTo;
+    try {
+      await assertWorkspaceWritableById(workspaceId);
+      if (!alive()) return;
+      const ready = stickerCatalog.byId.get(selected.id);
+      if (!ready || ready.status !== 'ready' || ready.iv !== selected.iv) {
+        showSystemNotice("Couldn't send sticker. Try again.",4000); return;
+      }
+      typing.clearTyping();
+      const senderName = auth.currentUser?.displayName || auth.currentUser?.email?.split('@')[0] || 'Unknown';
+      const messageId = await sendGroupMessage(workspaceId,userId,senderName,'',quoted?.id,{
+        kind:'sticker',stickerId:ready.id,stickerWidth:ready.width,stickerHeight:ready.height,
+      });
+      if (!alive()) return;
+      if (!messageId) { showSystemNotice("Couldn't send sticker. Try again.",4000); return; }
+      setReplyTo(current => current?.id === quoted?.id ? null : current);
+      closeStickers('sent');
+      if (!isPhone) {
+        if (groupSendFocusTimerRef.current) clearTimeout(groupSendFocusTimerRef.current);
+        groupSendFocusTimerRef.current = setTimeout(() => {
+          if (alive() && !stickerFocusBlockedRef.current) groupMention.editorRef.current?.focus();
+        },100);
+      }
+    } catch {
+      if (alive()) showSystemNotice("Couldn't send sticker. Try again.",4000);
     } finally {
       groupSendInFlightRef.current = false;
       if (groupSendAliveRef.current) setGroupSending(false);
@@ -879,6 +971,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   const openMenuFromButton = (e: React.MouseEvent, msg: GroupChatMessage) => {
     e.preventDefault();
     e.stopPropagation();
+    setOpenStickerScope(null);
     const btn = e.currentTarget as HTMLElement;
     const r = btn.getBoundingClientRect();
     const panelRight = panelRef.current?.getBoundingClientRect().right ?? window.innerWidth;
@@ -886,6 +979,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   };
 
   const handleCopyMessage = async (msg: GroupChatMessage) => {
+    if (isStickerMessage(msg)) return;
     try {
       await navigator.clipboard.writeText(msg.content);
       setCopiedMsgId(msg.id);
@@ -922,12 +1016,15 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
   // and focuses the composer so the user can type immediately. clearReply drops it (✕ / Escape /
   // send / mode or workspace switch).
   const startReply = (msg: GroupChatMessage) => {
+    setOpenStickerScope(null);
     setMenuMsg(null);
     setReplyTo(msg);
     groupMention.editorRef.current?.focus();
   };
   const clearReply = () => setReplyTo(null);
   const startEditing = (msg: GroupChatMessage) => {
+    if (isStickerMessage(msg)) return;
+    setOpenStickerScope(null);
     setMenuMsg(null);
     setEditingMsgId(msg.id);
     setEditDraft(msg.content);
@@ -1039,7 +1136,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
               <button
                 ref={membersBtnRef}
                 type="button"
-                onClick={() => setShowMembers((v) => !v)}
+                onClick={() => { setOpenStickerScope(null); setShowMembers((v) => !v); }}
                 title="Members"
                 className={`w-7 h-7 flex items-center justify-center rounded-md ${tc.text} transition-all ${showMembers ? 'opacity-100 bg-black/5' : 'opacity-50 hover:opacity-100 hover:bg-black/5'}`}
               >
@@ -1338,6 +1435,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
             </div>
           )}
           {groupMessages.map((msg) => {
+            const stickerMessage = isStickerMessage(msg);
             const isOwn = msg.senderId === userId;
             const idx = groupMessages.indexOf(msg);
             const prevMsg = idx > 0 ? groupMessages[idx - 1] : null;
@@ -1377,12 +1475,12 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
                   )}
                   <div
                     ref={setMessageRef(msg.id)}
-                    className={`px-3.5 py-2.5 text-sm leading-relaxed ${tc.roundedClass} ${
-                      isOwn
+                    className={`${stickerMessage ? 'bg-transparent p-0 '+tc.text : 'px-3.5 py-2.5 text-sm leading-relaxed '+tc.roundedClass} ${
+                      stickerMessage ? '' : isOwn
                         ? 'bg-[#1a1a1a] text-[#FFFEF5]'
                         : `bg-[#f5f5f5] ${theme === 'dark' ? 'bg-white/10 text-white' : 'text-[#1a1a1a]'} border ${tc.border}`
                     } ${flashId === msg.id ? (theme === 'dark' ? 'animate-msg-flash-dark' : 'animate-msg-flash-light') : ''} relative [@media(hover:none)]:pt-7`}
-                    style={isOwn ? { borderBottomRightRadius: '3px' } : { borderBottomLeftRadius: '3px' }}
+                    style={stickerMessage ? undefined : isOwn ? { borderBottomRightRadius: '3px' } : { borderBottomLeftRadius: '3px' }}
                   >
                     <button
                       type="button"
@@ -1396,7 +1494,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
                         <circle cx="19" cy="12" r="1.6" />
                       </svg>
                     </button>
-                    {editingMsgId === msg.id ? (
+                    {!isStickerMessage(msg) && editingMsgId === msg.id ? (
                       <div className={`relative flex flex-col gap-1.5 min-w-[200px] p-1.5 border ${tc.border} ${tc.roundedClass} ${tc.bg}`}>
                         {/* #-mention dropdown — anchored to this edit wrapper, floats above the bubble */}
                         {editMention.showMention && editMention.filteredMentionDrops.length > 0 && (
@@ -1468,20 +1566,29 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
                             roundedClassName={tc.roundedClass}
                           />
                         )}
-                        {/* Inline render: text → <span>, #[name](id) → clickable chip, in sentence
-                            order. whitespace-pre-wrap preserves newlines in text parts. */}
-                        <div className={`whitespace-pre-wrap break-words leading-relaxed ${tc.fontClass}`}>
-                          <DropMentionContent
-                            content={msg.content}
-                            allDrops={workspaceDrops}
-                            onPreview={(d) => { if (onPreviewDrop && workspaceId) onPreviewDrop(d.id, workspaceId); }}
-                            foundClassName={displayFoundClass}
-                            deletedClassName={displayDeletedClass}
-                            userMentionClassName={displayUserClass}
-                          />
-                        </div>
-                        {msg.edited && (
-                          <span className="block text-[10px] opacity-60 mt-0.5">(edited)</span>
+                        {stickerMessage ? (
+                          <StickerMessage message={msg}
+                            sticker={groupSnapshotScope === stickerScope.key ? stickerCatalog.byId.get(msg.stickerId || '') : undefined}
+                            assets={stickerCatalog.assets} isPhone={isPhone} theme={theme}
+                            loading={groupSnapshotScope !== stickerScope.key || stickerCatalog.loading} />
+                        ) : (
+                          <>
+                            {/* Inline render: text → <span>, #[name](id) → clickable chip, in sentence
+                                order. whitespace-pre-wrap preserves newlines in text parts. */}
+                            <div className={`whitespace-pre-wrap break-words leading-relaxed ${tc.fontClass}`}>
+                              <DropMentionContent
+                                content={msg.content}
+                                allDrops={workspaceDrops}
+                                onPreview={(d) => { if (onPreviewDrop && workspaceId) onPreviewDrop(d.id, workspaceId); }}
+                                foundClassName={displayFoundClass}
+                                deletedClassName={displayDeletedClass}
+                                userMentionClassName={displayUserClass}
+                              />
+                            </div>
+                            {msg.edited && (
+                              <span className="block text-[10px] opacity-60 mt-0.5">(edited)</span>
+                            )}
+                          </>
                         )}
                       </>
                     )}
@@ -1540,8 +1647,9 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
               rightBound={menuMsg.panelRight}
               anchor={menuMsg.anchor}
               isOwnMessage={menuMsg.msg.senderId === userId}
+              messageKind={menuMsg.msg.kind}
               canEdit={
-                !!userId &&
+                !isStickerMessage(menuMsg.msg) && !!userId &&
                 menuMsg.msg.senderId === userId &&
                 Date.now() - menuMsg.msg.createdAt.getTime() <= 86_400_000 &&
                 (menuMsg.msg.editCount ?? 0) < 10
@@ -1577,7 +1685,13 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
             </div>
           </div>
 
-      <div className={`border-t ${tc.border} p-4 shrink-0 relative transition-all duration-300 ease-out ${showInputArea ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-[10px]'}`} style={{ touchAction: 'none' }}>
+      <div ref={stickerComposerRef} className={`border-t ${tc.border} p-4 shrink-0 relative transition-all duration-300 ease-out ${showInputArea ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-[10px]'}`} style={{ touchAction: 'none' }}>
+        {chatMode === 'group' && userId && (
+          <WorkspaceStickerPanel key={stickerScope.key} id={stickerPanelId} open={stickerOpen}
+            isPhone={isPhone} theme={theme} userId={userId} ownerId={ownerId}
+            catalog={stickerCatalog} sending={groupSending} anchorRef={stickerComposerRef}
+            triggerRef={stickerTriggerRef} onClose={closeStickers} onSend={handleStickerSend} />
+        )}
         {/* Typing indicator — a zero-space overlay above the composer (group + at bottom + someone
             typing). Plain dots + muted text, no background (the original in-flow look). Anchored to
             this relative wrapper (never position:fixed — this wrapper's own translate-y emerge
@@ -1632,6 +1746,30 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
           />
         )}
         <div className="flex gap-2 items-end">
+          {chatMode === 'group' && (
+            <button ref={stickerTriggerRef} type="button" aria-label="Stickers"
+              aria-expanded={stickerOpen} aria-controls={stickerPanelId}
+              disabled={!userId || !workspaceId || stickerCatalog.revoked}
+              onPointerDown={event => event.stopPropagation()}
+              onClick={event => {
+                event.stopPropagation();
+                if (stickerOpen) { closeStickers('button'); return; }
+                if (groupSendFocusTimerRef.current) {
+                  clearTimeout(groupSendFocusTimerRef.current); groupSendFocusTimerRef.current = null;
+                }
+                setMenuMsg(null); setSeenInfo(null); setShowMembers(false);
+                setEditingMsgId(null); setEditDraft('');
+                groupMention.editorRef.current?.blur();
+                stickerFocusBlockedRef.current = true;
+                setOpenStickerScope(stickerScope);
+              }}
+              className={`relative flex h-12 w-11 shrink-0 items-center justify-center border ${tc.btnBg} ${tc.btnText} ${tc.btnBorder} ${tc.btnHoverBg} ${tc.btnHoverText} ${tc.roundedClass} disabled:opacity-40`}>
+              <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+                <path d="M15 21H6a3 3 0 01-3-3V6a3 3 0 013-3h12a3 3 0 013 3v9l-6 6Z" />
+                <path d="M15 21v-4a2 2 0 012-2h4M8 8h.01M14 8h.01M8 12c1.5 2 4.5 2 6 0" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          )}
           {chatMode === 'group' ? (
             // contentEditable mention editor — wrapped in relative flex-1 (mirrors classic ChatPanel)
             // so the dropdown + placeholder anchor to the editor box, not the outer input wrapper.
@@ -1640,7 +1778,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
             // onto the reply chip. The emerge animation is unaffected (opacity/translate inherit).
             <div className="relative flex-1">
               {/* #-mention dropdown — anchored to the editor wrapper, floats above it. */}
-              {groupMention.showMention && groupMention.filteredMentionDrops.length > 0 && (
+              {!stickerOpen && groupMention.showMention && groupMention.filteredMentionDrops.length > 0 && (
                 <div
                   ref={groupMention.dropdownRef}
                   className={`absolute bottom-full left-0 right-0 mb-1 z-50 max-h-[240px] overflow-y-auto rounded-md border ${tc.border} ${tc.bg} shadow-lg`}
@@ -1660,7 +1798,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
               )}
               {/* @member picker — anchored to the editor wrapper, floats above it (mirrors the #
                   picker above). Inline member rows; selecting one inserts an @[name](uid) chip. */}
-              {groupMention.showUserMention && groupMention.filteredMembers.length > 0 && (
+              {!stickerOpen && groupMention.showUserMention && groupMention.filteredMembers.length > 0 && (
                 <div
                   ref={groupMention.userDropdownRef}
                   className={`absolute bottom-full left-0 right-0 mb-1 z-50 max-h-[240px] overflow-y-auto rounded-md border ${tc.border} ${tc.bg} shadow-lg`}
@@ -1712,6 +1850,7 @@ export function EditorialChatPanel({ theme, onClose, onPreviewDrop, workspaceId,
                 }}
                 onKeyUp={() => groupMention.snapshotExternalCaret()}
                 onMouseUp={() => groupMention.snapshotExternalCaret()}
+                onFocus={() => setOpenStickerScope(null)}
                 onBlur={(e) => { groupMention.snapshotExternalCaret(); groupMention.handleBlur(e); typing.clearTyping(); }}
                 role="textbox"
                 aria-multiline="true"

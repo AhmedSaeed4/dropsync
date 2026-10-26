@@ -124,6 +124,7 @@ export function showChatNotification(
   senderName: string,
   workspaceName: string,
   onClick: () => void,
+  kind?: unknown,
 ): void {
   if (!isNotificationsSupported() || Notification.permission !== 'granted') return;
 
@@ -136,7 +137,7 @@ export function showChatNotification(
     (async () => {
       try {
         const reg = await navigator.serviceWorker.ready;
-        await reg.showNotification(`New message from ${senderName}`, {
+        await reg.showNotification((kind === 'sticker' ? `${senderName} sent a sticker` : `New message from ${senderName}`), {
           body: `In ${workspaceName}`,
           tag: 'dropsync-chat',
           icon: '/icon.svg?v=2',
@@ -149,7 +150,7 @@ export function showChatNotification(
   }
 
   try {
-    const n = new Notification(`New message from ${senderName}`, {
+    const n = new Notification((kind === 'sticker' ? `${senderName} sent a sticker` : `New message from ${senderName}`), {
       body: `In ${workspaceName}`,
       tag: 'dropsync-chat', // shared tag → replaces, never stacks
       icon: '/icon.svg?v=2',

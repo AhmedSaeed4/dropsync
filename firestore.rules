@@ -391,6 +391,66 @@ service cloud.firestore {
               : request.resource.data.editCount == 1);
       }
 
+      // Workspace sticker collection — image bytes are client-encrypted in R2.
+      match /stickers/{stickerId} {
+        function stickerMember() {
+          return request.auth != null
+            && exists(/databases/$(database)/documents/workspaces/$(workspaceId))
+            && request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members;
+        }
+        function validStickerCreate() {
+          let d = request.resource.data;
+          return d.keys().hasAll([
+              'uploaderId', 'createdAt', 'mimeType', 'byteSize', 'width', 'height',
+              'encrypted', 'iv', 'ciphertextBytes', 'r2Key', 'status', 'uploadLeaseUntil'
+            ])
+            && d.keys().hasOnly([
+              'uploaderId', 'createdAt', 'mimeType', 'byteSize', 'width', 'height',
+              'encrypted', 'iv', 'ciphertextBytes', 'r2Key', 'status', 'uploadLeaseUntil'
+            ])
+            && stickerId.matches('^[A-Za-z0-9_-]{1,128}$')
+            && d.uploaderId == request.auth.uid
+            && d.createdAt == request.time
+            && d.uploadLeaseUntil == request.time
+            && d.status == 'uploading'
+            && d.encrypted == true
+            && d.iv is string && d.iv.size() == 16
+            && d.mimeType in ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
+            && d.byteSize is int && d.byteSize > 0 && d.byteSize <= 10485760
+            && d.ciphertextBytes is int && d.ciphertextBytes > 0 && d.ciphertextBytes <= 20971520
+            && d.width is int && d.width > 0
+            && d.height is int && d.height > 0
+            && d.r2Key == 'stickers/' + workspaceId + '/' + stickerId;
+        }
+        allow read: if request.auth != null && (
+          (!wsDeleting(workspaceId) && stickerMember())
+          || isDeletingOwner(workspaceId)
+        );
+        allow create: if stickerMember()
+          && !wsDeleting(workspaceId)
+          && !freshLocked(workspaceId)
+          && !barrierBlocks(request.auth.uid)
+          && !barrierBlocks(get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId)
+          && validStickerCreate();
+        // Admin-only ready/deleting transitions; metadata is immutable to clients.
+        allow update: if false;
+        allow delete: if request.auth != null
+          && resource.data.uploadLeaseUntil is timestamp
+          && request.time.toMillis() >= resource.data.uploadLeaseUntil.toMillis() + 60000
+          && (
+            (isDeletingOwner(workspaceId)
+              && (!freshLocked(workspaceId) || freshCancelled(workspaceId)))
+            ||
+            (!wsDeleting(workspaceId)
+              && !freshLocked(workspaceId)
+              && stickerMember()
+              && (
+                request.auth.uid == resource.data.uploaderId
+                || request.auth.uid == get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId
+              ))
+          );
+      }
+
       // Per-user group chat read state - user can only access their own doc, must be a workspace
       // member. Round 12: gated off entirely while the workspace deletes (residual orphan docs
       // are accepted — the SEAL cascade removes them server-side).

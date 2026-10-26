@@ -12,9 +12,9 @@ export const dynamic = 'force-dynamic';
 // alongside the sibling share routes. This route is READ-ONLY on the workspace doc (it reads
 // `members` + `name` to address the push, and never writes to it — the workspace switcher has a
 // live onSnapshot that any write would re-render) and reads each recipient's fcmTokens. It writes
-// ONLY token-doc deletes for tokens FCM reports as dead. It NEVER reads the message doc — messages
-// are client-side encrypted and the server can neither decrypt nor inspect them; the payload is
-// senderName + workspaceName only.
+// ONLY token-doc deletes for tokens FCM reports as dead. It reads the immutable kind/sender
+// envelope to identify stickers; it NEVER accesses/decrypts/logs content or iv. Text payloads
+// remain senderName + workspaceName, with messageKind added only for stickers.
 if (!getApps().length) {
   initializeApp({
     credential: cert({
@@ -83,6 +83,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ sent: 0, suppressed: true });
     }
     const workspaceName: string = wsData.name || 'workspace';
+    const message = await adminDb.collection('workspaces').doc(workspaceId).collection('messages').doc(messageId).get();
+    if (!message.exists) return NextResponse.json({ sent: 0, suppressed: true });
+    const stickerMessage = message.get('kind') === 'sticker';
+    if (stickerMessage && message.get('senderId') !== uid) {
+      return NextResponse.json({ error: 'Only the sender can notify a sticker' }, { status: 403 });
+    }
+    const pushSenderName = stickerMessage ? (message.get('senderName') || 'Someone') : senderName;
 
     // ---- RECIPIENTS: every member EXCEPT the sender. The verified caller (uid) is the sender;
     // senderId from the body is expected to equal uid — exclude both so the sender is never
@@ -134,7 +141,7 @@ export async function POST(request: NextRequest) {
     // omitted on purpose — every registered token is a WEB push token, so the android config is dead.)
     const batchResponse = await getMessaging().sendEachForMulticast({
       tokens: tokenEntries.map((e) => e.token),
-      data: { workspaceId, senderName, workspaceName, type: 'chat' },
+      data: { workspaceId, senderName: pushSenderName, workspaceName, type: 'chat', ...(stickerMessage ? { messageKind: 'sticker' } : {}) },
       webpush: { headers: { Urgency: 'high', Priority: 'high' } },
     });
 
