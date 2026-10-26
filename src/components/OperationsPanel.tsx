@@ -5,6 +5,9 @@ import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import { useOperations, dismissOperation, cancelOperation, retryOperation } from '@/lib/operationCenter';
 import type { Operation, OperationKind } from '@/lib/operationCenter';
+import { useStickerImports, dismissStickerImport, cancelStickerImport, retryStickerImport,
+  dismissStickerCleanup, retryStickerCleanup } from '@/lib/stickerOperations';
+import type { StickerImportOperation, StickerCleanupOperation } from '@/lib/stickerOperations';
 import { getEditorialThemeColors } from './editorial/editorialTheme';
 
 // The operations notification panel (record §4 D28): one card per running/settled bulk
@@ -170,9 +173,158 @@ function OperationCard({ op, theme }: { op: Operation; theme: 'light' | 'dark' |
   );
 }
 
+function StickerImportCard({ op, theme }: { op: StickerImportOperation; theme: 'light' | 'dark' | 'minimal' }) {
+  const tc = getEditorialThemeColors(theme);
+  const completed = op.done + op.failed.length;
+  const failedCount = op.failed.length;
+  const remaining = Math.max(0, op.total - completed);
+  let title: string;
+  let subtitle = '';
+  if (op.status === 'running') {
+    title = 'Importing stickers';
+    subtitle = `${completed} of ${op.total}${op.cancelled ? ' · Cancelled' : ''}`;
+  } else if (op.status === 'succeeded') {
+    title = `Imported ${op.done} ${op.done === 1 ? 'sticker' : 'stickers'}`;
+  } else if (op.done === 0) {
+    title = 'Import failed';
+  } else {
+    title = `${op.done} of ${op.total} imported — ${failedCount} failed`;
+  }
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 14, scale: 0.97 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: 8, scale: 0.97 }}
+      transition={{ type: 'spring', stiffness: 320, damping: 30 }}
+      role={op.status === 'failed' ? 'alert' : 'status'}
+      className={`relative rounded-lg border ${tc.border} ${tc.bg} shadow-lg px-3.5 py-3 pr-9 ${tc.fontClass}`}
+    >
+      <div className="flex items-start gap-2.5">
+        {op.status === 'running' && (
+          <div className="w-4 h-4 mt-0.5 shrink-0 rounded-full border-2 border-current/30 border-t-current animate-spin" />
+        )}
+        {op.status === 'succeeded' && <CheckCircleIcon />}
+        {op.status === 'failed' && <FailCircleIcon />}
+        <div className="min-w-0 flex-1">
+          <p className={`text-[13px] font-medium ${op.status === 'failed' ? 'text-red-500' : tc.text} truncate`}>{title}</p>
+          {subtitle && <p className={`text-[11px] ${tc.muted} mt-0.5 truncate`}>{subtitle}</p>}
+          {op.status === 'running' && (
+            <div className="mt-2 text-current">
+              <TransferTrack done={op.progress} total={1} />
+            </div>
+          )}
+          {op.status === 'failed' && (
+            <div className={`mt-1.5 space-y-1 text-[11px] ${tc.muted}`}>
+              {op.failed.map((failure, index) => (
+                <p key={failure.name + ':' + index} className="break-words">
+                  <span className={tc.text}>{failure.name}</span> — {failure.reason}
+                </p>
+              ))}
+            </div>
+          )}
+          {op.status === 'failed' && (
+            <div className="mt-2 flex items-center gap-2">
+              <button
+                onClick={() => retryStickerImport(op.id)}
+                className={`text-[11px] px-2.5 py-1 rounded-md ${tc.activePillBg} ${tc.activePillText} hover:opacity-90 transition-opacity`}
+              >
+                Retry {failedCount}
+              </button>
+              <button
+                onClick={() => dismissStickerImport(op.id)}
+                className={`text-[11px] ${tc.muted} hover:${tc.text} transition-colors`}
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+          {op.status === 'running' && (
+            <button
+              onClick={() => cancelStickerImport(op.id)}
+              className={`mt-2 text-[11px] ${tc.muted} hover:${tc.text} transition-colors`}
+            >
+              Cancel{remaining > 0 ? ` ${remaining}` : ''}
+            </button>
+          )}
+        </div>
+      </div>
+      {op.status !== 'running' && (
+        <button
+          onClick={() => dismissStickerImport(op.id)}
+          aria-label="Dismiss notification"
+          className={`absolute top-2 right-2 ${tc.muted} hover:${tc.text} transition-colors p-1`}
+        >
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+            <path strokeLinecap="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      )}
+    </motion.div>
+  );
+}
+
+function StickerCleanupCard({ op, theme }: { op: StickerCleanupOperation; theme: 'light' | 'dark' | 'minimal' }) {
+  const tc = getEditorialThemeColors(theme);
+  const title = op.status === 'succeeded' ? 'Sticker removed' : 'Removing sticker — storage cleanup pending';
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 14, scale: 0.97 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: 8, scale: 0.97 }}
+      transition={{ type: 'spring', stiffness: 320, damping: 30 }}
+      role={op.status === 'failed' ? 'alert' : 'status'}
+      className={`relative rounded-lg border ${tc.border} ${tc.bg} shadow-lg px-3.5 py-3 pr-9 ${tc.fontClass}`}
+    >
+      <div className="flex items-start gap-2.5">
+        {op.status === 'running' && (
+          <div className="w-4 h-4 mt-0.5 shrink-0 rounded-full border-2 border-current/30 border-t-current animate-spin" />
+        )}
+        {op.status === 'succeeded' && <CheckCircleIcon />}
+        {op.status === 'failed' && <FailCircleIcon />}
+        <div className="min-w-0 flex-1">
+          <p className={`text-[13px] font-medium leading-snug break-words ${op.status === 'failed' ? 'text-red-500' : tc.text}`}>{title}</p>
+          {op.status === 'failed' && (
+            <p className={`text-[11px] ${tc.muted} mt-0.5 break-words`}>{op.error || "Couldn't remove sticker. Try again."}</p>
+          )}
+          {op.status === 'failed' && (
+            <div className="mt-2 flex items-center gap-2">
+              <button
+                onClick={() => retryStickerCleanup(op.id)}
+                className={`text-[11px] px-2.5 py-1 rounded-md ${tc.activePillBg} ${tc.activePillText} hover:opacity-90 transition-opacity`}
+              >
+                Retry
+              </button>
+              <button
+                onClick={() => dismissStickerCleanup(op.id)}
+                className={`text-[11px] ${tc.muted} hover:${tc.text} transition-colors`}
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+      {op.status === 'failed' && (
+        <button
+          onClick={() => dismissStickerCleanup(op.id)}
+          aria-label="Dismiss notification"
+          className={`absolute top-2 right-2 ${tc.muted} hover:${tc.text} transition-colors p-1`}
+        >
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+            <path strokeLinecap="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      )}
+    </motion.div>
+  );
+}
+
 export function OperationsPanel({ theme = 'light' }: { theme?: 'light' | 'dark' | 'minimal' }) {
   const mounted = useMounted();
   const { operations } = useOperations();
+  const { imports, cleanups } = useStickerImports();
   const visible = operations.slice(-MAX_VISIBLE);
   const overflow = operations.length - visible.length;
   if (!mounted) return null;
@@ -190,6 +342,16 @@ export function OperationsPanel({ theme = 'light' }: { theme?: 'light' | 'dark' 
         )}
         {visible.map(op => (
           <OperationCard key={op.id} op={op} theme={theme} />
+        ))}
+      </AnimatePresence>
+      <AnimatePresence initial={false}>
+        {imports.map(op => (
+          <StickerImportCard key={op.id} op={op} theme={theme} />
+        ))}
+      </AnimatePresence>
+      <AnimatePresence initial={false}>
+        {cleanups.map(op => (
+          <StickerCleanupCard key={op.id} op={op} theme={theme} />
         ))}
       </AnimatePresence>
     </div>,

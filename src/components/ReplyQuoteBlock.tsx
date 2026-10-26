@@ -2,14 +2,16 @@
 
 import type { GroupChatMessage } from '@/types';
 import { contentToPlainText } from '@/lib/dropTagUtils';
+import { groupMessagePreview, isStickerMessage } from '@/lib/groupMessagePresentation';
 
 // One-line snippet from a decrypted body: flatten #[Name](id) chips to the BARE name (so a chip reads
 // as its name, NOT a raw "#[Name](id)" token), collapse all whitespace to a single space, then
 // truncate ~60 chars with an ellipsis. Plain text only — chips stay CLICKABLE only in the real
 // message body (DropMentionContent), never here. Reuses contentToPlainText (no reinvented parser,
 // no raw string.slice that could cut a #[Name](id) token in half).
-function snippetOf(content: string): string {
-  const plain = contentToPlainText(content).replace(/\s+/g, ' ').trim();
+function snippetOf(message: GroupChatMessage): string {
+  if (isStickerMessage(message)) return groupMessagePreview(message);
+  const plain = contentToPlainText(message.content).replace(/\s+/g, ' ').trim();
   if (plain.length <= 60) return plain;
   // Truncate by CODE POINT: Array.from iterates a string by code point, keeping astral surrogate
   // pairs (e.g. 🎉) intact. String.prototype.slice operates on UTF-16 code units and would split a
@@ -69,7 +71,7 @@ export function ReplyQuoteBlock({
               {parent.senderName}
             </span>
             <span className="block truncate text-[10px] leading-tight opacity-60">
-              {snippetOf(parent.content)}
+              {snippetOf(parent)}
             </span>
           </>
         ) : (
@@ -120,7 +122,7 @@ export function ReplyPreviewBar({
         Replying to {replyTo.senderName}
       </span>
       <span className={`min-w-0 flex-1 truncate text-[10px] ${snippetClassName}`}>
-        {snippetOf(replyTo.content)}
+        {snippetOf(replyTo)}
       </span>
       <button
         type="button"

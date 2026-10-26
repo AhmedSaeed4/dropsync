@@ -1322,6 +1322,7 @@ export default function Home() {
           data.senderName || 'Someone',
           currentWorkspace?.name || 'workspace',
           () => { setChatMode('group'); retractFooterIfUp(); setShowChat(true); },
+          data.kind,
         );
       }
     }, (err) => {

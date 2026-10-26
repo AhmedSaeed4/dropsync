@@ -22,6 +22,7 @@ import {
   ChatMessage,
 } from '@/lib/chat';
 import { subscribeToGroupMessages, sendGroupMessage, editGroupMessage, deleteGroupMessage, clearGroupChat, getSeenBy } from '@/lib/groupChat';
+import { isStickerMessage } from '@/lib/groupMessagePresentation';
 import { parseMessageContent, extractAgentDropRefs } from '@/lib/dropTagUtils';
 import { assertDropWritableById, assertWorkspaceWritableById } from '@/lib/archiveJournalVisibility';
 import { streamAgentChat, AgentStoppedError, AgentRateLimitError, AgentTransientError } from '@/lib/agentActivity';
@@ -910,6 +911,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
   };
 
   const handleCopyMessage = async (msg: GroupChatMessage) => {
+    if (isStickerMessage(msg)) return;
     try {
       await navigator.clipboard.writeText(msg.content);
       setCopiedMsgId(msg.id);
@@ -952,6 +954,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
   };
   const clearReply = () => setReplyTo(null);
   const startEditing = (msg: GroupChatMessage) => {
+    if (isStickerMessage(msg)) return;
     setMenuMsg(null);
     setEditingMsgId(msg.id);
     setEditDraft(msg.content);
@@ -1401,7 +1404,7 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
                         <circle cx="19" cy="12" r="1.6" />
                       </svg>
                     </button>
-                    {editingMsgId === msg.id ? (
+                    {!isStickerMessage(msg) && editingMsgId === msg.id ? (
                       <div onClick={(e) => e.stopPropagation()} className={`relative flex flex-col gap-1.5 min-w-[180px] p-1.5 border ${s.inputBorder} ${s.roundedClass} ${s.panelBg}`}>
                         {/* #-mention dropdown — anchored to this edit wrapper, floats above the bubble */}
                         {editMention.showMention && editMention.filteredMentionDrops.length > 0 && (
@@ -1476,6 +1479,8 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
                         {/* Inline render: text → <span>, #[name](id) → clickable chip, in sentence
                             order. Replaces the old separate card-row so chips stay coherent with
                             inline composing. whitespace-pre-wrap preserves newlines in text parts. */}
+                        {isStickerMessage(msg) ? <p className="italic opacity-70">[Sticker]</p> : (
+                          <>
                         <div className="whitespace-pre-wrap break-words leading-relaxed">
                           <DropMentionContent
                             content={msg.content}
@@ -1488,6 +1493,8 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
                         </div>
                         {msg.edited && (
                           <span className="block text-[9px] opacity-60 mt-0.5">(edited)</span>
+                        )}
+                          </>
                         )}
                       </>
                     )}
@@ -1546,8 +1553,9 @@ export function ChatPanel({ theme, onClose, onPreviewDrop, workspaceId, workspac
               rightBound={menuMsg.panelRight}
               anchor={menuMsg.anchor}
               isOwnMessage={menuMsg.msg.senderId === userId}
+              messageKind={menuMsg.msg.kind}
               canEdit={
-                !!userId &&
+                !isStickerMessage(menuMsg.msg) && !!userId &&
                 menuMsg.msg.senderId === userId &&
                 Date.now() - menuMsg.msg.createdAt.getTime() <= 86_400_000 &&
                 (menuMsg.msg.editCount ?? 0) < 10

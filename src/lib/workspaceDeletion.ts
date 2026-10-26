@@ -23,6 +23,7 @@ import {
 } from 'firebase/firestore';
 import { db } from './firebase';
 import { deleteSharesForDropChecked } from './shares';
+import { cleanupWorkspaceStickers } from './stickers';
 
 const DELETION_PAGE_SIZE = 20;
 const MESSAGE_PAGE_SIZE = 100;
@@ -247,6 +248,12 @@ async function runJob(workspaceId: string): Promise<void> {
     }
   }
   await maxMergeProgress(workspaceId, done);
+
+  // Stickers are permanent and live outside drops; never seal with unresolved storage.
+  if (!(await cleanupWorkspaceStickers(workspaceId))) {
+    markPaused(workspaceId);
+    return;
+  }
 
   // ---- Stage: messages (D-f wipe; owner delete; authoritative requery until empty) ----
   for (;;) {

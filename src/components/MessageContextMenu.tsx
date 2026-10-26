@@ -22,6 +22,7 @@ interface MessageContextMenuProps {
   onDelete: () => void;
   onEdit?: () => void;
   canEdit?: boolean;
+  messageKind?: 'sticker';
   onReply?: () => void;
   onClose: () => void;
   theme?: 'light' | 'dark' | 'minimal';
@@ -47,6 +48,7 @@ export function MessageContextMenu({
   onDelete,
   onEdit,
   canEdit,
+  messageKind,
   onReply,
   onClose,
   theme = 'light',
@@ -274,6 +276,7 @@ export function MessageContextMenu({
       >
         {view === 'actions' && (
           <>
+            {messageKind !== 'sticker' && (
             <button
               onClick={handleCopy}
               className={`w-full px-3 py-2 text-left text-xs ${tc!.fontClass} ${tc!.text} hover:bg-[#1a1a1a]/5 transition-colors flex items-center gap-2`}
@@ -284,6 +287,7 @@ export function MessageContextMenu({
               </svg>
               Copy text
             </button>
+            )}
             {onReply && (
               <button
                 onClick={handleReply}
@@ -295,7 +299,7 @@ export function MessageContextMenu({
                 Reply
               </button>
             )}
-            {canEdit && (
+            {messageKind !== 'sticker' && canEdit && (
               <button
                 onClick={handleEdit}
                 className={`w-full px-3 py-2 text-left text-xs ${tc!.fontClass} ${tc!.text} hover:bg-[#1a1a1a]/5 transition-colors flex items-center gap-2`}
@@ -363,6 +367,7 @@ export function MessageContextMenu({
       >
         {view === 'actions' && (
           <>
+            {messageKind !== 'sticker' && (
             <button
               onClick={handleCopy}
               className={`w-full px-3 py-2 text-left flex items-center gap-2 transition-colors ${
@@ -377,6 +382,7 @@ export function MessageContextMenu({
               </svg>
               {isMinimal ? 'Copy text' : 'COPY_TEXT'}
             </button>
+            )}
             {onReply && (
               <button
                 onClick={handleReply}
@@ -392,7 +398,7 @@ export function MessageContextMenu({
                 {isMinimal ? 'Reply' : 'REPLY'}
               </button>
             )}
-            {canEdit && (
+            {messageKind !== 'sticker' && canEdit && (
               <button
                 onClick={handleEdit}
                 className={`w-full px-3 py-2 text-left flex items-center gap-2 transition-colors ${
