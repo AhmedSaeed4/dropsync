@@ -1,5 +1,6 @@
 'use client';
 
+import { LoadingIndicator } from '@/components/LoadingIndicator';
 import { useState, useEffect } from 'react';
 import { useReducedMotion } from 'motion/react';
 import { Drop, Workspace, Category, ExpirationOption } from '@/types';
@@ -262,19 +263,8 @@ export function EditorialMobileShell({
 
   return (
     <div className={`relative flex h-[100dvh] flex-col overflow-x-hidden ${tc.bg} transition-colors duration-500`}>
-      {/* Encryption initializing overlay — same markup as the desktop root (EditorialLayout.tsx:356-367) */}
-      {encryptionInitializing && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 overscroll-contain">
-          <div className={`${tc.cardBg} border ${tc.border} rounded-lg p-8`}>
-            <div className="flex flex-col items-center gap-4">
-              <div className="w-8 h-8 border-2 border-[#1a1a1a]/30 border-t-[#1a1a1a] animate-spin rounded-full" />
-              <p className={`text-sm ${tc.fontClass} ${tc.text}`}>
-                Setting up encryption...
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Encryption setup uses the same loading design as the desktop root. */}
+      {encryptionInitializing && <LoadingIndicator fullScreen label="Setting up encryption" />}
 
       {/* Header — no logo (#13): workspace pill on the left (Drops), chat/theme/settings right */}
       <MobileHeader

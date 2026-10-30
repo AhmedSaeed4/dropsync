@@ -1,5 +1,6 @@
 'use client';
 
+import { LoadingIndicator } from '@/components/LoadingIndicator';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Drop, Workspace } from '@/types';
 import { isReminderFiredShared, isReminderGlowingForViewer, pinDrop, unpinDrop } from '@/lib/drops';
@@ -243,7 +244,6 @@ export function MobileSearchView({
   }, [visibleDrops, query, mentionFilter, sortMode, manualOrder]);
 
   const now = new Date();
-  const shimmerClass = theme === 'dark' ? 'skeleton-shimmer-dark' : theme === 'minimal' ? 'skeleton-shimmer-minimal' : 'skeleton-shimmer-light';
 
   return (
     <div className="flex h-full flex-col">
@@ -334,18 +334,10 @@ export function MobileSearchView({
           {query || mentionFilter ? `Results · ${filteredDrops.length}` : 'Everything'}
         </p>
 
-        {/* Results area: loading shimmer → empty space → nothing-matches → the plain list
+        {/* Results area: shared loader → empty space → nothing-matches → the plain list
             (no animations — the desktop disables them while filtered, :322/:328). */}
         {loading ? (
-          <div className="space-y-2">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className={`rounded-[14px] border p-3 ${tc.border}`}>
-                <div className={`h-32 w-full rounded-[10px] ${shimmerClass}`} />
-                <div className={`mt-3 h-4 w-3/5 ${shimmerClass} rounded-full`} />
-                <div className={`mt-2 h-3 w-2/5 ${shimmerClass} rounded-full`} />
-              </div>
-            ))}
-          </div>
+          <LoadingIndicator label="Loading drops" />
         ) : !loading && visibleDrops.length === 0 && pendingDeletions.size === 0 && !query && !mentionFilter ? (
           <div className="p-12 text-center">
             <p className={`text-sm font-medium ${font} ${tc.text}`}>No drops yet</p>

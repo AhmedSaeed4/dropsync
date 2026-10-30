@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { docsSections } from './sections';
 
@@ -457,12 +458,12 @@ const PROSE: Record<string, SectionProse> = {
         <p className={BODY}>
           You can delete your account from Settings. If you own workspaces, ownership is transferred
           first. See the{' '}
-          <a
+          <Link
             className="text-[var(--text)] underline decoration-[var(--border)] underline-offset-2 hover:decoration-[var(--text)]"
             href="/privacy"
           >
             Privacy Policy
-          </a>{' '}
+          </Link>{' '}
           for what deletion covers.
         </p>
       ),

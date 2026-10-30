@@ -849,3 +849,39 @@ html {
   white-space: nowrap;
   z-index: 9999;
 }
+/* ORDER 60c: boot loading experience, carried from the design file head boot styles (index-part-4.html lines 9-27).
+   Rendered app-wide but inert unless the parse-time BOOT_SCRIPT (only on /) sets html[data-boot];
+   .boot-loader exists only script-created; .shell exists only in the landing. Boot background = the Order-60b white. */
+html[data-boot] { background: #FFFEF5; }
+html[data-boot] .shell { transition: opacity 760ms cubic-bezier(.22, 1, .36, 1); }
+html[data-boot="pending"] .shell { opacity: 0; visibility: hidden; pointer-events: none; }
+.boot-loader { position: fixed; inset: 0; z-index: 100; display: grid; place-content: center; justify-items: center; gap: 1.25rem; background: #FFFEF5; color: #292c2c; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 460ms ease, visibility 0s 460ms; }
+html[data-loader="visible"] .boot-loader { opacity: 1; visibility: visible; pointer-events: auto; transition: opacity 300ms ease; }
+.boot-brand { display: flex; align-items: center; gap: .75rem; font: 500 20px/1.4 'Helvetica Neue', Arial, sans-serif; letter-spacing: -.5px; }
+.boot-diamond { width: 8px; height: 8px; background: #637984; transform: rotate(45deg); animation: boot-breathe 1800ms ease-in-out infinite alternate; }
+.boot-track { width: 72px; height: 1px; overflow: hidden; background: #63798424; }
+.boot-track::after { content: ''; display: block; width: 100%; height: 100%; background: #637984; transform-origin: left; animation: boot-progress 1800ms ease-in-out infinite alternate; }
+@keyframes boot-breathe { from { opacity: .4; } to { opacity: 1; } }
+@keyframes boot-progress { from { transform: translateX(-65%) scaleX(.4); } to { transform: translateX(65%) scaleX(.7); } }
+@media (prefers-reduced-motion: reduce) {
+  html[data-boot] .shell, .boot-loader { transition: none; }
+  .boot-diamond, .boot-track::after { animation: none; }
+  .boot-track::after { transform: none; opacity: .55; }
+}
+
+/* Shared loading visuals for auth, consent, encryption and initial content. */
+.dropsync-loading { display: grid; min-height: 12rem; place-content: center; justify-items: center; gap: 1.25rem; padding: 2rem; background: #FFFEF5; color: #292c2c; }
+.dropsync-loading-screen { position: fixed; inset: 0; z-index: 90; min-height: 100svh; }
+html[data-boot="pending"] .dropsync-loading-screen { visibility: hidden; }
+
+/* ORDER 60d: dark boot and live shared-loader colors; light rules above stay untouched. */
+html[data-landing-theme="dark"][data-boot] { background: #0d0d0d; }
+html[data-landing-theme="dark"][data-boot] body { background: #0d0d0d !important; }
+html[data-landing-theme="dark"] .boot-loader,
+html[data-loading-theme="dark"] .dropsync-loading { background: #0d0d0d; color: #ffffff; }
+html[data-landing-theme="dark"] .boot-loader .boot-diamond,
+html[data-loading-theme="dark"] .dropsync-loading .boot-diamond { background: #ffffff; }
+html[data-landing-theme="dark"] .boot-loader .boot-track,
+html[data-loading-theme="dark"] .dropsync-loading .boot-track { background: #ffffff1a; }
+html[data-landing-theme="dark"] .boot-loader .boot-track::after,
+html[data-loading-theme="dark"] .dropsync-loading .boot-track::after { background: #ffffff; }
