@@ -1,5 +1,6 @@
 'use client';
 
+import { LoadingIndicator } from '@/components/LoadingIndicator';
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Drop, Workspace, Category } from '@/types';
@@ -276,18 +277,7 @@ export function DropList({ drops, loading, onDelete, onPreview, onEdit, workspac
   const tc = getThemeColors();
 
   if (loading) {
-    return (
-      <div className={`border ${tc.borderColor} ${tc.bgColor} ${tc.roundedClass} p-12 flex flex-col items-center justify-center transition-colors duration-300`}>
-        {isMinimal ? (
-          <div className="w-8 h-8 border border-[#1A1A1A]/30 border-t-[#1A1A1A] animate-spin rounded-full" />
-        ) : (
-          <div className={`w-8 h-8 border-2 ${isDark ? 'border-white' : 'border-[#1A1A1A]'} border-t-transparent animate-spin`} />
-        )}
-        <p className={`${tc.fontClass} ${tc.textMuted} mt-4`}>
-          {isMinimal ? 'Loading...' : 'LOADING_DATA...'}
-        </p>
-      </div>
-    );
+    return <LoadingIndicator label="Loading drops" />;
   }
 
   if (visibleDrops.length === 0 && pendingDeletions.size === 0) {

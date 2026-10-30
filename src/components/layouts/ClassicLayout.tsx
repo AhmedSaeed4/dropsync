@@ -1,5 +1,6 @@
 'use client';
 
+import { LoadingIndicator } from '@/components/LoadingIndicator';
 import { useRef, useState } from 'react';
 import { AgentDropRequest, ChatDropRequest, Drop, Workspace, ExpirationOption } from '@/types';
 import { Header } from '@/components/Header';
@@ -301,18 +302,7 @@ export function ClassicLayout(props: ClassicLayoutProps) {
   return (
     <div className={`flex h-[100dvh] flex-col ${themeColors.bgColor} transition-colors duration-500`}>
       {/* Encryption initializing overlay */}
-      {encryptionInitializing && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 overscroll-contain">
-          <div className={`${themeColors.cardBg} border ${themeColors.borderColor} p-8 ${theme === 'minimal' ? 'rounded-lg' : ''}`}>
-            <div className="flex flex-col items-center gap-4">
-              <div className="w-8 h-8 border-2 border-[#FF5A47] border-t-transparent animate-spin rounded-full" />
-              <p className={`text-sm ${theme === 'minimal' ? 'font-sans tracking-wide' : 'font-mono uppercase tracking-wider'} ${themeColors.textColor}`}>
-                {theme === 'minimal' ? 'Setting up encryption...' : 'INITIALIZING_ENCRYPTION...'}
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
+      {encryptionInitializing && <LoadingIndicator fullScreen label="Setting up encryption" />}
       <Header theme={theme} onThemeChange={setTheme} onOpenSettings={() => { retractFooterIfUp(); setShowSettingsModal(true); }} onToggleChat={onToggleChat} chatOpen={showChat} unreadCount={unreadCount}>
         <WorkspaceSwitcher
           workspaces={workspaces}

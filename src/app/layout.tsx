@@ -38,7 +38,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body className={`${inter.variable} ${raleway.variable} font-[family-name:var(--font-inter)] antialiased`} suppressHydrationWarning>
         <Providers>
           <SmoothScrollProvider>

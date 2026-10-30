@@ -36,6 +36,12 @@ export default function TermsClient() {
     const _isDark = theme === 'dark';
     const _isClassic = layoutMode === 'classic';
     const bgColor = _isDark ? '#0D0D0D' : _isClassic ? '#FAF7F2' : '#FFFEF5';
+    document.body.style.setProperty('--bg', _isDark ? '#0D0D0D' : '#FFFEF5');
+    document.body.style.setProperty('--text', _isDark ? '#ffffff' : '#1a1a1a');
+    document.body.style.setProperty('--muted', _isDark ? '#888' : '#666');
+    document.body.style.setProperty('--heading', _isDark ? '#ffffff' : '#1a1a1a');
+    document.body.style.setProperty('--border', _isDark ? '#333' : '#e0e0e0');
+    document.body.style.setProperty('--link', _isDark ? '#ffffff' : '#1a1a1a');
     document.body.style.background = bgColor;
     document.body.style.color = _isDark ? '#ffffff' : '#1a1a1a';
     return () => {

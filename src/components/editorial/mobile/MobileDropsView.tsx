@@ -1,5 +1,6 @@
 'use client';
 
+import { LoadingIndicator } from '@/components/LoadingIndicator';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Drop, Category, Workspace } from '@/types';
 import { deleteDrop, pinDrop, unpinDrop, isReminderFiredShared, isReminderGlowingForViewer } from '@/lib/drops';
@@ -420,7 +421,6 @@ export function MobileDropsView({
     !!currentUserId && (currentUserId === drop.userId || (!!currentWorkspace && currentUserId === currentWorkspace.ownerId));
 
   const currentSortLabel = SORT_LABELS[sortMode] ?? 'Newest';
-  const shimmerClass = theme === 'dark' ? 'skeleton-shimmer-dark' : theme === 'minimal' ? 'skeleton-shimmer-minimal' : 'skeleton-shimmer-light';
 
   // The sheeted drop's manual-move bundle (D1 fix): only in Manual mode, unfiltered, not
   // selecting, and only for drops that sit in the manual unpinned order.
@@ -551,15 +551,7 @@ export function MobileDropsView({
 
         {/* The flat card list (#23) — the phone page scrolls; no max-height clamp */}
         {loading ? (
-          <div className="space-y-2">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className={`rounded-[14px] border p-3 ${tc.border}`}>
-                <div className={`h-32 w-full rounded-[10px] ${shimmerClass}`} />
-                <div className={`mt-3 h-4 w-3/5 ${shimmerClass} rounded-full`} />
-                <div className={`mt-2 h-3 w-2/5 ${shimmerClass} rounded-full`} />
-              </div>
-            ))}
-          </div>
+          <LoadingIndicator label="Loading drops" />
         ) : visibleDrops.length === 0 && pendingDeletions.size === 0 ? (
           <div className="p-12 text-center">
             <p className={`text-sm font-medium ${font} ${tc.text}`}>No drops yet</p>

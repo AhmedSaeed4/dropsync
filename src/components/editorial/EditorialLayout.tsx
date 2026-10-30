@@ -1,5 +1,6 @@
 'use client';
 
+import { LoadingIndicator } from '@/components/LoadingIndicator';
 import { memo, useRef, useState, useEffect } from 'react';
 import { AgentDropRequest, ChatDropRequest, Drop, Workspace, ExpirationOption } from '@/types';
 import { EditorialPreviewModal } from './EditorialPreviewModal';
@@ -534,18 +535,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
         onOpenRootDrop={handleOpenRootDrop}
       />
       {/* Encryption initializing overlay */}
-      {encryptionInitializing && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 overscroll-contain">
-          <div className={`${tc.cardBg} border ${tc.border} rounded-lg p-8`}>
-            <div className="flex flex-col items-center gap-4">
-              <div className="w-8 h-8 border-2 border-[#1a1a1a]/30 border-t-[#1a1a1a] animate-spin rounded-full" />
-              <p className={`text-sm ${tc.fontClass} ${tc.text}`}>
-                Setting up encryption...
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
+      {encryptionInitializing && <LoadingIndicator fullScreen label="Setting up encryption" />}
 
       {/* Header */}
       <EditorialHeader

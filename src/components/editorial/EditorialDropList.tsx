@@ -1,5 +1,6 @@
 'use client';
 
+import { LoadingIndicator } from '@/components/LoadingIndicator';
 import { useState, useCallback, useMemo, useEffect, useLayoutEffect, useRef, memo, type ComponentProps } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
@@ -796,7 +797,6 @@ export function EditorialDropList({
     setConfirmDeleteCategory(null);
   };
 
-  const shimmerClass = theme === 'dark' ? 'skeleton-shimmer-dark' : theme === 'minimal' ? 'skeleton-shimmer-minimal' : 'skeleton-shimmer-light';
 
   // Unify built-in / uncategorized / custom categories into one ordered list of pills so we
   // can render the full set in a hidden measurement container and slice to "first row + pill"
@@ -1226,28 +1226,10 @@ export function EditorialDropList({
           document.body
         )}
 
-        {/* Drop list — skeleton while loading, real content otherwise */}
+        {/* Drop list — shared loader while loading, real content otherwise */}
         <div className="max-h-[500px] overflow-y-auto overflow-x-hidden thin-scrollbar">
           {loading ? (
-            <div className="p-3 space-y-2">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className={`border ${tc.border} ${tc.roundedClass} p-3 flex flex-col sm:flex-row sm:items-center gap-3`}>
-                  {/* Icon placeholder */}
-                  <div className={`w-10 h-10 ${tc.roundedClass} ${shimmerClass} shrink-0`} />
-                  {/* Info section */}
-                  <div className="flex-1 min-w-0 space-y-2">
-                    <div className={`h-4 ${tc.roundedClass} ${shimmerClass} w-3/5`} />
-                    <div className={`h-3 ${tc.roundedClass} ${shimmerClass} w-2/5`} />
-                  </div>
-                  {/* Action buttons placeholder */}
-                  <div className="flex items-center gap-1 pt-2 sm:pt-0 border-t sm:border-t-0 w-full sm:w-auto justify-end">
-                    <div className={`w-8 h-7 ${tc.roundedClass} ${shimmerClass}`} />
-                    <div className={`w-8 h-7 ${tc.roundedClass} ${shimmerClass}`} />
-                    <div className={`w-8 h-7 ${tc.roundedClass} ${shimmerClass}`} />
-                  </div>
-                </div>
-              ))}
-            </div>
+            <LoadingIndicator label="Loading drops" />
           ) : visibleDrops.length === 0 && pendingDeletions.size === 0 ? (
             <div className="p-12 text-center">
               <div className={`w-16 h-16 mx-auto border ${tc.border} ${tc.roundedClass} flex items-center justify-center mb-4`}>

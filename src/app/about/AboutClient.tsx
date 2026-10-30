@@ -81,12 +81,12 @@ export default function AboutClient() {
         {/* Header */}
         <header className="sticky top-0 z-50 border-b" style={{ borderColor: classicBorder, background: classicBg }}>
           <div className="flex items-center justify-between px-8 py-6">
-            <a href="/" className="flex items-center gap-2">
+            <Link href="/" className="flex items-center gap-2">
               <div className="w-3 h-3" style={{ background: accentColor }} />
               <span className="font-mono text-sm uppercase tracking-widest">DROP/SYNC</span>
-            </a>
+            </Link>
             <div className="flex items-center gap-4 sm:gap-6">
-              <a href="/" className="font-mono text-xs uppercase tracking-widest hover:opacity-70 transition-opacity" style={{ color: isDark ? 'rgba(255,255,255,0.6)' : 'rgba(26,26,26,0.6)' }}>HOME</a>
+              <Link href="/" className="font-mono text-xs uppercase tracking-widest hover:opacity-70 transition-opacity" style={{ color: isDark ? 'rgba(255,255,255,0.6)' : 'rgba(26,26,26,0.6)' }}>HOME</Link>
               <div className="hidden sm:flex gap-2">
                 {(['light', 'dark'] as Theme[]).map((t) => (
                   <button key={t} onClick={() => { setTheme(t); localStorage.setItem(THEME_STORAGE_KEY, t); }}
@@ -321,10 +321,10 @@ export default function AboutClient() {
 
         <footer className="relative z-10 flex justify-between items-center px-8 py-6 text-xs border-t font-mono uppercase tracking-widest" style={{ borderColor: classicBorder, color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(26,26,26,0.4)' }}>
           <div className="flex items-center gap-4">
-            <a href="/" style={{ color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(26,26,26,0.4)' }} className="hover:opacity-70 transition-opacity">HOME</a>
-            <a href="/docs" style={{ color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(26,26,26,0.4)' }} className="hover:opacity-70 transition-opacity">DOCS</a>
-            <a href="/terms" style={{ color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(26,26,26,0.4)' }} className="hover:opacity-70 transition-opacity">TERMS</a>
-            <a href="/privacy" style={{ color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(26,26,26,0.4)' }} className="hover:opacity-70 transition-opacity">PRIVACY</a>
+            <Link href="/" style={{ color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(26,26,26,0.4)' }} className="hover:opacity-70 transition-opacity">HOME</Link>
+            <Link href="/docs" style={{ color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(26,26,26,0.4)' }} className="hover:opacity-70 transition-opacity">DOCS</Link>
+            <Link href="/terms" style={{ color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(26,26,26,0.4)' }} className="hover:opacity-70 transition-opacity">TERMS</Link>
+            <Link href="/privacy" style={{ color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(26,26,26,0.4)' }} className="hover:opacity-70 transition-opacity">PRIVACY</Link>
           </div>
           <span>© 2026 DropSync</span>
           <span className="hidden sm:inline">500MB / UNLIMITED</span>

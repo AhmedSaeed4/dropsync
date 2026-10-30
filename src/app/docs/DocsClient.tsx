@@ -52,6 +52,10 @@ export function DocsClient({ children }: { children: ReactNode }) {
     const _isClassic = layoutMode === 'classic';
     const _isMinimal = theme === 'minimal';
     const bgColor = _isDark ? '#0D0D0D' : _isClassic ? '#FAF7F2' : _isMinimal ? '#C5C9B8' : '#FFFEF5';
+    document.body.style.setProperty('--bg', bgColor);
+    document.body.style.setProperty('--text', _isDark ? '#FAF7F2' : '#1a1a1a');
+    document.body.style.setProperty('--muted', _isDark ? '#888' : !_isClassic && _isMinimal ? '#4a4a4a' : '#666');
+    document.body.style.setProperty('--border', _isDark ? '#333' : !_isClassic && _isMinimal ? '#b0b4a5' : '#e0e0e0');
     document.body.style.background = bgColor;
     document.body.style.color = _isDark ? '#FAF7F2' : '#1a1a1a';
     return () => {
