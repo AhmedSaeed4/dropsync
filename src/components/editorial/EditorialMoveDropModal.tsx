@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useModalBackClose } from '@/hooks/useModalBackClose';
+import { useModalFade } from '@/hooks/useModalFade';
 import { useUserTier } from '@/hooks/useUserTier';
 import { useAuth } from '@/hooks/useAuth';
 import { Drop, Workspace } from '@/types';
@@ -32,11 +33,14 @@ export function EditorialMoveDropModal({ drops: dropsProp, workspaces, currentWo
   const [loading, setLoading] = useState(false);
   const [stageError, setStageError] = useState<string | null>(null);
   const [showForeverLocked, setShowForeverLocked] = useState(false);
+  const { closing, requestClose } = useModalFade(onClose, true, (close) => {
+    if (!loading && !showForeverLocked) close();
+  });
   const { tier, loading: tierLoading } = useUserTier();
   const { user } = useAuth();
   const currentUserId = user?.uid ?? null;
   // Back closes only when not mid move/copy (matches the disabled X/backdrop).
-  useModalBackClose(true, () => { if (!loading) onClose(); });
+  useModalBackClose(true, () => { if (!loading) requestClose(); });
 
   const tc = getEditorialThemeColors(theme);
 
@@ -84,8 +88,8 @@ export function EditorialMoveDropModal({ drops: dropsProp, workspaces, currentWo
 
   return (
     <div
-      className="fixed inset-0 bg-[#1a1a1a]/60 flex items-center justify-center z-50 p-4"
-      onClick={(e) => e.target === e.currentTarget && !loading && onClose()}
+      className={`fixed inset-0 ${theme === 'dark' ? 'modal-frost-dark' : 'modal-frost'} flex items-center justify-center z-50 p-4 ${closing ? 'modal-fade-out' : 'modal-fade-in'}`}
+      onClick={(e) => e.target === e.currentTarget && !loading && requestClose()}
     >
       <div className={`${tc.bg} border ${tc.border} rounded-xl w-full max-w-md max-h-[90vh] flex flex-col overflow-hidden shadow-xl`}>
         {stageError && <p role="alert" className="px-5 py-2 text-sm text-red-500">{stageError}</p>}
@@ -101,7 +105,7 @@ export function EditorialMoveDropModal({ drops: dropsProp, workspaces, currentWo
               </p>
             )}
           </div>
-          <button onClick={() => !loading && onClose()} disabled={loading} className={`${tc.muted} hover:${tc.text} transition-colors p-1 disabled:opacity-50`}>
+          <button onClick={() => !loading && requestClose()} disabled={loading} className={`${tc.muted} hover:${tc.text} transition-colors p-1 disabled:opacity-50`}>
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -226,7 +230,7 @@ export function EditorialMoveDropModal({ drops: dropsProp, workspaces, currentWo
         {/* Footer */}
         <div className={`border-t ${tc.border} px-5 py-4 flex items-center justify-end gap-3 shrink-0`}>
           <button
-            onClick={onClose}
+            onClick={requestClose}
             disabled={loading}
             className={`border ${tc.border} ${tc.text} px-4 py-2 text-sm rounded-lg ${tc.hoverBorder} transition-colors disabled:opacity-50 ${tc.fontClass}`}
           >

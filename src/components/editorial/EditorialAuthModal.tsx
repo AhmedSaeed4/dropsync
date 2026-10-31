@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useModalBackClose } from '@/hooks/useModalBackClose';
+import { useModalFade } from '@/hooks/useModalFade';
 import { getEditorialThemeColors } from './editorialTheme';
 
 interface EditorialAuthModalProps {
@@ -37,6 +38,10 @@ export function EditorialAuthModal({
   const [showResetForm, setShowResetForm] = useState(false);
   const [success, setSuccess] = useState(false);
   const authRequestEpochRef = useRef(0);
+  const { closing, requestClose } = useModalFade(onClose, true, (close) => {
+    authRequestEpochRef.current += 1;
+    close();
+  });
 
   // A closed auth window must not let a late network result surface a modal or other form state.
   useEffect(() => () => {
@@ -91,7 +96,7 @@ export function EditorialAuthModal({
 
   const handleClose = () => {
     authRequestEpochRef.current += 1;
-    onClose();
+    requestClose();
   };
 
   useModalBackClose(true, handleClose);
@@ -100,7 +105,7 @@ export function EditorialAuthModal({
 
   return (
     <div
-      className="fixed inset-0 bg-[#1a1a1a]/60 flex items-center justify-center z-50 p-4"
+      className={`fixed inset-0 ${theme === 'dark' ? 'modal-frost-dark' : 'modal-frost'} flex items-center justify-center z-50 p-4 ${closing ? 'modal-fade-out' : 'modal-fade-in'}`}
       onClick={(e) => e.target === e.currentTarget && handleClose()}
     >
       <div className={`${tc.bg} border ${tc.border} rounded-xl w-full max-w-md overflow-hidden shadow-xl`}>

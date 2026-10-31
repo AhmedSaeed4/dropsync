@@ -1,5 +1,6 @@
 'use client';
 
+import { useModalFade } from '@/hooks/useModalFade';
 import { useMemo, useRef, useState } from 'react';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useModalBackClose } from '@/hooks/useModalBackClose';
@@ -55,10 +56,12 @@ export function WorkspaceArchiveModal({
   onImport,
   onCheckImportOverlap,
   onStarted,
-  onClose,
+  onClose: closeImmediately,
 }: WorkspaceArchiveModalProps) {
   const isPersonal = scope === 'personal';
   const isEditorial = variant === 'editorial';
+  const { closing, requestClose } = useModalFade(closeImmediately, isEditorial, isEditorial ? () => undefined : undefined);
+  const onClose = isEditorial ? requestClose : closeImmediately;
   const isDark = theme === 'dark';
   const isMinimal = theme === 'minimal';
   const [password, setPassword] = useState('');
@@ -256,8 +259,8 @@ export function WorkspaceArchiveModal({
     : null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 overscroll-contain">
-      <div className="fixed inset-0 bg-black/55" onClick={closeOrCancel} />
+    <div className={isEditorial ? `fixed inset-0 z-[100] flex items-center justify-center p-4 overscroll-contain editorial-modal ${closing ? 'modal-fade-out' : 'modal-fade-in'}` : 'fixed inset-0 z-[100] flex items-center justify-center p-4 overscroll-contain'}>
+      <div className={isEditorial ? `fixed inset-0 ${theme === 'dark' ? 'modal-frost-dark' : 'modal-frost'}` : 'fixed inset-0 bg-black/55'} onClick={closeOrCancel} />
       <div className={`relative z-10 w-full max-w-lg border ${colors.panel} ${colors.rounded} shadow-2xl overflow-hidden`}>
         <div className={`px-5 py-4 border-b ${colors.border} flex items-center justify-between`}>
           <div>

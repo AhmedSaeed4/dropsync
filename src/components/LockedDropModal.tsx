@@ -1,5 +1,6 @@
 'use client';
 
+import { useModalFade } from '@/hooks/useModalFade';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useModalBackClose } from '@/hooks/useModalBackClose';
 import { getEditorialThemeColors } from './editorial/editorialTheme';
@@ -31,8 +32,11 @@ interface LockedDropModalProps {
  * host layout's style via `variant` + `theme`. Rendered at z-[60] so it overlays host modals
  * (e.g. PreviewModal, which is z-50).
  */
-export function LockedDropModal({ variant, theme, context = 'edit', onClose }: LockedDropModalProps) {
+export function LockedDropModal({ variant, theme, context = 'edit', onClose: closeImmediately }: LockedDropModalProps) {
   useBodyScrollLock();
+  const isEditorial = variant === 'editorial';
+  const { closing, requestClose } = useModalFade(closeImmediately, isEditorial, isEditorial ? () => undefined : undefined);
+  const onClose = isEditorial ? requestClose : closeImmediately;
   useModalBackClose(true, onClose);
 
   const body = LOCKED_ACTION_MESSAGES[context];
@@ -41,7 +45,7 @@ export function LockedDropModal({ variant, theme, context = 'edit', onClose }: L
     const tc = getEditorialThemeColors(theme);
     return (
       <div
-        className="fixed inset-0 bg-[#1a1a1a]/60 z-[60] flex items-center justify-center p-4 transition-colors duration-300"
+        className={`fixed inset-0 ${theme === 'dark' ? 'modal-frost-dark' : 'modal-frost'} z-[60] flex items-center justify-center p-4 transition-colors duration-300 ${closing ? 'modal-fade-out' : 'modal-fade-in'}`}
         onClick={(e) => e.target === e.currentTarget && onClose()}
       >
         <div className={`${tc.bg} border ${tc.border} rounded-xl shadow-xl w-full max-w-sm transition-colors duration-300`}>

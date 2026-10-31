@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { User } from '@/types';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useModalBackClose } from '@/hooks/useModalBackClose';
+import { useModalFade } from '@/hooks/useModalFade';
 import { getEditorialThemeColors } from './editorialTheme';
 import { previewAccountDeletion, deleteAccount, DeletionPreview, SelectedOwners } from '@/lib/accountDeletion';
 import { updateUserDisplayName } from '@/lib/auth';
@@ -59,7 +60,6 @@ export function EditorialSettingsModal({
   onWordAnimHoldChange,
 }: EditorialSettingsModalProps) {
   useBodyScrollLock();
-  useModalBackClose(true, onClose);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -67,6 +67,15 @@ export function EditorialSettingsModal({
   const [step, setStep] = useState<Step>('main');
   const [styleOpen, setStyleOpen] = useState(false);
   const [holdOpen, setHoldOpen] = useState(false);
+  const { closing, requestClose } = useModalFade((signOut = false) => {
+    if (signOut) onSignOut();
+    else onClose();
+  }, true, (close) => {
+    if (holdOpen) { setHoldOpen(false); return; }
+    if (styleOpen) { setStyleOpen(false); return; }
+    close();
+  });
+  useModalBackClose(true, () => requestClose());
 
   // Profile name state
   const [profileName, setProfileName] = useState(user.displayName || '');
@@ -319,7 +328,7 @@ export function EditorialSettingsModal({
   );
 
   if (step === 'delete-preview') return (
-    <div className="fixed inset-0 bg-[#1a1a1a]/60 flex items-center justify-center z-50 p-4 modal-fade-in" onClick={(e) => e.target === e.currentTarget && onClose()}>
+    <div className={`fixed inset-0 ${theme === 'dark' ? 'modal-frost-dark' : 'modal-frost'} flex items-center justify-center z-50 p-4 ${closing ? 'modal-fade-out' : 'modal-fade-in'}`} onClick={(e) => e.target === e.currentTarget && requestClose()}>
       <div className={`${tc.bg} border ${tc.border} rounded-xl w-full max-w-md overflow-hidden shadow-xl max-h-[80vh] flex flex-col modal-card-in`}>
         {renderDeletePreview()}
       </div>
@@ -327,7 +336,7 @@ export function EditorialSettingsModal({
   );
 
   if (step === 'delete-confirm') return (
-    <div className="fixed inset-0 bg-[#1a1a1a]/60 flex items-center justify-center z-50 p-4 modal-fade-in" onClick={(e) => e.target === e.currentTarget && onClose()}>
+    <div className={`fixed inset-0 ${theme === 'dark' ? 'modal-frost-dark' : 'modal-frost'} flex items-center justify-center z-50 p-4 ${closing ? 'modal-fade-out' : 'modal-fade-in'}`} onClick={(e) => e.target === e.currentTarget && requestClose()}>
       <div className={`${tc.bg} border ${tc.border} rounded-xl w-full max-w-md overflow-hidden shadow-xl max-h-[80vh] flex flex-col modal-card-in`}>
         {renderDeleteConfirm()}
       </div>
@@ -335,7 +344,7 @@ export function EditorialSettingsModal({
   );
 
   if (step === 'deleting' || step === 'deleted') return (
-    <div className="fixed inset-0 bg-[#1a1a1a]/60 flex items-center justify-center z-50 p-4 modal-fade-in">
+    <div className={`fixed inset-0 ${theme === 'dark' ? 'modal-frost-dark' : 'modal-frost'} flex items-center justify-center z-50 p-4 ${closing ? 'modal-fade-out' : 'modal-fade-in'}`}>
       <div className={`${tc.bg} border ${tc.border} rounded-xl w-full max-w-md overflow-hidden shadow-xl max-h-[80vh] flex flex-col modal-card-in`}>
         {step === 'deleting' ? renderDeleting() : renderDeleted()}
       </div>
@@ -344,14 +353,14 @@ export function EditorialSettingsModal({
 
   return (
     <div
-      className="fixed inset-0 bg-[#1a1a1a]/60 flex items-center justify-center z-50 p-4 modal-fade-in"
-      onClick={(e) => e.target === e.currentTarget && onClose()}
+      className={`fixed inset-0 ${theme === 'dark' ? 'modal-frost-dark' : 'modal-frost'} flex items-center justify-center z-50 p-4 ${closing ? 'modal-fade-out' : 'modal-fade-in'}`}
+      onClick={(e) => e.target === e.currentTarget && requestClose()}
     >
       <div className={`${tc.bg} border ${tc.border} rounded-xl w-full max-w-md overflow-hidden shadow-xl max-h-[80vh] flex flex-col modal-card-in`}>
         {/* Header */}
         <div className={`border-b ${tc.border} px-5 py-4 flex items-center justify-between`}>
           <h2 className={`${tc.fontClass} ${tc.text} font-medium text-[15px]`}>Settings</h2>
-          <button onClick={onClose} className={`${tc.muted} hover:${tc.text} transition-colors p-1`}>
+          <button onClick={() => requestClose()} className={`${tc.muted} hover:${tc.text} transition-colors p-1`}>
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -588,7 +597,7 @@ export function EditorialSettingsModal({
               {/* Sign Out */}
               <div className="pt-2">
                 <button
-                  onClick={onSignOut}
+                  onClick={() => requestClose(true)}
                   className={`w-full border ${tc.border} ${tc.text} py-2.5 text-sm rounded-lg hover:border-[#1a1a1a] transition-colors ${tc.fontClass} flex items-center justify-center gap-2`}
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
@@ -679,7 +688,7 @@ export function EditorialSettingsModal({
         {/* Footer */}
         <div className={`border-t ${tc.border} px-5 py-4`}>
           <button
-            onClick={onClose}
+            onClick={() => requestClose()}
             className={`w-full ${tc.activePillBg} ${tc.activePillText} py-2.5 text-sm rounded-lg hover:opacity-90 transition-opacity ${tc.fontClass}`}
           >
             Done

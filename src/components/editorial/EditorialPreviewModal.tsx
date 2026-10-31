@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { Drop } from '@/types';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useModalBackClose } from '@/hooks/useModalBackClose';
+import { useModalFade } from '@/hooks/useModalFade';
 import { useNow } from '@/hooks/useNow';
 import { formatFileSize, getYouTubeVideoId, updateDropMetadata, isReminderGlowingForViewer, formatReminderFire } from '@/lib/drops';
 import { createShare } from '@/lib/shares';
@@ -55,7 +56,6 @@ function isTextFile(drop: Drop): boolean {
 
 export function EditorialPreviewModal({ drop, onClose, onBack, canBack, theme = 'light', isLoading = false, onEdit, editPreparing = false, onMove, allDrops = [], onPreview, canMutate = false, currentUserId }: EditorialPreviewModalProps) {
   useBodyScrollLock();
-  useModalBackClose(true, onBack);
   const [copied, setCopied] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
@@ -67,21 +67,25 @@ export function EditorialPreviewModal({ drop, onClose, onBack, canBack, theme = 
   const isText = isTextFile(drop);
   // The image this preview shows, if any — drives the keyboard F shortcut.
   const viewerImage = drop.type === 'text' ? drop.imageData : (isImage ? drop.fileData : undefined);
+  const { closing, requestClose } = useModalFade((back: boolean) => {
+    if (back) onBack();
+    else onClose();
+  }, true, (close) => {
+    if (viewer) return;
+    if (isFullscreen) { setIsFullscreen(false); return; }
+    close(true);
+  }, (e) => {
+    // Keyboard shortcut: F toggles the full-screen image viewer — F opens, F again exits.
+    const t = e.target as HTMLElement | null;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    if ((e.key === 'f' || e.key === 'F') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      if (viewer) setViewer(null);
+      else if (viewerImage) setViewer({ src: viewerImage, alt: drop.name });
+    }
+  });
+  const requestBack = () => requestClose(true);
+  useModalBackClose(true, requestBack);
 
-  // Keyboard shortcut: F toggles the full-screen image viewer — F opens, F again exits
-  // (Esc / ✕ / backdrop also exit).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-      if ((e.key === 'f' || e.key === 'F') && !e.metaKey && !e.ctrlKey && !e.altKey) {
-        if (viewer) setViewer(null);
-        else if (viewerImage) setViewer({ src: viewerImage, alt: drop.name });
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [viewer, viewerImage, drop.name]);
 
   const SUPPORTED_VIDEO_TYPES = new Set(['video/mp4', 'video/webm', 'video/ogg']);
   const isSupportedVideo = isVideo && SUPPORTED_VIDEO_TYPES.has(drop.mimeType || '');
@@ -320,8 +324,8 @@ export function EditorialPreviewModal({ drop, onClose, onBack, canBack, theme = 
 
   return (
     <div
-      className={`fixed inset-0 bg-[#1a1a1a]/60 flex items-center justify-center z-50 p-4 transition-colors duration-300 overscroll-contain`}
-      onClick={(e) => e.target === e.currentTarget && onBack()}
+      className={`fixed inset-0 ${theme === 'dark' ? 'modal-frost-dark' : 'modal-frost'} flex items-center justify-center z-50 p-4 transition-colors duration-300 overscroll-contain ${closing ? 'modal-fade-out' : 'modal-fade-in'}`}
+      onClick={(e) => e.target === e.currentTarget && requestBack()}
     >
       {viewer && <ImageLightbox src={viewer.src} alt={viewer.alt} onClose={() => setViewer(null)} />}
       <div className={`${tc.bg} border ${tc.border} rounded-xl w-full max-w-3xl max-h-[85vh] overflow-hidden flex flex-col transition-colors duration-300 shadow-xl`}>
@@ -331,7 +335,7 @@ export function EditorialPreviewModal({ drop, onClose, onBack, canBack, theme = 
             {canBack && (
               <button
                 type="button"
-                onClick={onBack}
+                onClick={requestBack}
                 aria-label="Back"
                 title="Back"
                 className={`${tc.muted} hover:${tc.text} transition-colors text-2xl leading-none`}
@@ -379,7 +383,7 @@ export function EditorialPreviewModal({ drop, onClose, onBack, canBack, theme = 
             </div>
           </div>
           <button
-            onClick={onClose}
+            onClick={() => requestClose(false)}
             className={`${tc.muted} hover:${tc.text} transition-colors p-1`}
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">

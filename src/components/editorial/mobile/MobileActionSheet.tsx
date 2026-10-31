@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useModalFade } from '@/hooks/useModalFade';
 import { motion } from 'motion/react';
 import { Drop } from '@/types';
 import { decryptDrop, updateDropMetadata, getYouTubeVideoId } from '@/lib/drops';
@@ -50,7 +51,7 @@ function isTextFile(drop: Drop): boolean {
 // Download + the muted "Locked by the creator" note (pin/edit/move/delete are rules-blocked).
 export function MobileActionSheet({
   drop,
-  onClose,
+  onClose: closeImmediately,
   onCopied,
   theme,
   currentUserId,
@@ -63,6 +64,7 @@ export function MobileActionSheet({
   onUnpin,
   manualMove,
 }: MobileActionSheetProps) {
+  const { closing, requestClose: onClose } = useModalFade(closeImmediately, !!drop);
   const tc = getEditorialThemeColors(theme);
   const font = tc.fontClass;
 
@@ -223,13 +225,10 @@ export function MobileActionSheet({
 
   return (
     <>
-      <motion.div
-        className="fixed inset-0 z-50 bg-black/50"
+      <div className={`fixed inset-0 z-50 ${closing ? 'modal-fade-out' : 'modal-fade-in'}`}>
+      <div
+        className={`fixed inset-0 z-50 ${theme === 'dark' ? 'modal-frost-dark' : 'modal-frost'}`}
         onClick={onClose}
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        transition={{ duration: 0.2 }}
       />
       <motion.div
         role="menu"
@@ -356,6 +355,7 @@ export function MobileActionSheet({
           )}
         </div>
       </motion.div>
+      </div>
 
       {shareToast && (
         <Toast message="Link copied" duration={2} theme={theme} editorial onDone={() => setShareToast(false)} />

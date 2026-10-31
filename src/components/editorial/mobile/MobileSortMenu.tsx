@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import { useModalFade } from '@/hooks/useModalFade';
 import { AnimatePresence, motion } from 'motion/react';
 import { getEditorialThemeColors } from '../editorialTheme';
 import type { DropSortMode } from '@/lib/auth';
@@ -27,7 +28,8 @@ const SORT_OPTIONS: { value: DropSortMode; label: string }[] = [
 
 // The sort menu as a bottom sheet: the five SORT_OPTIONS, active = ink inversion + check,
 // Esc/backdrop closes. The trigger's label lives in the view's control row.
-export function MobileSortMenu({ open, onClose, sortMode, onSortChange, theme }: MobileSortMenuProps) {
+export function MobileSortMenu({ open, onClose: closeImmediately, sortMode, onSortChange, theme }: MobileSortMenuProps) {
+  const { closing, requestClose: onClose } = useModalFade(closeImmediately, open);
   const tc = getEditorialThemeColors(theme);
   const font = tc.fontClass;
 
@@ -43,18 +45,18 @@ export function MobileSortMenu({ open, onClose, sortMode, onSortChange, theme }:
   return (
     <>
       <AnimatePresence>
-        {open && (
+        {open && !closing && (
           <motion.div
             key="sort-backdrop"
-            className="fixed inset-0 z-50 bg-black/50"
+            className={`fixed inset-0 z-50 ${theme === 'dark' ? 'modal-frost-dark' : 'modal-frost'}`}
             onClick={onClose}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
+            exit={{ opacity: 0, transition: { duration: 0.2, ease: 'easeIn' } }}
+            transition={{ duration: 0.3, ease: 'easeOut' }}
           />
         )}
-        {open && (
+        {open && !closing && (
           <motion.div
             key="sort-panel"
             role="menu"

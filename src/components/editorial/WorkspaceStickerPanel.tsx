@@ -1,6 +1,7 @@
 'use client';
 
 /* eslint-disable @next/next/no-img-element -- Display original decrypted WebP/GIF assets without optimization. */
+import { useModalFade } from '@/hooks/useModalFade';
 import { useCallback, useEffect, useRef, useState, type RefObject, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
 import type { WorkspaceSticker, StickerAsset } from '@/types/stickers';
@@ -54,7 +55,8 @@ function StickerTile({ sticker,catalog,sending,theme,onSend,onActions,onPress }:
   );
 }
 
-export function WorkspaceStickerPanel({ id,open,isPhone,theme,userId,ownerId,catalog,sending,anchorRef,triggerRef,onClose,onSend }: Props) {
+export function WorkspaceStickerPanel({ id,open,isPhone,theme,userId,ownerId,catalog,sending,anchorRef,triggerRef,onClose: closeImmediately,onSend }: Props) {
+  const { closing, requestClose: onClose } = useModalFade(closeImmediately, open);
   const tc = getEditorialThemeColors(theme);
   const panelRef = useRef<HTMLElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -213,7 +215,7 @@ export function WorkspaceStickerPanel({ id,open,isPhone,theme,userId,ownerId,cat
     <section id={id} ref={panelRef} role="dialog" aria-modal={isPhone || undefined} aria-labelledby={id+'-title'}
       data-lenis-prevent
       className={(isPhone ? 'fixed left-0 right-0 z-[211] rounded-t-2xl' : 'absolute bottom-full left-4 z-[60] mb-2 w-[360px] '+tc.roundedClass)
-        +' flex flex-col overflow-hidden border '+tc.border+' '+tc.cardBg+' '+tc.text+' '+tc.fontClass}
+        +' '+(!isPhone ? (closing ? 'modal-fade-out' : 'modal-fade-in') : '')+' flex flex-col overflow-hidden border '+tc.border+' '+tc.cardBg+' '+tc.text+' '+tc.fontClass}
       style={{ maxHeight:layout.maxHeight,maxWidth:isPhone ? undefined : 'calc(100% - 32px)',bottom:isPhone ? layout.bottom : undefined,touchAction:'pan-y',
         paddingTop:isPhone ? 'env(safe-area-inset-top)' : undefined,paddingBottom:isPhone ? 'max(8px,env(safe-area-inset-bottom))' : 8 }}
       onClick={event => event.stopPropagation()}
@@ -329,8 +331,10 @@ export function WorkspaceStickerPanel({ id,open,isPhone,theme,userId,ownerId,cat
   const notice = deleteNotice ? <Toast message={deleteNotice} duration={4} theme={theme} editorial mobileFloat={isPhone}
     onDone={() => setDeleteNotice(null)} /> : null;
   return isPhone ? createPortal(<>
-    <div className="fixed inset-0 z-[210] bg-black/30" onPointerDown={event => { event.stopPropagation(); onClose('outside'); }} />
+    <div className={`fixed inset-0 z-[210] ${closing ? 'modal-fade-out' : 'modal-fade-in'}`}>
+    <div className={`fixed inset-0 z-[210] ${theme === 'dark' ? 'modal-frost-dark' : 'modal-frost'}`} onPointerDown={event => { event.stopPropagation(); onClose('outside'); }} />
     {body}
+    </div>
     {notice}
   </>,document.body) : <>
     {body}
