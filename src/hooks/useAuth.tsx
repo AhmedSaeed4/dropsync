@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, createContext, useContext, ReactNode } fro
 import { onAuthChange, signInWithGoogle, signOut, signUpWithEmail, signInWithEmail, sendPasswordReset, resendVerificationEmail, getAuthProvider, reauthenticateUser } from '@/lib/auth';
 import { User } from '@/types';
 import { getArchiveTaskManager } from '@/lib/archiveTaskManager';
+import { getAuth } from 'firebase/auth';
 import { tryAuthChange } from '@/lib/archiveJobLock';
 
 interface AuthContextType {
@@ -32,6 +33,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const unsubscribe = onAuthChange((authUser) => {
+      getArchiveTaskManager().setSessionUid(authUser?.uid ?? null, getAuth().currentUser);
+      if (currentUidRef.current !== (authUser?.uid ?? null)) setAuthActionNotice(null);
       if (authUser) {
         if (currentUidRef.current !== authUser.uid) getArchiveTaskManager().markRecoveryPending(authUser.uid);
         currentUidRef.current = authUser.uid;
@@ -49,50 +52,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const handleSignIn = async () => {
-    let signed: User | null = null;
-    if (user && !(await tryAuthChange(user.uid, async () => { signed = await signInWithGoogle(); }))) {
-      setAuthActionNotice('Finish the archive or its cleanup before switching accounts.');
-      return;
-    }
-    if (!user) signed = await signInWithGoogle();
-    if (signed) {
-      setUser({ ...signed, providerId: getAuthProvider() ?? undefined });
-    }
+    const result: { user: User | null } = { user: null };
+    const change = await tryAuthChange(user?.uid ?? null, async () => { result.user = await signInWithGoogle(); });
+    if (!change.accepted) { setAuthActionNotice(change.message); return; }
+    if (result.user) setUser({ ...result.user, providerId: getAuthProvider() ?? undefined });
   };
 
   const handleSignOut = async () => {
-    const accepted = await tryAuthChange(user?.uid ?? null, signOut);
-    if (!accepted) {
-      setAuthActionNotice('Finish the archive or its cleanup before signing out.');
-      return false;
-    }
+    const change = await tryAuthChange(user?.uid ?? null, signOut);
+    if (!change.accepted) { setAuthActionNotice(change.message); return false; }
     setUser(null);
     return true;
   };
 
   const handleSignUp = async (email: string, password: string) => {
-    let result: Awaited<ReturnType<typeof signUpWithEmail>> | null = null;
-    if (user && !(await tryAuthChange(user.uid, async () => { result = await signUpWithEmail(email, password); }))) {
-      setAuthActionNotice('Finish the archive or its cleanup before switching accounts.');
-      return { error: 'Finish the archive or its cleanup before switching accounts.' };
-    }
-    if (!user) result = await signUpWithEmail(email, password);
-    if (!result) return { error: 'Sign-up was not completed.' };
-    return { error: result.error, success: result.success };
+    const result: { value: Awaited<ReturnType<typeof signUpWithEmail>> | null } = { value: null };
+    const change = await tryAuthChange(user?.uid ?? null, async () => { result.value = await signUpWithEmail(email, password); });
+    if (!change.accepted) { setAuthActionNotice(change.message); return { error: change.message }; }
+    if (!result.value) return { error: 'Sign-up was not completed.' };
+    return { error: result.value.error, success: result.value.success };
   };
 
   const handleSignInWithEmail = async (email: string, password: string) => {
-    let result: Awaited<ReturnType<typeof signInWithEmail>> | null = null;
-    if (user && !(await tryAuthChange(user.uid, async () => { result = await signInWithEmail(email, password); }))) {
-      setAuthActionNotice('Finish the archive or its cleanup before switching accounts.');
-      return { error: 'Finish the archive or its cleanup before switching accounts.' };
-    }
-    if (!user) result = await signInWithEmail(email, password);
-    if (!result) return { error: 'Sign-in was not completed.' };
-    if (result.user) {
-      setUser({ ...result.user, providerId: getAuthProvider() ?? undefined });
-    }
-    return { error: result.error, needsVerification: result.needsVerification };
+    const result: { value: Awaited<ReturnType<typeof signInWithEmail>> | null } = { value: null };
+    const change = await tryAuthChange(user?.uid ?? null, async () => { result.value = await signInWithEmail(email, password); });
+    if (!change.accepted) { setAuthActionNotice(change.message); return { error: change.message }; }
+    if (!result.value) return { error: 'Sign-in was not completed.' };
+    if (result.value.user) setUser({ ...result.value.user, providerId: getAuthProvider() ?? undefined });
+    return { error: result.value.error, needsVerification: result.value.needsVerification };
   };
 
   const handleResetPassword = async (email: string) => {

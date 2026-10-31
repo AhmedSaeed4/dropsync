@@ -523,11 +523,12 @@ export default function Home() {
     }
   }, [user]);
 
-  // Recovery holds the account lock while it checks local and server fences.
+  // Routine discovery is cancellable; only real cleanup holds the account lock.
   const archiveUserId = user?.uid;
   useEffect(() => {
     if (!archiveUserId) return;
-    void archiveManager.recoverForUser(archiveUserId);
+    const recovery = archiveManager.attachRecovery(archiveUserId);
+    return () => recovery.dispose();
   }, [archiveManager, archiveUserId]);
 
   useEffect(() => {

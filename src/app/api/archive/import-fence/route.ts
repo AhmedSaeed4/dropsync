@@ -44,6 +44,60 @@ export async function POST(request: NextRequest) {
     }
     const op = typeof body?.op === 'string' ? body.op : '';
     const jobId = typeof body?.jobId === 'string' ? body.jobId : '';
+    // ORDER 62: retained cancellation certificates end repeated boot recovery.
+    if (op === 'settle') {
+      if (!body || typeof body !== 'object' || Array.isArray(body)
+        || Object.keys(body).some((key) => !['op', 'jobId', 'jobIds'].includes(key))
+        || (Object.hasOwn(body, 'jobId') === Object.hasOwn(body, 'jobIds'))) {
+        return NextResponse.json({ error: 'Supply jobId or jobIds' }, { status: 400 });
+      }
+      const raw = Object.hasOwn(body, 'jobIds') ? body.jobIds : [body.jobId];
+      const validId = (id: unknown): id is string => typeof id === 'string'
+        && id.length > 0 && id.length <= 512 && id.trim() === id && !id.includes('/')
+        && id !== '.' && id !== '..';
+      if (!Array.isArray(raw) || !raw.every(validId)) {
+        return NextResponse.json({ error: 'Invalid job IDs' }, { status: 400 });
+      }
+      const ids = [...new Set(raw as string[])];
+      if (ids.length < 1 || ids.length > 25) {
+        return NextResponse.json({ error: 'Settle batch must contain 1-25 unique jobs' }, { status: 400 });
+      }
+      const db = getAdminDb();
+      type Outcome = 'adopted' | 'settled-cancelled' | 'cleanup-required' | 'remote-or-open' | 'not-found' | 'invalid';
+      const settleOne = async (id: string): Promise<{ jobId: string; outcome: Outcome }> => {
+        const ref = db.collection('importFences').doc(uid + '_' + id);
+        const outcome = await db.runTransaction<Outcome>(async (tx) => {
+          const snap = await tx.get(ref);
+          if (!snap.exists) return 'not-found';
+          const data = snap.data()!;
+          if (data.userId !== uid || data.jobId !== id
+            || (data.mode !== 'fresh' && data.mode !== 'merge') || !validId(data.workspaceId)) return 'invalid';
+          if (data.state === 'closed-success') return 'adopted';
+          if (data.state === 'open') return 'remote-or-open';
+          if (data.state !== 'closed-cancelled') return 'invalid';
+          const items = await tx.get(ref.collection('items').limit(1));
+          if (!items.empty) return 'cleanup-required';
+          if (data.mode === 'fresh' && !data.workspaceId.startsWith('personal-import-')) {
+            const workspace = await tx.get(db.collection('workspaces').doc(data.workspaceId));
+            const key = await tx.get(db.collection('workspaceKeys').doc(data.workspaceId));
+            if (workspace.exists || key.exists) return 'cleanup-required';
+          }
+          if (data.cleanupComplete !== true) {
+            const now = Date.now();
+            tx.update(ref, { cleanupComplete: true, cleanupCompletedAt: now, updatedAt: now });
+          }
+          return 'settled-cancelled';
+        });
+        return { jobId: id, outcome };
+      };
+      const results = [];
+      // Bound transaction concurrency; each job has its own read-before-write transaction.
+      for (let index = 0; index < ids.length; index += 4) {
+        results.push(...await Promise.all(ids.slice(index, index + 4).map(settleOne)));
+      }
+      return NextResponse.json({ ok: true, results });
+    }
+
     if (!op || !jobId) {
       return NextResponse.json({ error: 'Missing op or jobId' }, { status: 400 });
     }
@@ -111,8 +165,8 @@ export async function POST(request: NextRequest) {
     // "does this obligation exist?" — the route answers under Admin. Every PRESENT doc
     // must belong to the caller (drop.userId / fence.userId / category.createdBy /
     // workspace.ownerId); anything else fails the whole call. Runs BEFORE the shared
-    // fence check on purpose: a fully-acked fence is deleted, yet its journal cleanup
-    // still needs probes.
+    // fence check on purpose: an import may never have opened its fence. Terminal
+    // fences are retained certificates; journal obligations still need probes.
     if (op === 'probe-items') {
       const rawIds = Array.isArray(body.ids) ? (body.ids as unknown[]) : [];
       const ids = rawIds.filter((i): i is string => typeof i === 'string');

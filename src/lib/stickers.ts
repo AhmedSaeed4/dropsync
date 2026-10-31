@@ -1,5 +1,7 @@
 'use client';
 
+import { type ArchiveOwnerContext, createArchiveOwnerContext, archiveOwnerToken } from './importFenceClient';
+
 import { collection, doc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { auth, db } from './firebase';
 import { encryptData, decryptData } from './crypto';
@@ -23,18 +25,23 @@ export function assertStickerScope(userId: string, signal?: AbortSignal): void {
 export async function stickerOperation(
   request: { op: 'prepare' | 'complete' | 'read' | 'delete' | 'cleanupWorkspace'; workspaceId: string; stickerId?: string },
   signal?: AbortSignal,
+  owner?: ArchiveOwnerContext,
 ): Promise<StickerOperationResult> {
+  owner?.check();
   const current = auth.currentUser;
   if (!current) throw new StickerOperationError('Sign in to use workspace stickers.', 401);
-  const token = await current.getIdToken();
+  const token = owner ? await archiveOwnerToken(owner) : await current.getIdToken();
+  owner?.check();
   assertStickerScope(current.uid, signal);
   const response = await fetch('/api/stickers', {
     method: 'POST', signal, cache: 'no-store',
     headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
     body: JSON.stringify(request),
   });
+  owner?.check();
   assertStickerScope(current.uid, signal);
   const result = await response.json() as StickerOperationResult;
+  owner?.check();
   assertStickerScope(current.uid, signal);
   if (!response.ok) throw new StickerOperationError(result.error || "Couldn't finish sticker request. Try again.", response.status);
   return result;
@@ -221,9 +228,11 @@ export function saveStickerFile(sticker: WorkspaceSticker, asset: StickerAsset):
   link.remove();
 }
 
-export async function cleanupWorkspaceStickers(workspaceId: string): Promise<boolean> {
+export async function cleanupWorkspaceStickers(workspaceId: string, owner?: ArchiveOwnerContext): Promise<boolean> {
+  const context = owner ?? (auth.currentUser ? createArchiveOwnerContext(auth.currentUser.uid) : undefined);
   for (;;) {
-    const result = await stickerOperation({ op:'cleanupWorkspace',workspaceId });
+    context?.check();
+    const result = await stickerOperation({ op:'cleanupWorkspace',workspaceId }, undefined, context);
     if (result.ok && result.status === 'clean') return true;
     if (result.status !== 'more') return false; // pending/uncertain never acknowledges completion
   }
