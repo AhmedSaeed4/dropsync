@@ -1,4 +1,5 @@
 import { auth } from './firebase';
+import { type ArchiveOwnerContext, createArchiveOwnerContext, archiveOwnerToken, awaitArchiveOwner } from './importFenceClient';
 import { assertDropWritableById } from './archiveJournalVisibility';
 
 // The 8-field "content identity" two shares must agree on to be considered the same link.
@@ -245,19 +246,16 @@ export async function deleteSharesForDrop(dropId: string): Promise<void> {
 // ROUND 12: the CHECKED variant for the deletion loop — the server now fails the request
 // when any share asset fails to delete (per-item acknowledgment), so a false return means
 // PAUSE AND RETRY, never silent evidence loss. Never throws.
-export async function deleteSharesForDropChecked(dropId: string): Promise<boolean> {
+export async function deleteSharesForDropChecked(dropId: string, owner?: ArchiveOwnerContext): Promise<boolean> {
   try {
     const currentUser = auth.currentUser;
     if (!currentUser) return false;
-
-    const idToken = await currentUser.getIdToken();
-
-    const res = await fetch(`/api/share?dropId=${encodeURIComponent(dropId)}`, {
+    const context = owner ?? createArchiveOwnerContext(currentUser.uid);
+    const idToken = await archiveOwnerToken(context);
+    const res = await awaitArchiveOwner(context, () => fetch(`/api/share?dropId=${encodeURIComponent(dropId)}`, {
       method: 'DELETE',
-      headers: {
-        'Authorization': `Bearer ${idToken}`,
-      },
-    });
+      headers: { Authorization: `Bearer ${idToken}` },
+    }));
     return res.ok;
   } catch (error) {
     console.error('Error deleting shares for drop:', error);

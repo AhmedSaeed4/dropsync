@@ -48,8 +48,8 @@ import { generateAESKey, encryptData } from './crypto';
 import { encryptDEKForUser, getUserKeys } from './keys';
 import type { Category, Drop, ExpirationOption, YouTubeVideoLabel } from '@/types';
 import { isPasswordCategories, normalizeYoutubeLabels } from './youtubeLabels';
-import { completeImportFence, getImportFenceOutstanding, heartbeatImportFence, openImportFence, recordImportDispositions, registerImportItems } from './importFenceClient';
-import { ArchiveCheckUnavailableError, ArchiveCleanupNeededError, listOwnedArchiveFences, purgeOwnedDocObligations, recoverArchiveFenceJob } from './workspaceArchive';
+import { createArchiveOwnerContext, awaitArchiveOwner, completeImportFence, getImportFenceOutstanding, heartbeatImportFence, openImportFence, recordImportDispositions, registerImportItems } from './importFenceClient';
+import { type ArchiveRecoveryPlan, type ArchiveRecoveryJournal, executeArchiveRecoveryPlan, ArchiveCheckUnavailableError, ArchiveCleanupNeededError, listOwnedArchiveFences, purgeOwnedDocObligations, recoverArchiveFenceJob } from './workspaceArchive';
 import { announceArchiveJournalTransition, resolveArchiveRecordStaged } from './archiveJournalVisibility';
 
 export const PERSONAL_ARCHIVE_SCHEMA = 'dropsync.personal' as const;
@@ -201,52 +201,62 @@ function clearImportJournal(jobId: string): void {
   announceArchiveJournalTransition(jobId);
 }
 
-export async function recoverInterruptedPersonalArchiveImport(userId: string, forceOwnedFences = false): Promise<boolean> {
-  const journals = new Map<string, PersonalImportJournal>();
+export async function discoverInterruptedPersonalArchiveImport(userId: string, owner = createArchiveOwnerContext(userId)): Promise<ArchiveRecoveryPlan> {
+  owner.check();
+  const journals = new Map<string, ArchiveRecoveryJournal>();
   for (let index = 0; index < localStorage.length; index++) {
     const key = localStorage.key(index);
     if (!key?.startsWith(PERSONAL_IMPORT_JOURNAL_PREFIX)) continue;
     const raw = localStorage.getItem(key);
     if (!raw) throw new Error('A personal import journal disappeared.');
     const journal = JSON.parse(raw) as PersonalImportJournal;
-    if (journal.userId === userId) journals.set(journal.jobId, journal);
+    if (journal.userId === userId) journals.set(journal.jobId, { ...journal, journalKey: key });
   }
   let fences: Awaited<ReturnType<typeof listOwnedArchiveFences>> | null = null;
-  try { fences = await listOwnedArchiveFences(userId); } catch { /* pre-check only; local journals below still recover */ }
+  try { fences = await listOwnedArchiveFences(userId, owner); } catch { owner.check(); /* local recovery remains required */ }
+  const cancelledJobIds: string[] = [];
+  const remoteJobIds: string[] = [];
   if (fences) {
     for (const fence of fences.docs) {
       const value = fence.data();
       if (typeof value.workspaceId !== 'string' || !value.workspaceId.startsWith('personal-import-')) continue;
       if (value.state !== 'open' && value.state !== 'closed-cancelled') continue;
-      if (typeof value.jobId !== 'string') throw new Error('A personal import fence is malformed.');
-      if (!journals.has(value.jobId)) journals.set(value.jobId, {
-        jobId: value.jobId, userId, archiveId: '', workspaceId: value.workspaceId,
-        createdWorkspace: false, fenceMayExist: true,
-        createdDropIds: [], createdCategoryIds: [], createdR2Keys: [],
+      if (value.userId !== userId || typeof value.jobId !== 'string' || !value.jobId
+        || (value.mode !== 'fresh' && value.mode !== 'merge')) throw new ArchiveCheckUnavailableError();
+      const local = journals.has(value.jobId);
+      if (!local && value.state === 'closed-cancelled' && value.cleanupComplete === true) continue;
+      if (!local) journals.set(value.jobId, {
+        jobId: value.jobId, userId, workspaceId: value.workspaceId,
+        createdWorkspace: false, fenceMayExist: true, createdDropIds: [], createdCategoryIds: [], createdR2Keys: [],
       });
+      if (!local && value.state === 'closed-cancelled') cancelledJobIds.push(value.jobId);
+      if (!local && value.state === 'open' && typeof value.heartbeatAt === 'number'
+        && value.heartbeatAt && Date.now() - value.heartbeatAt < 15 * 60 * 1000) remoteJobIds.push(value.jobId);
     }
   }
-  let remoteActive = false;
-  for (const journal of journals.values()) {
-    if (await recoverArchiveFenceJob({ ...journal, journalKey: localStorage.getItem(PERSONAL_IMPORT_JOURNAL_PREFIX + journal.jobId) ? PERSONAL_IMPORT_JOURNAL_PREFIX + journal.jobId : undefined }, forceOwnedFences || !!localStorage.getItem(PERSONAL_IMPORT_JOURNAL_PREFIX + journal.jobId)) === 'remote-active') remoteActive = true;
-  }
-  // The pre-fence legacy slot is retained until every known deletion is confirmed.
   const rawLegacy = localStorage.getItem(PERSONAL_IMPORT_JOURNAL_KEY);
+  let legacy: ArchiveRecoveryPlan['legacy'];
   if (rawLegacy) {
-    const legacy = JSON.parse(rawLegacy) as Pick<PersonalImportJournal, 'userId' | 'createdDropIds' | 'createdCategoryIds' | 'createdR2Keys'>;
-    if (legacy.userId === userId) {
-      for (const key of legacy.createdR2Keys || []) await deleteFromR2(key, null);
-      // ROUND 14 hotfix-4 (R14-D4): same missing-doc trap as the fence rollback — bare
-      // reads of never-created legacy ids are rules-denied; probe through the route.
+    const value = JSON.parse(rawLegacy) as Pick<PersonalImportJournal, 'userId' | 'createdDropIds' | 'createdCategoryIds' | 'createdR2Keys'>;
+    if (value.userId === userId) legacy = async (context) => {
+      context.check();
+      if (localStorage.getItem(PERSONAL_IMPORT_JOURNAL_KEY) !== rawLegacy) throw new Error('Personal recovery journal changed.');
+      for (const key of value.createdR2Keys || []) await awaitArchiveOwner(context, () => deleteFromR2(key, null));
       await purgeOwnedDocObligations('legacy-personal', [
-        ...(legacy.createdDropIds || []).map((id) => 'drop:' + id),
-        ...(legacy.createdCategoryIds || []).map((id) => 'category:' + id),
-      ]);
+        ...(value.createdDropIds || []).map((id) => 'drop:' + id),
+        ...(value.createdCategoryIds || []).map((id) => 'category:' + id),
+      ], context);
+      context.check();
       localStorage.removeItem(PERSONAL_IMPORT_JOURNAL_KEY);
-    }
+    };
   }
-  if (!fences) throw new ArchiveCheckUnavailableError();
-  return remoteActive;
+  return { journals: [...journals.values()], cancelledJobIds, remoteJobIds, checkUnavailable: !fences, legacy };
+}
+
+export async function recoverInterruptedPersonalArchiveImport(
+  userId: string, forceOwnedFences = false, owner = createArchiveOwnerContext(userId)
+): Promise<boolean> {
+  return executeArchiveRecoveryPlan(await discoverInterruptedPersonalArchiveImport(userId, owner), forceOwnedFences, owner);
 }
 
 function getDropCategories(drop: Drop): string[] {
@@ -803,11 +813,12 @@ export async function importPersonalArchive(
   assertPassword(password);
   throwIfAborted(signal);
   if (!auth.currentUser || auth.currentUser.uid !== userId) throw new Error('You must be signed in to import a personal backup.');
+  const owner = createArchiveOwnerContext(userId);
 
-  const userKeys = await getUserKeys(userId);
+  const userKeys = await awaitArchiveOwner(owner, async () => (getUserKeys(userId)));
   if (!userKeys) throw new Error('Your personal encryption keys are unavailable. Sign in again before importing.');
 
-  const loaded = await loadPersonalArchive(file, password, signal);
+  const loaded = await awaitArchiveOwner(owner, async () => (loadPersonalArchive(file, password, signal)));
   const jobId = options.jobId || crypto.randomUUID();
   const workspaceId = 'personal-import-' + jobId;
   const createdDropIds: string[] = [];
@@ -824,7 +835,7 @@ export async function importPersonalArchive(
     createdR2Keys,
     createdCategoryIds,
   };
-  const persistJournal = () => saveImportJournal(journal);
+  const persistJournal = () => { owner.check(); saveImportJournal(journal); };
   const warnings: string[] = [...summarizeManifest(loaded.manifest, loaded.totalPayloadBytes).warnings];
   let importedCount = 0;
   let legacyExpiryFallbackCount = 0;
@@ -834,7 +845,7 @@ export async function importPersonalArchive(
   const registeredItems: string[] = [];
   const registerItems = async (items: { kind: string; id: string }[]) => {
     for (let i = 0; i < items.length; i += 100) {
-      if (!(await registerImportItems(jobId, items.slice(i, i + 100)))) throw new Error('The personal import fence could not be updated.');
+      if (!(await awaitArchiveOwner(owner, async () => (registerImportItems(jobId, items.slice(i, i + 100), owner))))) throw new Error('The personal import fence could not be updated.');
     }
     registeredItems.push(...items.map((item) => item.kind + ':' + item.id));
   };
@@ -845,25 +856,25 @@ export async function importPersonalArchive(
   const checkFenceFresh = async () => {
     if (fenceLost) throw new Error('The personal import was cancelled before it finished.');
     if (Date.now() - lastConfirmedHeartbeat < 4 * 60 * 1000) return;
-    const beat = await heartbeatImportFence(jobId);
+    const beat = await awaitArchiveOwner(owner, async () => (heartbeatImportFence(jobId, owner)));
     if (beat !== 'ok') throw new Error('The personal import fence could not be refreshed.');
     lastConfirmedHeartbeat = Date.now();
   };
 
   try {
     persistJournal();
-    if (!(await openImportFence(jobId, workspaceId, 'fresh'))) throw new Error('Could not start the personal import fence.');
+    if (!(await awaitArchiveOwner(owner, async () => (openImportFence(jobId, workspaceId, 'fresh', owner))))) throw new Error('Could not start the personal import fence.');
     heartbeatTimer = setInterval(() => {
-      void heartbeatImportFence(jobId).then((result) => {
+      void heartbeatImportFence(jobId, owner).then((result) => {
         if (result === 'closed') fenceLost = true;
         if (result === 'ok') lastConfirmedHeartbeat = Date.now();
       }).catch(() => {});
     }, 5 * 60 * 1000);
-    const existingDrops = await readExistingPersonalDrops(userId);
+    const existingDrops = await awaitArchiveOwner(owner, async () => (readExistingPersonalDrops(userId)));
 
     const importNow = new Date();
-    const categoryResult = await readPersonalCategories(userId, loaded.manifest, jobId,
-      (id) => { createdCategoryIds.push(id); persistJournal(); }, registerItems);
+    const categoryResult = await awaitArchiveOwner(owner, async () => (readPersonalCategories(userId, loaded.manifest, jobId,
+      (id) => { createdCategoryIds.push(id); persistJournal(); }, registerItems)));
 
     let pinnedCount = existingDrops.filter((drop) => drop.pinned && !isExpired(drop)).length;
     const sourceToNewId = new Map<string, string>();
@@ -872,7 +883,7 @@ export async function importPersonalArchive(
     }
     createdDropIds.push(...sourceToNewId.values());
     persistJournal();
-    await registerItems(Array.from(sourceToNewId.values()).map((id) => ({ kind: 'drop', id })));
+    await awaitArchiveOwner(owner, async () => (registerItems(Array.from(sourceToNewId.values()).map((id) => ({ kind: 'drop', id })))));
 
     const totalBytes = Math.max(loaded.totalPayloadBytes, 1);
     let processedBytes = 0;
@@ -880,7 +891,7 @@ export async function importPersonalArchive(
 
     for (const archiveDrop of loaded.manifest.drops) {
       throwIfAborted(signal);
-      await checkFenceFresh();
+      await awaitArchiveOwner(owner, async () => (checkFenceFresh()));
       const newDropId = sourceToNewId.get(archiveDrop.sourceId);
       if (!newDropId) throw new Error(`Missing destination ID for "${archiveDrop.name}".`);
 
@@ -956,9 +967,9 @@ export async function importPersonalArchive(
       if (archiveDrop.isDrawing) docData.isDrawing = true;
 
       if (archiveDrop.type === 'text') {
-        const dek = await generateAESKey();
-        const encryptedContent = await encryptData(content || '', dek);
-        const wrappedDek = await encryptDEKForUser(dek, userKeys.publicKey, userKeys.privateKey);
+        const dek = await awaitArchiveOwner(owner, async () => (generateAESKey()));
+        const encryptedContent = await awaitArchiveOwner(owner, async () => (encryptData(content || '', dek)));
+        const wrappedDek = await awaitArchiveOwner(owner, async () => (encryptDEKForUser(dek, userKeys.publicKey, userKeys.privateKey)));
         docData.content = encryptedContent.encrypted;
         docData.encrypted = true;
         docData.iv = encryptedContent.iv;
@@ -966,17 +977,17 @@ export async function importPersonalArchive(
 
         if (archiveDrop.payloads?.image) {
           const imageEntry = getFileEntry(loaded.entries, archiveDrop.payloads.image);
-          const imageBytes = await readEntryBytes(imageEntry, signal);
+          const imageBytes = await awaitArchiveOwner(owner, async () => (readEntryBytes(imageEntry, signal)));
           if (archiveDrop.imageSize != null && imageBytes.byteLength !== archiveDrop.imageSize) {
             throw new Error(`The drawing/image bytes for "${archiveDrop.name}" do not match the manifest size.`);
           }
           const imageData = bytesToDataUri(imageBytes, archiveDrop.imageMimeType || 'image/png');
-          const encryptedImage = await encryptData(imageData, dek);
-          const upload = await uploadToR2(encryptedImage.encrypted, undefined, async (key) => {
+          const encryptedImage = await awaitArchiveOwner(owner, async () => (encryptData(imageData, dek)));
+          const upload = await awaitArchiveOwner(owner, async () => (uploadToR2(encryptedImage.encrypted, undefined, async (key) => {
             createdR2Keys.push(key);
             persistJournal();
-            await registerItems([{ kind: 'r2', id: key }]);
-          });
+            await awaitArchiveOwner(owner, async () => (registerItems([{ kind: 'r2', id: key }])));
+          })));
           throwIfAborted(signal);
           docData.imageUrl = upload.url;
           docData.imageR2Key = upload.key;
@@ -991,7 +1002,7 @@ export async function importPersonalArchive(
         docData.mimeType = archiveDrop.mimeType || 'application/octet-stream';
         const isBinary = archiveDrop.sourceFileFormat === 'binary' || (archiveDrop.fileSize ?? 0) >= RAW_FILE_THRESHOLD;
         if (isBinary) {
-          const upload = await uploadArchiveEntryAsBinary(
+          const upload = await awaitArchiveOwner(owner, async () => (uploadArchiveEntryAsBinary(
             fileEntry,
             archiveDrop.mimeType,
             archiveDrop.fileSize,
@@ -1006,9 +1017,9 @@ export async function importPersonalArchive(
             async (key) => {
               createdR2Keys.push(key);
               persistJournal();
-              await registerItems([{ kind: 'r2', id: key }]);
+              await awaitArchiveOwner(owner, async () => (registerItems([{ kind: 'r2', id: key }])));
             }
-          );
+          )));
           // The XHR uploader does not accept an AbortSignal. Journal the returned key first, then
           // honor a cancellation so rollback can delete an upload that finished after Cancel.
           throwIfAborted(signal);
@@ -1017,19 +1028,19 @@ export async function importPersonalArchive(
           docData.fileFormat = 'binary';
           processedBytes += upload.bytes;
         } else {
-          const bytes = await readEntryBytes(fileEntry, signal);
+          const bytes = await awaitArchiveOwner(owner, async () => (readEntryBytes(fileEntry, signal)));
           if (archiveDrop.fileSize != null && bytes.byteLength !== archiveDrop.fileSize) {
             throw new Error(`The imported bytes for "${archiveDrop.name}" do not match the manifest size.`);
           }
-          const dek = await generateAESKey();
+          const dek = await awaitArchiveOwner(owner, async () => (generateAESKey()));
           const dataUri = bytesToDataUri(bytes, archiveDrop.mimeType || 'application/octet-stream');
-          const encrypted = await encryptData(dataUri, dek);
-          const wrappedDek = await encryptDEKForUser(dek, userKeys.publicKey, userKeys.privateKey);
-          const upload = await uploadToR2(encrypted.encrypted, undefined, async (key) => {
+          const encrypted = await awaitArchiveOwner(owner, async () => (encryptData(dataUri, dek)));
+          const wrappedDek = await awaitArchiveOwner(owner, async () => (encryptDEKForUser(dek, userKeys.publicKey, userKeys.privateKey)));
+          const upload = await awaitArchiveOwner(owner, async () => (uploadToR2(encrypted.encrypted, undefined, async (key) => {
             createdR2Keys.push(key);
             persistJournal();
-            await registerItems([{ kind: 'r2', id: key }]);
-          });
+            await awaitArchiveOwner(owner, async () => (registerItems([{ kind: 'r2', id: key }])));
+          })));
           throwIfAborted(signal);
           docData.fileUrl = upload.url;
           docData.r2Key = upload.key;
@@ -1042,9 +1053,9 @@ export async function importPersonalArchive(
 
       const dropRef = doc(db, 'drops', newDropId);
       throwIfAborted(signal);
-      await checkFenceFresh();
+      await awaitArchiveOwner(owner, async () => (checkFenceFresh()));
       try {
-        await setDoc(dropRef, docData);
+        await awaitArchiveOwner(owner, async () => (setDoc(dropRef, docData)));
       } catch (error) {
         const errorCode = (error as { code?: string })?.code;
         if ((errorCode === 'permission-denied' || errorCode === 'PERMISSION_DENIED') && docData.expiresAt === null && expirationOption === 'forever') {
@@ -1053,7 +1064,7 @@ export async function importPersonalArchive(
           docData.expiresAt = Timestamp.fromDate(expiresAt);
           docData.expirationOption = expirationOption;
           downgradedForeverCount += 1;
-          await setDoc(dropRef, docData);
+          await awaitArchiveOwner(owner, async () => (setDoc(dropRef, docData)));
         } else {
           throw error;
         }
@@ -1068,13 +1079,13 @@ export async function importPersonalArchive(
         currentName: archiveDrop.name,
         message: `Imported ${archiveDrop.name}`,
       });
-      await yieldBetweenArchiveItems();
+      await awaitArchiveOwner(owner, async () => (yieldBetweenArchiveItems()));
       throwIfAborted(signal);
-      await checkFenceFresh();
+      await awaitArchiveOwner(owner, async () => (checkFenceFresh()));
     }
 
     throwIfAborted(signal);
-    await checkFenceFresh();
+    await awaitArchiveOwner(owner, async () => (checkFenceFresh()));
     emitProgress(onProgress, { phase: 'finalizing', processedBytes, totalBytes, completedItems, totalItems: loaded.manifest.drops.length, message: 'Finalizing import…' });
     stopHeartbeat();
     let fenceClosed = false;
@@ -1084,19 +1095,19 @@ export async function importPersonalArchive(
         const batch = registeredItems.slice(i, i + 500).map((id) => ({ id, disposition: 'committed' as const }));
         const chunks: { index: number; entries: { id: string; disposition: 'committed' }[] }[] = [];
         for (let j = 0; j < batch.length; j += 100) chunks.push({ index: i + j, entries: batch.slice(j, j + 100) });
-        recorded = await recordImportDispositions(jobId, chunks);
+        recorded = await awaitArchiveOwner(owner, async () => (recordImportDispositions(jobId, chunks, owner)));
       }
       if (recorded) {
         throwIfAborted(signal);
-        fenceClosed = await completeImportFence(jobId, registeredItems.length);
-        if (!fenceClosed) fenceClosed = (await getImportFenceOutstanding(jobId))?.state === 'closed-success';
+        fenceClosed = await awaitArchiveOwner(owner, async () => (completeImportFence(jobId, registeredItems.length, owner)));
+        if (!fenceClosed) fenceClosed = (await awaitArchiveOwner(owner, async () => (getImportFenceOutstanding(jobId, owner))))?.state === 'closed-success';
       }
-      if (!fenceClosed) await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1)));
+      if (!fenceClosed) await awaitArchiveOwner(owner, async () => (new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1)))));
     }
     if (!fenceClosed) throw new Error('The personal import could not be completed.');
     clearImportJournal(jobId);
     try {
-      await loaded.reader.close();
+      await awaitArchiveOwner(owner, async () => (loaded.reader.close()));
     } catch (error) {
       console.warn('Personal archive reader cleanup failed after a successful import:', error);
     }
@@ -1110,9 +1121,9 @@ export async function importPersonalArchive(
     };
   } catch (error) {
     stopHeartbeat();
-    await loaded.reader.close().catch(() => {});
+    await awaitArchiveOwner(owner, async () => (loaded.reader.close().catch(() => {})));
     try {
-      const outcome = await recoverArchiveFenceJob({ ...journal, journalKey: PERSONAL_IMPORT_JOURNAL_PREFIX + jobId }, true);
+      const outcome = await awaitArchiveOwner(owner, async () => (recoverArchiveFenceJob({ ...journal, journalKey: PERSONAL_IMPORT_JOURNAL_PREFIX + jobId }, true, owner)));
       if (outcome === 'adopted') return {
         importedCount, legacyExpiryFallbackCount, zeroRemainingCount,
         downgradedForeverCount, unpinnedCount,

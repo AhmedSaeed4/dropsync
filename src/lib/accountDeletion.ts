@@ -204,6 +204,7 @@ async function drainOwnedDeletionJobs(userId: string): Promise<string[]> {
 // account deletion mutates any drop or workspace. The account barrier prevents new imports.
 async function drainOpenImportFences(userId: string): Promise<boolean> {
   try {
+    const owner = getArchiveTaskManager().foregroundOwner(userId);
     // The lock-held recovery above closed and verified each import before the barrier.
     // The barrier now prevents another producer from opening one. Re-read server truth;
     // never acknowledge an item merely because deletion was attempted.
@@ -212,7 +213,7 @@ async function drainOpenImportFences(userId: string): Promise<boolean> {
       const data = fence.data();
       if (data.state === 'closed-success') continue;
       if (data.state !== 'closed-cancelled' || typeof data.jobId !== 'string') return false;
-      const status = await getImportFenceOutstanding(data.jobId);
+      const status = await getImportFenceOutstanding(data.jobId, owner);
       if (!status || status.state !== 'closed-cancelled' || status.outstandingItems !== 0) return false;
     }
     return true;
@@ -263,7 +264,7 @@ async function deleteAccountUnderHeldLock(
     const priorBarrierState = barrierSnapshot.exists() ? barrierSnapshot.get('state') : 'none';
     // A resumed active barrier cannot admit a new import; take over its owned
     // fences under the account lock. A new barrier respects a fresh remote lease.
-    const remoteActive = await getArchiveTaskManager().recoverUnderHeldLock(userId, priorBarrierState === 'active');
+    const remoteActive = await getArchiveTaskManager().recoverUnderHeldLock(userId, priorBarrierState === 'active', getArchiveTaskManager().foregroundOwner(userId));
     if (remoteActive) return { success: false, error: 'A backup is active on another device. Try again when it finishes.' };
 
     // Step 0 (ROUND 12 part K): acquire the barrier. `finalizing` = a previous attempt
