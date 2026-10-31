@@ -1,5 +1,6 @@
 'use client';
 
+import { useModalFade } from '@/hooks/useModalFade';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useModalBackClose } from '@/hooks/useModalBackClose';
 import { getEditorialThemeColors } from './editorial/editorialTheme';
@@ -30,8 +31,11 @@ const MESSAGES: Record<'create' | 'move' | 'edit', string> = {
  * close button) and renders in the host layout's style via `variant` + `theme`. Rendered at
  * z-[60] so it overlays host modals (e.g. TextModal, which is z-50).
  */
-export function ForeverLockedModal({ variant, theme, context = 'create', onClose }: ForeverLockedModalProps) {
+export function ForeverLockedModal({ variant, theme, context = 'create', onClose: closeImmediately }: ForeverLockedModalProps) {
   useBodyScrollLock();
+  const isEditorial = variant === 'editorial';
+  const { closing, requestClose } = useModalFade(closeImmediately, isEditorial, isEditorial ? () => undefined : undefined);
+  const onClose = isEditorial ? requestClose : closeImmediately;
   useModalBackClose(true, onClose);
 
   const body = MESSAGES[context];
@@ -40,7 +44,7 @@ export function ForeverLockedModal({ variant, theme, context = 'create', onClose
     const tc = getEditorialThemeColors(theme);
     return (
       <div
-        className="fixed inset-0 bg-[#1a1a1a]/60 z-[60] flex items-center justify-center p-4 transition-colors duration-300"
+        className={`fixed inset-0 ${theme === 'dark' ? 'modal-frost-dark' : 'modal-frost'} z-[60] flex items-center justify-center p-4 transition-colors duration-300 ${closing ? 'modal-fade-out' : 'modal-fade-in'}`}
         onClick={(e) => e.target === e.currentTarget && onClose()}
       >
         <div className={`${tc.bg} border ${tc.border} rounded-xl shadow-xl w-full max-w-sm transition-colors duration-300`}>

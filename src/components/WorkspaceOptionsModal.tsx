@@ -1,5 +1,6 @@
 'use client';
 
+import { useModalFade } from '@/hooks/useModalFade';
 import { useState, useEffect } from 'react';
 import { Workspace } from '@/types';
 import { getWorkspaceMembers, type MemberInfo } from '@/lib/workspaces';
@@ -53,7 +54,7 @@ export default function WorkspaceOptionsModal({
   onDelete,
   onLeaveAndTransfer,
   onImport,
-  onClose,
+  onClose: closeImmediately,
   variant,
   forceEndPending = false,
 }: Props) {
@@ -62,6 +63,12 @@ export default function WorkspaceOptionsModal({
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<null | 'delete' | 'transfer' | 'kick'>(null);
   const [kickTargetId, setKickTargetId] = useState<string | null>(null);
+  const isEditorial = variant === 'editorial';
+  const { closing, requestClose } = useModalFade((openImport: boolean) => {
+    if (openImport) onImport?.();
+    else closeImmediately();
+  }, isEditorial && (isPersonal || !!workspace), isEditorial ? () => undefined : undefined);
+  const onClose = isEditorial ? () => requestClose(false) : closeImmediately;
   // Back closes only when not mid delete/transfer/kick (matches the disabled X/backdrop).
   useModalBackClose(true, () => { if (!(isDeleting || isLeaving || isKicking)) onClose(); });
   // Freeze the page (body overflow + Lenis) while this full-screen blocking modal is open, like
@@ -99,7 +106,6 @@ export default function WorkspaceOptionsModal({
   const busy = isDeleting || isLeaving || isKicking;
   const isDark = theme === 'dark';
   const isMinimal = theme === 'minimal';
-  const isEditorial = variant === 'editorial';
   // Editorial tokens (null in classic — classic keeps its inline theme classes).
   const tc = isEditorial ? getEditorialThemeColors(theme as 'light' | 'dark' | 'minimal') : null;
 
@@ -166,8 +172,8 @@ export default function WorkspaceOptionsModal({
     const personalPrimary = isEditorial ? editorialPrimary : classicChrome('primary');
     const personalCancel = isEditorial ? editorialOutline : classicChrome('cancel');
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center overscroll-contain">
-        <div className="fixed inset-0 bg-black/50" onClick={onClose} />
+      <div className={isEditorial ? `fixed inset-0 z-50 flex items-center justify-center overscroll-contain editorial-modal ${closing ? 'modal-fade-out' : 'modal-fade-in'}` : 'fixed inset-0 z-50 flex items-center justify-center overscroll-contain'}>
+        <div className={isEditorial ? `fixed inset-0 ${theme === 'dark' ? 'modal-frost-dark' : 'modal-frost'}` : 'fixed inset-0 bg-black/50'} onClick={onClose} />
         <div className={personalPanelClass}>
           <div className={headerClass}>
             <h3 className={titleClass}>{L('Personal options', 'PERSONAL_OPTIONS')}</h3>
@@ -182,7 +188,7 @@ export default function WorkspaceOptionsModal({
               {L('Restore a password-protected backup into your personal drops. Existing drops are not changed.', 'IMPORT A PERSONAL BACKUP. EXISTING DROPS ARE NOT CHANGED.')}
             </p>
             {onImport && (
-              <button onClick={onImport} className={`w-full ${personalPrimary}`}>
+              <button onClick={isEditorial ? () => requestClose(true) : onImport} className={`w-full ${personalPrimary}`}>
                 {L('Import backup', 'IMPORT_BACKUP')}
               </button>
             )}
@@ -200,8 +206,8 @@ export default function WorkspaceOptionsModal({
   // Members still loading.
   if (members === null) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center overscroll-contain">
-        <div className="fixed inset-0 bg-black/50" onClick={onClose} />
+      <div className={isEditorial ? `fixed inset-0 z-50 flex items-center justify-center overscroll-contain editorial-modal ${closing ? 'modal-fade-out' : 'modal-fade-in'}` : 'fixed inset-0 z-50 flex items-center justify-center overscroll-contain'}>
+        <div className={isEditorial ? `fixed inset-0 ${theme === 'dark' ? 'modal-frost-dark' : 'modal-frost'}` : 'fixed inset-0 bg-black/50'} onClick={onClose} />
         <div className={`${panelClass} p-6 flex items-center justify-center`}>
           <div className={loadingSpinner} />
         </div>
@@ -240,8 +246,8 @@ export default function WorkspaceOptionsModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center overscroll-contain">
-      <div className="fixed inset-0 bg-black/50" onClick={() => !busy && onClose()} />
+    <div className={isEditorial ? `fixed inset-0 z-50 flex items-center justify-center overscroll-contain editorial-modal ${closing ? 'modal-fade-out' : 'modal-fade-in'}` : 'fixed inset-0 z-50 flex items-center justify-center overscroll-contain'}>
+      <div className={isEditorial ? `fixed inset-0 ${theme === 'dark' ? 'modal-frost-dark' : 'modal-frost'}` : 'fixed inset-0 bg-black/50'} onClick={() => !busy && onClose()} />
       <div className={panelClass}>
         {/* Header */}
         <div className={headerClass}>
@@ -320,7 +326,7 @@ export default function WorkspaceOptionsModal({
                 {`You're the only member of "${workspace.name}". Deleting will permanently remove the workspace and all its drops. This cannot be undone.`}
               </p>
               {onImport && (
-                <button onClick={onImport} disabled={busy} className={`w-full mb-3 ${actionBtnChrome('transfer')}`}>
+                <button onClick={isEditorial ? () => requestClose(true) : onImport} disabled={busy} className={`w-full mb-3 ${actionBtnChrome('transfer')}`}>
                   {L('Import backup', 'IMPORT_BACKUP')}
                 </button>
               )}
@@ -438,7 +444,7 @@ export default function WorkspaceOptionsModal({
               </p>
 
               {onImport && (
-                <button onClick={onImport} disabled={busy} className={`w-full mt-3 ${actionBtnChrome('transfer')}`}>
+                <button onClick={isEditorial ? () => requestClose(true) : onImport} disabled={busy} className={`w-full mt-3 ${actionBtnChrome('transfer')}`}>
                   {L('Import backup', 'IMPORT_BACKUP')}
                 </button>
               )}

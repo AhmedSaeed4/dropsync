@@ -18,6 +18,7 @@ import { useNow } from '@/hooks/useNow';
 import { useMentionEditor } from '@/hooks/useMentionEditor';
 import { useVoiceTranscribe } from '@/hooks/useVoiceTranscribe';
 import { useModalBackClose } from '@/hooks/useModalBackClose';
+import { useModalFade } from '@/hooks/useModalFade';
 import type { AppState, BinaryFiles } from '@excalidraw/excalidraw/types';
 import type { ExcalidrawElement } from '@excalidraw/excalidraw/element/types';
 
@@ -109,6 +110,10 @@ export function MobileCreateView({
   const [uploadProgress, setUploadProgress] = useState<{ completed: number; total: number } | null>(null);
   const [showForeverLocked, setShowForeverLocked] = useState(false);
   const [switchSheet, setSwitchSheet] = useState(false);
+  const { closing: switchClosing, requestClose: requestSwitchClose } = useModalFade((next?: 'text' | 'file') => {
+    setSwitchSheet(false);
+    if (next) pickStart(next);
+  }, switchSheet);
   // R7 full-screen editor panel — open, the editor body renders in the panel instead of the
   // card (exactly one mount at a time).
   const [editorExpanded, setEditorExpanded] = useState(false);
@@ -232,11 +237,11 @@ export function MobileCreateView({
   // own docstring the real open flag (`editorExpanded`) is passed, not a constant true.
   // Every sheet exit (✕, backdrop, phone back, drag-down close) routes through ONE closer so
   // the sheet always re-opens at mid (the approved demo resets its fraction on close).
-  const closeEditorSheet = () => {
+  const { closing: editorClosing, requestClose: closeEditorSheet } = useModalFade(() => {
     setEditorExpanded(false);
     setSheetFull(false);
     setSheetDragH(null);
-  };
+  }, editorExpanded);
   useModalBackClose(editorExpanded, closeEditorSheet);
 
   // Auto-focus the panel's editor once it mounts (the rAF defers focus until the panel
@@ -1174,18 +1179,18 @@ export function MobileCreateView({
       {/* Draw-mode switch popup (prototype :787-796) — the folder's bottom-sheet idiom
           (keyed conditional children inside one AnimatePresence, MobileSortMenu pattern) */}
       <AnimatePresence>
-        {switchSheet && (
+        {switchSheet && !switchClosing && (
           <motion.div
             key="switch-backdrop"
-            className="fixed inset-0 z-50 bg-black/50"
-            onClick={() => setSwitchSheet(false)}
+            className={`fixed inset-0 z-50 ${theme === 'dark' ? 'modal-frost-dark' : 'modal-frost'}`}
+            onClick={() => requestSwitchClose()}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
+            exit={{ opacity: 0, transition: { duration: 0.2, ease: 'easeIn' } }}
+            transition={{ duration: 0.3, ease: 'easeOut' }}
           />
         )}
-        {switchSheet && (
+        {switchSheet && !switchClosing && (
           <motion.div
             key="switch-panel"
             role="dialog"
@@ -1205,8 +1210,7 @@ export function MobileCreateView({
               <button
                 type="button"
                 onClick={() => {
-                  setSwitchSheet(false);
-                  pickStart('text');
+                  requestSwitchClose('text');
                 }}
                 className={`flex-1 rounded-full border py-2.5 text-sm transition-colors ${font} ${tc.border} ${tc.text} hover:border-[#1a1a1a]`}
               >
@@ -1215,8 +1219,7 @@ export function MobileCreateView({
               <button
                 type="button"
                 onClick={() => {
-                  setSwitchSheet(false);
-                  pickStart('file');
+                  requestSwitchClose('file');
                 }}
                 className={`flex-1 rounded-full py-2.5 text-sm transition-opacity hover:opacity-90 ${font} ${tc.activePillBg} ${tc.activePillText}`}
               >
@@ -1233,18 +1236,18 @@ export function MobileCreateView({
           (h-full min-h-0, :924). Open/close both animate; phone BACK exits via useModalBackClose.
           While open, the card renders no second editor copy — one mount, content intact. */}
       <AnimatePresence>
-        {editorExpanded && (
+        {editorExpanded && !editorClosing && (
           <motion.div
             key="editor-backdrop"
-            className="fixed inset-0 z-[60] bg-black/50"
+            className={`fixed inset-0 z-[60] ${theme === 'dark' ? 'modal-frost-dark' : 'modal-frost'}`}
             onClick={(e) => e.target === e.currentTarget && closeEditorSheet()}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
+            exit={{ opacity: 0, transition: { duration: 0.2, ease: 'easeIn' } }}
+            transition={{ duration: 0.3, ease: 'easeOut' }}
           />
         )}
-        {editorExpanded && (
+        {editorExpanded && !editorClosing && (
           <motion.div
             key="editor-panel"
             ref={sheetPanelRef}

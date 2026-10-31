@@ -5,6 +5,7 @@ import { getAuth } from 'firebase/auth';
 import { Drop, ExpirationOption } from '@/types';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useModalBackClose } from '@/hooks/useModalBackClose';
+import { useModalFade } from '@/hooks/useModalFade';
 import { useUserTier } from '@/hooks/useUserTier';
 import { getEditorialThemeColors } from './editorialTheme';
 import { ForeverLockedModal } from '../ForeverLockedModal';
@@ -64,6 +65,12 @@ const BUILT_IN_CATEGORIES = [
 
 export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customCategories = [], onCreateCategory, editDrop, onEdit, currentUserId, mentionableDrops = [], isWorkspace = false, canMutate = false, onStartCall, onCancelCallStart, callCanStart = true, callAccessLoading = false, callAccessError = null, onRefreshCallAccess }: EditorialTextModalProps) {
   useBodyScrollLock();
+  const { closing, requestClose } = useModalFade(onClose, true, () => {
+    if (showForeverLocked) return;
+    if (showCloseDiscardConfirm) { requestDiscardClose(false); return; }
+    if (isFullscreen) { setIsFullscreen(false); return; }
+    handleClose();
+  });
   const isEditMode = !!editDrop;
   const isFileDrop = isEditMode && editDrop?.type === 'file';
   // Live calls are desktop-only — the Call mode + its Start button gate on this (useIsHoverable, NOT
@@ -119,6 +126,10 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
   // Unsaved-changes close guard: X/backdrop/Cancel/hardware-back route through handleClose, which
   // confirms ("Discard changes?") before actually closing when anything changed in edit mode.
   const [showCloseDiscardConfirm, setShowCloseDiscardConfirm] = useState(false);
+  const { closing: discardClosing, requestClose: requestDiscardClose } = useModalFade((discard: boolean) => {
+    setShowCloseDiscardConfirm(false);
+    if (discard) requestClose();
+  }, showCloseDiscardConfirm);
   const [drawingFile, setDrawingFile] = useState<File | null>(null);
   const [initialScene, setInitialScene] = useState<{ elements: ExcalidrawElement[]; appState: Omit<AppState, 'offsetTop' | 'offsetLeft' | 'width' | 'height'>; files?: BinaryFiles } | null>(null);
   const [extractingScene, setExtractingScene] = useState(isEditMode && !!editDrop?.isDrawing);
@@ -346,19 +357,19 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
   // Single close entry point for X / backdrop / Cancel / hardware-back (and the drawing-cancel
   // path in edit mode). With unsaved edits, confirm with the theme-consistent discard dialog;
   // without changes, close straight back (the parent re-opens the preview either way).
-  const handleClose = () => {
+  function handleClose() {
     if (loading) return;
     if (mode === 'call') onCancelCallStart?.();
     if (isEditMode && hasChanges) {
       setShowCloseDiscardConfirm(true);
       return;
     }
-    onClose();
-  };
+    requestClose();
+  }
   // Keep the edit guard disabled while the nested discard dialog owns the back button. Toggling the
   // primary hook's open flag makes it re-register after a popstate already removed its entry.
   useModalBackClose(!showCloseDiscardConfirm, handleClose);
-  useModalBackClose(showCloseDiscardConfirm, () => setShowCloseDiscardConfirm(false));
+  useModalBackClose(showCloseDiscardConfirm, () => requestDiscardClose(false));
 
   const handleModeSwitch = (newMode: 'text' | 'draw') => {
     if (newMode === mode) return;
@@ -519,7 +530,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
 
   return (
     <div
-      className="fixed inset-0 bg-[#1a1a1a]/60 z-50 transition-colors duration-300 overscroll-contain overflow-y-auto flex items-start sm:items-center justify-center p-4 pt-[env(safe-area-inset-top,16px)] pb-[env(safe-area-inset-bottom,16px)] min-h-screen min-h-[100dvh]"
+      className={`fixed inset-0 ${theme === 'dark' ? 'modal-frost-dark' : 'modal-frost'} z-50 transition-colors duration-300 overscroll-contain overflow-y-auto flex items-start sm:items-center justify-center p-4 pt-[env(safe-area-inset-top,16px)] pb-[env(safe-area-inset-bottom,16px)] min-h-screen min-h-[100dvh] ${closing ? 'modal-fade-out' : 'modal-fade-in'}`}
       onClick={(e) => e.target === e.currentTarget && handleClose()}
       onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
       onDrop={(e) => {
@@ -1194,8 +1205,8 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
       </div>
       {showCloseDiscardConfirm && (
         <div
-          className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center p-4"
-          onClick={(e) => e.target === e.currentTarget && setShowCloseDiscardConfirm(false)}
+          className={`fixed inset-0 z-[70] ${theme === 'dark' ? 'modal-frost-dark' : 'modal-frost'} flex items-center justify-center p-4 ${discardClosing ? 'modal-fade-out' : 'modal-fade-in'}`}
+          onClick={(e) => e.target === e.currentTarget && requestDiscardClose(false)}
         >
           <div className={`${tc.bg} border ${tc.border} rounded-xl w-80 max-w-full p-5 shadow-xl`}>
             <p className={`text-sm ${tc.text} mb-4 ${tc.fontClass}`}>Discard changes?</p>
@@ -1204,8 +1215,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
                 type="button"
                 onClick={() => {
                   if (loading) return;
-                  setShowCloseDiscardConfirm(false);
-                  onClose();
+                  requestDiscardClose(true);
                 }}
                 className={`flex-1 px-4 py-2 ${tc.activePillBg} ${tc.activePillText} text-sm rounded-lg hover:opacity-90 transition-opacity ${tc.fontClass}`}
               >
@@ -1213,7 +1223,7 @@ export function EditorialTextModal({ onSubmit, onClose, theme = 'light', customC
               </button>
               <button
                 type="button"
-                onClick={() => setShowCloseDiscardConfirm(false)}
+                onClick={() => requestDiscardClose(false)}
                 className={`flex-1 px-4 py-2 border ${tc.border} ${tc.text} text-sm rounded-lg hover:border-[#1a1a1a] transition-colors ${tc.fontClass}`}
               >
                 Keep editing

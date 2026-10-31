@@ -80,6 +80,8 @@ interface EditorialMobileShellProps {
   setWorkspaceToDelete: (v: Workspace | null) => void;
   workspaceToLeave: Workspace | null;
   setWorkspaceToLeave: (v: Workspace | null) => void;
+  leaveClosing: boolean;
+  onCloseLeave: () => void;
   isDeletingWorkspace: boolean;
   isLeavingWorkspace: boolean;
   isKicking: boolean;
@@ -150,7 +152,7 @@ export function EditorialMobileShell({
   createdWorkspace, setCreatedWorkspace,
   showJoinModal, setShowJoinModal,
   workspaceToDelete, setWorkspaceToDelete,
-  workspaceToLeave, setWorkspaceToLeave,
+  workspaceToLeave, setWorkspaceToLeave, leaveClosing, onCloseLeave,
   isDeletingWorkspace, isLeavingWorkspace, isKicking, onKick,
   onDeleteWorkspace, onLeaveWorkspace, onLeaveAndTransfer,
   onOpenPersonalOptions, onImportWorkspace,
@@ -541,8 +543,8 @@ export function EditorialMobileShell({
 
       {/* Leave Workspace Confirmation (:705-745, same markup, tc tokens) */}
       {workspaceToLeave && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center overscroll-contain">
-          <div className="fixed inset-0 bg-black/50" onClick={() => !isLeavingWorkspace && setWorkspaceToLeave(null)} />
+        <div className={`fixed inset-0 z-50 flex items-center justify-center overscroll-contain editorial-modal ${leaveClosing ? 'modal-fade-out' : 'modal-fade-in'}`}>
+          <div className={`fixed inset-0 ${theme === 'dark' ? 'modal-frost-dark' : 'modal-frost'}`} onClick={() => !isLeavingWorkspace && onCloseLeave()} />
           <div className={`relative z-10 mx-4 w-full max-w-[384px] border ${tc.border} ${tc.cardBg} rounded-lg overflow-hidden`}>
             <div className={`px-5 py-4 border-b ${tc.border}`}>
               <h3 className={`text-sm font-medium ${tc.fontClass} ${tc.text}`}>
@@ -555,7 +557,7 @@ export function EditorialMobileShell({
               </p>
               <div className="flex gap-3">
                 <button
-                  onClick={() => setWorkspaceToLeave(null)}
+                  onClick={onCloseLeave}
                   disabled={isLeavingWorkspace}
                   className={`flex-1 px-4 py-2.5 text-sm ${tc.fontClass} border ${tc.border} rounded-lg ${tc.text} hover:bg-[#1a1a1a] hover:text-white transition-colors disabled:opacity-50`}
                 >

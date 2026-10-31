@@ -1,5 +1,6 @@
 'use client';
 
+import { useModalFade } from '@/hooks/useModalFade';
 import { useMemo, useState, useSyncExternalStore } from 'react';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useModalBackClose } from '@/hooks/useModalBackClose';
@@ -9,7 +10,7 @@ import { getEditorialThemeColors } from './editorial/editorialTheme';
 type Theme = 'light' | 'dark' | 'minimal';
 type Variant = 'classic' | 'editorial';
 
-export function ArchiveProgressPanel({ jobId, uid, theme, variant, onBack, showAllInitially = false }: {
+export function ArchiveProgressPanel({ jobId, uid, theme, variant, onBack: backImmediately, showAllInitially = false }: {
   jobId: string; uid: string; theme: Theme; variant: Variant; onBack: () => void; showAllInitially?: boolean;
 }) {
   const manager = getArchiveTaskManager();
@@ -20,6 +21,8 @@ export function ArchiveProgressPanel({ jobId, uid, theme, variant, onBack, showA
   const settled = store.settled.find((item) => item.jobId === jobId && !item.dismissed);
   const item = active || settled;
   const isEditorial = variant === 'editorial';
+  const { closing, requestClose } = useModalFade(backImmediately, isEditorial, isEditorial ? () => undefined : undefined);
+  const onBack = isEditorial ? requestClose : backImmediately;
   const isDark = theme === 'dark';
   const isMinimal = theme === 'minimal';
   const colors = useMemo(() => {
@@ -67,8 +70,8 @@ export function ArchiveProgressPanel({ jobId, uid, theme, variant, onBack, showA
     catch (error) { setRetryError(error instanceof Error ? error.message : 'Cleanup is still incomplete.'); }
   };
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 overscroll-contain">
-      <div className="fixed inset-0 bg-black/55" onClick={onBack} />
+    <div className={isEditorial ? `fixed inset-0 z-[100] flex items-center justify-center p-4 overscroll-contain editorial-modal ${closing ? 'modal-fade-out' : 'modal-fade-in'}` : 'fixed inset-0 z-[100] flex items-center justify-center p-4 overscroll-contain'}>
+      <div className={isEditorial ? `fixed inset-0 ${theme === 'dark' ? 'modal-frost-dark' : 'modal-frost'}` : 'fixed inset-0 bg-black/55'} onClick={onBack} />
       <section role="dialog" aria-modal="true" aria-label="Archive progress" className={`relative z-10 w-full max-w-lg border shadow-2xl overflow-hidden ${colors.panel} ${colors.text} ${colors.rounded}`}>
         <div className={`px-5 py-4 border-b flex items-center justify-between ${colors.border}`}>
           <h2 className={`text-sm font-medium ${isEditorial ? 'tracking-wide' : 'font-mono uppercase tracking-wider'} ${colors.font} ${colors.text}`}>Archive progress</h2>

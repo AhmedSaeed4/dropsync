@@ -577,6 +577,50 @@ html {
   animation: modal-card-in 300ms ease-out forwards;
 }
 
+/* Shared editorial modal exit and frosted backdrops. */
+@keyframes modal-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+.modal-fade-out {
+  animation: modal-fade-out 200ms ease-in forwards;
+}
+
+/* A slightly quicker entrance for standard editorial modal surfaces. */
+.modal-fade-in.editorial-modal,
+.modal-frost.modal-fade-in,
+.modal-frost-dark.modal-fade-in,
+.modal-frost .modal-card-in,
+.modal-frost-dark .modal-card-in {
+  animation-duration: 220ms;
+}
+
+.modal-frost,
+.modal-frost-dark,
+:is(.modal-fade-in, .modal-fade-out):not(.modal-frost, .modal-frost-dark):has(> :is(.modal-frost, .modal-frost-dark)) {
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+
+.modal-frost {
+  background-color: rgba(0, 0, 0, 0.35);
+}
+
+.modal-frost-dark {
+  background-color: rgba(0, 0, 0, 0.55);
+}
+
+/* A fading wrapper must own the blur; its child cannot sample past it. */
+:is(.modal-fade-in, .modal-fade-out):not(.modal-frost, .modal-frost-dark):has(> :is(.modal-frost, .modal-frost-dark)) > :is(.modal-frost, .modal-frost-dark) {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
 /* Landing page smooth animations */
 @keyframes fadeIn {
   from { opacity: 0; }

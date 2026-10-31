@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useModalBackClose } from '@/hooks/useModalBackClose';
+import { useModalFade } from '@/hooks/useModalFade';
 import { getEditorialThemeColors } from './editorialTheme';
 
 interface EditorialJoinWorkspaceModalProps {
@@ -13,7 +14,8 @@ interface EditorialJoinWorkspaceModalProps {
 
 export function EditorialJoinWorkspaceModal({ onJoin, onClose, theme = 'light' }: EditorialJoinWorkspaceModalProps) {
   useBodyScrollLock();
-  useModalBackClose(true, onClose);
+  const { closing, requestClose } = useModalFade(onClose, true, (close) => close());
+  useModalBackClose(true, requestClose);
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -29,7 +31,7 @@ export function EditorialJoinWorkspaceModal({ onJoin, onClose, theme = 'light' }
 
     const result = await onJoin(code.trim());
     if (result.success) {
-      onClose();
+      requestClose();
     } else if (result.error) {
       setError(result.error);
     }
@@ -39,13 +41,13 @@ export function EditorialJoinWorkspaceModal({ onJoin, onClose, theme = 'light' }
 
   return (
     <div
-      className="fixed inset-0 bg-[#1a1a1a]/60 flex items-center justify-center z-50 p-4"
-      onClick={(e) => e.target === e.currentTarget && onClose()}
+      className={`fixed inset-0 ${theme === 'dark' ? 'modal-frost-dark' : 'modal-frost'} flex items-center justify-center z-50 p-4 ${closing ? 'modal-fade-out' : 'modal-fade-in'}`}
+      onClick={(e) => e.target === e.currentTarget && requestClose()}
     >
       <div className={`${tc.bg} border ${tc.border} rounded-xl w-full max-w-md overflow-hidden shadow-xl`}>
         <div className={`border-b ${tc.border} px-5 py-4 flex items-center justify-between`}>
           <h2 className={`${tc.fontClass} ${tc.text} font-medium text-[15px]`}>Join Workspace</h2>
-          <button onClick={onClose} className={`${tc.muted} hover:${tc.text} transition-colors p-1`}>
+          <button onClick={requestClose} className={`${tc.muted} hover:${tc.text} transition-colors p-1`}>
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -77,7 +79,7 @@ export function EditorialJoinWorkspaceModal({ onJoin, onClose, theme = 'light' }
           <div className="flex gap-3 pt-2">
             <button
               type="button"
-              onClick={onClose}
+              onClick={requestClose}
               className={`flex-1 border ${tc.border} ${tc.text} py-2.5 text-sm rounded-lg hover:border-[#1a1a1a] transition-colors ${tc.fontClass}`}
             >
               Cancel

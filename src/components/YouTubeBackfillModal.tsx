@@ -1,5 +1,6 @@
 'use client';
 
+import { useModalFade } from '@/hooks/useModalFade';
 import { useRef, useState } from 'react';
 import type { Workspace } from '@/types';
 import {
@@ -25,7 +26,7 @@ export function YouTubeBackfillModal({
   workspaces,
   theme,
   variant,
-  onClose,
+  onClose: closeImmediately,
 }: YouTubeBackfillModalProps) {
   const [progress, setProgress] = useState<YoutubeBackfillProgress | null>(null);
   const [result, setResult] = useState<YoutubeBackfillResult | null>(null);
@@ -33,6 +34,8 @@ export function YouTubeBackfillModal({
   const abortRef = useRef<AbortController | null>(null);
   const skipWaitRef = useRef<AbortController | null>(null);
   const isEditorial = variant === 'editorial';
+  const { closing, requestClose } = useModalFade(closeImmediately, isEditorial, isEditorial ? () => undefined : undefined);
+  const onClose = isEditorial ? requestClose : closeImmediately;
   const isDark = theme === 'dark';
   const isMinimal = theme === 'minimal';
   const tc = isEditorial ? getEditorialThemeColors(theme) : null;
@@ -106,8 +109,8 @@ export function YouTubeBackfillModal({
       : null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 overscroll-contain">
-      <div className="fixed inset-0 bg-black/55" onClick={close} />
+    <div className={isEditorial ? `fixed inset-0 z-[100] flex items-center justify-center p-4 overscroll-contain editorial-modal ${closing ? 'modal-fade-out' : 'modal-fade-in'}` : 'fixed inset-0 z-[100] flex items-center justify-center p-4 overscroll-contain'}>
+      <div className={isEditorial ? `fixed inset-0 ${theme === 'dark' ? 'modal-frost-dark' : 'modal-frost'}` : 'fixed inset-0 bg-black/55'} onClick={close} />
       <div className={`relative z-10 w-full max-w-lg border ${colors.panel} ${colors.border} ${isEditorial || isMinimal ? 'rounded-lg' : ''} shadow-2xl`}>
         <div className={`flex items-center justify-between border-b ${colors.border} px-5 py-4`}>
           <div>

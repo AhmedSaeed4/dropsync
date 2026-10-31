@@ -1,5 +1,6 @@
 'use client';
 
+import { useModalFade } from '@/hooks/useModalFade';
 // LiveCallModal — the core call UI. ONE shared component (`variant` + `theme`) cloned from the
 // PreviewModal shell. Opens straight into the in-app full-screen view (card fills the app area).
 // useBodyScrollLock() + useModalBackClose(status==='joined', onMinimize) so the BROWSER BACK button
@@ -61,10 +62,13 @@ export function LiveCallModal(props: LiveCallModalProps) {
     micEnabled, cameraEnabled, cameraAvailable, screenSharing, members, currentUserId,
     callLimitDeadlineAt, trustedParticipantCount = 0,
     dailyMinutesUsed = null, callTotalMinutes = null, dailyUsageTrusted = false, callJoinedAtMs = null,
-    onMinimize, onLeave, onToggleMic, onToggleCamera, onToggleScreenShare,
+    onMinimize: minimizeImmediately, onLeave, onToggleMic, onToggleCamera, onToggleScreenShare,
   } = props;
 
   useBodyScrollLock();
+  const isEditorial = variant === 'editorial';
+  const { closing, requestClose } = useModalFade(minimizeImmediately, isEditorial, isEditorial ? () => undefined : undefined);
+  const onMinimize = isEditorial ? requestClose : minimizeImmediately;
   // Browser-back / mobile-back MINIMIZES to the floating pill (never mid-join, never an accidental
   // leave). Esc is intentionally NOT wired through here: in TRUE browser fullscreen the browser
   // exits fullscreen on Esc natively and the fullscreenchange listener below returns us to the
@@ -169,12 +173,12 @@ export function LiveCallModal(props: LiveCallModalProps) {
 
   return (
     <div
-      className={`fixed inset-0 ${tc.overlayBg} flex items-center justify-center z-[999] p-4 transition-colors duration-300`}
+      className={isEditorial ? `fixed inset-0 ${theme === 'dark' ? 'modal-frost-dark' : 'modal-frost'} flex items-center justify-center z-[999] p-4 transition-colors duration-300 ${closing ? 'modal-fade-out' : 'modal-fade-in'}` : `fixed inset-0 ${tc.overlayBg} flex items-center justify-center z-[999] p-4 transition-colors duration-300`}
       onClick={(e) => e.target === e.currentTarget && onMinimize()}
     >
       <div
         ref={containerRef}
-        className={`${tc.cardBg} ${tc.border} border ${isBrowserFullscreen ? '' : tc.rounded} ${isBrowserFullscreen ? 'w-full h-full' : 'w-full h-full max-w-[1200px]'} flex flex-col overflow-hidden shadow-2xl`}
+        className={isEditorial && isBrowserFullscreen ? `${tc.cardBg} ${tc.border} border ${isBrowserFullscreen ? '' : tc.rounded} ${isBrowserFullscreen ? 'w-full h-full' : 'w-full h-full max-w-[1200px]'} flex flex-col overflow-hidden shadow-2xl editorial-modal ${closing ? 'modal-fade-out' : 'modal-fade-in'}` : `${tc.cardBg} ${tc.border} border ${isBrowserFullscreen ? '' : tc.rounded} ${isBrowserFullscreen ? 'w-full h-full' : 'w-full h-full max-w-[1200px]'} flex flex-col overflow-hidden shadow-2xl`}
       >
         {/* Header */}
         <div className={`border-b ${tc.border} px-4 py-3 flex items-center justify-between gap-3 shrink-0`}>

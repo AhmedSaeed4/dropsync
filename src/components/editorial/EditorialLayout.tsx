@@ -1,5 +1,6 @@
 'use client';
 
+import { useModalFade } from '@/hooks/useModalFade';
 import { LoadingIndicator } from '@/components/LoadingIndicator';
 import { memo, useRef, useState, useEffect } from 'react';
 import { AgentDropRequest, ChatDropRequest, Drop, Workspace, ExpirationOption } from '@/types';
@@ -268,7 +269,10 @@ export function EditorialLayout(props: EditorialLayoutProps) {
   // MOVE — the drop has left this workspace, so there is nothing to return to.
   const [moveReturnDrop, setMoveReturnDrop] = useState<Drop | null>(null);
   // Browser/mobile back closes the inline member Leave modal (the other modals self-register).
-  useModalBackClose(!!workspaceToLeave, () => setWorkspaceToLeave(null));
+  const { closing: leaveClosing, requestClose: onCloseLeave } = useModalFade(
+    () => setWorkspaceToLeave(null), !!workspaceToLeave, workspaceToLeave ? () => undefined : undefined,
+  );
+  useModalBackClose(!!workspaceToLeave, onCloseLeave);
   // On mobile the chat is a stacked card (not a docked column) — back closes it. Desktop untouched.
   const isMobile = useIsMobile();
   useModalBackClose(!!showChat, () => setShowChat(false), isMobile);
@@ -479,6 +483,8 @@ export function EditorialLayout(props: EditorialLayoutProps) {
         setWorkspaceToDelete={setWorkspaceToDelete}
         workspaceToLeave={workspaceToLeave}
         setWorkspaceToLeave={setWorkspaceToLeave}
+        leaveClosing={leaveClosing}
+        onCloseLeave={onCloseLeave}
         isDeletingWorkspace={isDeletingWorkspace}
         isLeavingWorkspace={isLeavingWorkspace}
         isKicking={isKicking}
@@ -823,8 +829,8 @@ export function EditorialLayout(props: EditorialLayoutProps) {
 
       {/* Leave Workspace Confirmation Modal */}
       {workspaceToLeave && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center overscroll-contain">
-          <div className="fixed inset-0 bg-black/50" onClick={() => !isLeavingWorkspace && setWorkspaceToLeave(null)} />
+        <div className={`fixed inset-0 z-50 flex items-center justify-center overscroll-contain editorial-modal ${leaveClosing ? 'modal-fade-out' : 'modal-fade-in'}`}>
+          <div className={`fixed inset-0 ${theme === 'dark' ? 'modal-frost-dark' : 'modal-frost'}`} onClick={() => !isLeavingWorkspace && onCloseLeave()} />
           <div className={`relative z-10 w-96 border ${tc.border} ${tc.cardBg} rounded-lg overflow-hidden`}>
             <div className={`px-5 py-4 border-b ${tc.border}`}>
               <h3 className={`text-sm font-medium ${tc.fontClass} ${tc.text}`}>
@@ -837,7 +843,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
               </p>
               <div className="flex gap-3">
                 <button
-                  onClick={() => setWorkspaceToLeave(null)}
+                  onClick={onCloseLeave}
                   disabled={isLeavingWorkspace}
                   className={`flex-1 px-4 py-2.5 text-sm ${tc.fontClass} border ${tc.border} rounded-lg ${tc.text} hover:bg-[#1a1a1a] hover:text-white transition-colors disabled:opacity-50`}
                 >
