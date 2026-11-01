@@ -45,10 +45,6 @@ body {
   background: var(--black);
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: var(--coral);
-}
-
 /* Hide the DOCUMENT scrollbar — it only appears once the footer makes the page scrollable
    (the footer is reached by scrolling, not via the bar). Scoped to `html` (the document
    scroller) so nested scrollers (drop list / chat / modals) KEEP their styled scrollbars
