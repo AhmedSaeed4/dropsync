@@ -15,17 +15,15 @@
 //    as ready plaintext. Partial success is preserved (ready text survives a
 //    failed attached image). Failed parts are not retried automatically.
 //  - Bounds: at most 2 decrypt jobs and 1 thumbnail job in flight; queues are
-//    capped at the window row budget (oldest dropped). No timers, no polling,
-//    no idle warming — work starts only from a card request or a preview.
-//  - This module is PURE: no React, no Firebase, no app imports at all (the
-//    row budget is mirrored below on purpose — Node's test runner and the
-//    app's bundler disagree about import extensions across that file). The
-//    real decrypt/thumbnail runners are injected (setRunners), so
-//    `node --test` can drive it with fakes (tests/editorialCardCache.test.mjs).
+//    capped at their independent capacity (oldest dropped). No timers, no
+//    polling, no idle warming — work starts only from a card request or preview.
+//  - This module is PURE: no React, no Firebase, no app imports at all. Queue
+//    capacity is independent of the dev-only window policy. The real decrypt/
+//    thumbnail runners are injected (setRunners), so `node --test` can drive
+//    it with fakes (tests/editorialCardCache.test.mjs).
 
-// The window's mounted-row budget (keep in sync with
-// EDITORIAL_WINDOW_ROW_BUDGET in editorialWindowModel.ts — the §8 battery
-// asserts both are 60).
+// Resource queue capacity, independent of the mounted-row window budget.
+// A dev calibration override must never shrink these queues.
 export const EDITORIAL_CARD_CACHE_ROW_BUDGET = 60;
 
 export const EDITORIAL_CACHE_MAX_DECRYPT_JOBS = 2;

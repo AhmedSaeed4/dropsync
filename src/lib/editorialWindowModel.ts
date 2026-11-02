@@ -14,8 +14,8 @@
 //    correction's own scroll event acknowledges it instead of creating new
 //    work (tested invariant).
 
-// The single mounted-row budget (owner lock: ~60, owner-tunable in one place).
-export const EDITORIAL_WINDOW_ROW_BUDGET = 60;
+// D37: ladder 2026-11-02; 24 is the conservative side of the 16-24 boundary.
+export const EDITORIAL_WINDOW_ROW_BUDGET = 24;
 // Height guess for a row never measured before. Once a row is measured the
 // real height is retained across unmount/remount; a guess is never revised
 // from a moving average, and a measured row is never put back on a guess.

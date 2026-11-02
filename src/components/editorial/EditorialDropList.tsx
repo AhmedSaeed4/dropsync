@@ -23,6 +23,15 @@ import type { DropSortMode } from '@/lib/auth';
 import { EditorialWindowList } from './EditorialWindowList';
 import { useWideEditorial } from '@/hooks/useEditorialWindow';
 import { eligibleDragIds } from '@/lib/editorialWindowModel';
+import {
+  createEditorialWindowProbe,
+  getEditorialWindowReadoutSnapshot,
+  registerEditorialWindowReadout,
+  resolveEditorialWindowPolicy,
+  subscribeEditorialWindowReadout,
+  type EditorialWindowBranch,
+  type EditorialWindowReadoutLease,
+} from '@/lib/editorialWindowPolicy';
 
 interface EditorialDropListProps {
   drops: Drop[];
@@ -314,6 +323,18 @@ export function EditorialDropList({
   // Wide-desktop visible window (Round 9 D17): picks the windowed renderer at
   // >=1400px. False through SSR/hydration; the wide branch mounts right after.
   const isWide = useWideEditorial();
+  // The first client render uses the same 60-row policy as SSR. A loopback
+  // dev override resolves only after hydration and never changes branch gates.
+  const [windowPolicy, setWindowPolicy] = useState(() => resolveEditorialWindowPolicy());
+  useEffect(() => {
+    if (process.env.NODE_ENV !== 'development') return;
+    const next = resolveEditorialWindowPolicy({
+      host: window.location.hostname,
+      search: window.location.search,
+      isDev: process.env.NODE_ENV === 'development',
+    });
+    if (next.source === 'override') setWindowPolicy(next);
+  }, []);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   useEffect(() => {
@@ -778,6 +799,97 @@ export function EditorialDropList({
   }, [showMoveControls, filteredDrops]);
   const manualCount = manualIndexById.size;
 
+  // Dev metadata has no React state and no frame publisher. Scope changes
+  // replace the lease; row probes are updated by EW only after commit.
+  const calibrationScrollerRef = useRef<HTMLDivElement>(null);
+  const calibrationLeaseRef = useRef<EditorialWindowReadoutLease | null>(null);
+  const calibrationScope = useMemo(() => ({
+    userId: currentUserId, spaceKey, activeWorkspaceId,
+    probe: createEditorialWindowProbe(),
+  }), [currentUserId, spaceKey, activeWorkspaceId]);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV !== 'development') return;
+    const lease = registerEditorialWindowReadout(window.location.hostname, calibrationScope.spaceKey);
+    if (!lease) return;
+    calibrationLeaseRef.current = lease;
+    const api = Object.freeze({
+      getSnapshot: getEditorialWindowReadoutSnapshot,
+      subscribe: subscribeEditorialWindowReadout,
+    });
+    const devWindow = window as Window & { __dropsyncWindowCalibration?: typeof api };
+    Object.defineProperty(devWindow, '__dropsyncWindowCalibration', { value: api, configurable: true });
+    return () => {
+      lease.dispose();
+      if (calibrationLeaseRef.current === lease) calibrationLeaseRef.current = null;
+      if (devWindow.__dropsyncWindowCalibration === api) delete devWindow.__dropsyncWindowCalibration;
+    };
+  }, [calibrationScope]);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV !== 'development') return;
+    const lease = calibrationLeaseRef.current;
+    if (!lease) return;
+    // This is the JSX's actual precedence, including its non-list surfaces.
+    const branch: EditorialWindowBranch = loading ? 'loading'
+      : visibleDrops.length === 0 && pendingDeletions.size === 0 ? 'empty'
+      : filteredDrops.length === 0 ? 'filtered-empty'
+      : isWide
+        ? enableDrag ? 'window-drag' : animateDrops ? 'window-animated' : 'window-plain'
+        : enableDrag ? 'legacy-drag' : animateDrops ? 'legacy-animated' : 'legacy-plain';
+    const windowed = branch.startsWith('window-');
+    const legacy = branch.startsWith('legacy-');
+    lease.publish({
+      ...windowPolicy,
+      appliedBudget: windowed ? windowPolicy.effectiveBudget : null,
+      userReady: !!currentUserId,
+      spaceReady: !!currentUserId && !loading && (!activeWorkspaceId || currentWorkspace?.id === activeWorkspaceId),
+      N: drops.length,
+      F: filteredDrops.length,
+      filters: {
+        search: searchQuery !== '', motionFiltered: isFiltered,
+        category: selectedCategory, mention: !!mentionFilter,
+      },
+      sort: sortMode,
+      manualOrderIdsCount: manualOrder.length,
+      reducedMotion: prefersReducedMotion,
+      enableDrag,
+      animate: !enableDrag && animateDrops,
+      branch,
+    }, () => {
+      const viewport = {
+        viewportWidth: window.innerWidth,
+        mediaQueryMatches: window.matchMedia('(min-width: 1400px)').matches,
+      };
+      if (!windowed && !legacy) return {
+        ...viewport, mountedRowIdsCount: 0, retainedRowCount: 0,
+        exitingRowCount: 0, geometryVersion: null, rowsSampleReady: true,
+      };
+      if (windowed) return {
+        ...viewport,
+        ...(calibrationScope.probe.read() ?? {
+          mountedRowIdsCount: null, retainedRowCount: 0, exitingRowCount: null,
+          geometryVersion: null, rowsSampleReady: false,
+        }),
+      };
+      // All legacy branches use an existing direct p-3 row container.
+      // Count its actual children, including motion exits, rather than F.
+      const container = Array.from(calibrationScrollerRef.current?.children ?? [])
+        .find((el) => el.classList.contains('p-3'));
+      const mounted = container?.children.length ?? null;
+      return {
+        ...viewport, mountedRowIdsCount: mounted, retainedRowCount: 0,
+        exitingRowCount: mounted === null ? null : branch === 'legacy-animated' ? Math.max(0, mounted - filteredDrops.length) : 0,
+        geometryVersion: null, rowsSampleReady: mounted !== null,
+      };
+    });
+  }, [
+    calibrationScope, windowPolicy, currentUserId, activeWorkspaceId, currentWorkspace?.id,
+    loading, drops.length, visibleDrops.length, pendingDeletions.size, filteredDrops,
+    searchQuery, selectedCategory, mentionFilter, sortMode, manualOrder,
+    isFiltered, prefersReducedMotion, enableDrag, animateDrops, isWide,
+  ]);
+
   // Category delete handlers
   const handleCategoryDeleteClick = (categoryId: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -1227,7 +1339,7 @@ export function EditorialDropList({
         )}
 
         {/* Drop list — shared loader while loading, real content otherwise */}
-        <div className="max-h-[500px] overflow-y-auto overflow-x-hidden thin-scrollbar">
+        <div ref={calibrationScrollerRef} className="max-h-[500px] overflow-y-auto overflow-x-hidden thin-scrollbar">
           {loading ? (
             <LoadingIndicator label="Loading drops" />
           ) : visibleDrops.length === 0 && pendingDeletions.size === 0 ? (
@@ -1261,6 +1373,8 @@ export function EditorialDropList({
               <DndContext sensors={dndSensors} collisionDetection={closestCenter} autoScroll={false} onDragStart={(e) => setActiveDragId(String(e.active.id))} onDragEnd={(e) => { setActiveDragId(null); handleDragEnd(e); }} onDragCancel={() => setActiveDragId(null)}>
                 <EditorialWindowList
                   filteredDrops={filteredDrops}
+                  effectiveBudget={windowPolicy.effectiveBudget}
+                  calibrationProbe={calibrationScope.probe}
                   manualIndexById={manualIndexById}
                   manualCount={manualCount}
                   selectedIds={selectedIds}
@@ -1291,6 +1405,8 @@ export function EditorialDropList({
             ) : (
                 <EditorialWindowList
                   filteredDrops={filteredDrops}
+                  effectiveBudget={windowPolicy.effectiveBudget}
+                  calibrationProbe={calibrationScope.probe}
                   manualIndexById={manualIndexById}
                   manualCount={manualCount}
                   selectedIds={selectedIds}
