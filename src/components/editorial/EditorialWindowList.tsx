@@ -17,7 +17,7 @@
 //            with no motion (the Stage A behavior).
 // The engine contract is unchanged in every branch: same stage div, same
 // data-row-id wrappers the controller measures, same single correction owner.
-import { memo, useEffect, useMemo, useRef, type ComponentProps, type CSSProperties } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, type ComponentProps, type CSSProperties } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { Drop, Workspace } from '@/types';
@@ -26,6 +26,7 @@ import { isReminderFiredShared, isReminderGlowingForViewer } from '@/lib/drops';
 import { MemberInfo } from '@/lib/workspaces';
 import { classifyNewIds, eligibleDragIds } from '@/lib/editorialWindowModel';
 import { useEditorialWindow } from '@/hooks/useEditorialWindow';
+import type { EditorialWindowProbe } from '@/lib/editorialWindowPolicy';
 
 // Stage E's add/remove classification memory (the heightStore pattern:
 // plain module state, written after every commit and read during render -
@@ -120,6 +121,8 @@ export const EditorialWindowList = memo(function EditorialWindowList({
   enableDrag,
   animate,
   activeDragId,
+  effectiveBudget,
+  calibrationProbe,
 }: {
   filteredDrops: Drop[];
   manualIndexById: Map<string, number>;
@@ -150,6 +153,8 @@ export const EditorialWindowList = memo(function EditorialWindowList({
   animate: boolean;
   // The wide DndContext's active drag id, for slot retention + edge autoscroll.
   activeDragId?: string | null;
+  effectiveBudget?: number;
+  calibrationProbe?: EditorialWindowProbe;
 }) {
   const now = new Date();
   const scope = currentWorkspace?.id ?? 'personal';
@@ -163,7 +168,31 @@ export const EditorialWindowList = memo(function EditorialWindowList({
     () => (activeDragId ? new Set<string>([activeDragId]) : undefined),
     [activeDragId]
   );
-  const win = useEditorialWindow(scope, ids, stageRef, retainedIds);
+  const win = useEditorialWindow(scope, ids, stageRef, retainedIds, effectiveBudget);
+  // Only replace a sampler after commit. Reading it is explicit/pull-only;
+  // neither geometry commits nor scroll frames publish readout notifications.
+  useLayoutEffect(() => {
+    if (process.env.NODE_ENV !== 'development' || !calibrationProbe) return;
+    return calibrationProbe.bind(() => {
+      const stage = stageRef.current;
+      if (!stage) return {
+        mountedRowIdsCount: null, retainedRowCount: 0, exitingRowCount: null,
+        geometryVersion: null, rowsSampleReady: false,
+      };
+      const currentIds = new Set(win.rows.map((row) => row.id));
+      const mountedIds = Array.from(stage.children)
+        .map((el) => (el as HTMLElement).dataset.rowId)
+        .filter((id): id is string => id !== undefined);
+      return {
+        mountedRowIdsCount: mountedIds.length,
+        retainedRowCount: win.retainedRowCount,
+        exitingRowCount: mountedIds.filter((id) => !currentIds.has(id)).length,
+        geometryVersion: win.geometryVersion,
+        rowsSampleReady: true,
+      };
+    });
+  }, [calibrationProbe, win.rows, win.retainedRowCount, win.geometryVersion]);
+
   const edgeScroll = win.edgeScroll;
   const dropById = useMemo(() => new Map(filteredDrops.map((d) => [d.id, d])), [filteredDrops]);
 

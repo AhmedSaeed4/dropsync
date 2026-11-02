@@ -63,6 +63,9 @@ export interface EditorialWindowState {
   rows: Array<{ id: string; top: number }>;
   // Full logical extent in px = the stage's explicit height.
   totalHeight: number;
+  // Dev readout facts; derived from the existing controller state.
+  geometryVersion: number;
+  retainedRowCount: number;
   // Drag edge autoscroll (Order 18 Stage D): feed the pointer's clientY
   // while a drag is active; null stops. Writes clamped scrollTop on a
   // rAF loop; the native scroll handler does all window bookkeeping.
@@ -73,7 +76,8 @@ export function useEditorialWindow(
   scope: string,
   ids: string[],
   stageRef: RefObject<HTMLDivElement | null>,
-  retainedIds?: ReadonlySet<string>
+  retainedIds?: ReadonlySet<string>,
+  effectiveBudget = EDITORIAL_WINDOW_ROW_BUDGET
 ): EditorialWindowState {
   const store = storeFor(scope);
   // Event-side indirection so the rAF flush always hits the current scope's
@@ -84,10 +88,11 @@ export function useEditorialWindow(
   }, [store]);
 
   const [version, setVersion] = useState(0);
-  const [rangeState, setRangeState] = useState({ start: 0, end: EDITORIAL_WINDOW_ROW_BUDGET - 1 });
+  const [rangeState, setRangeState] = useState({ start: 0, end: effectiveBudget - 1 });
   // Written only inside setRange (event/observer context), read by the scroll
   // handler — never during render.
   const rangeRef = useRef(rangeState);
+  const appliedBudgetRef = useRef(effectiveBudget);
   const setRange = useCallback((r: { start: number; end: number }) => {
     rangeRef.current = r;
     setRangeState(r);
@@ -162,7 +167,7 @@ export function useEditorialWindow(
       const vis = visibleRange(g, el.scrollTop, el.clientHeight);
       const dir = el.scrollTop >= lastOffsetRef.current ? 'down' : 'up';
       lastOffsetRef.current = el.scrollTop;
-      const desired = bufferedRange(vis.first, vis.last, g.ids.length, EDITORIAL_WINDOW_ROW_BUDGET, dir);
+      const desired = bufferedRange(vis.first, vis.last, g.ids.length, effectiveBudget, dir);
       const cur = rangeRef.current;
       if (cur.start === desired.start && cur.end === desired.end) return;
       const covered = vis.first >= cur.start && vis.last <= cur.end;
@@ -174,7 +179,7 @@ export function useEditorialWindow(
         setRange(desired);
       }
     },
-    [setRange]
+    [setRange, effectiveBudget]
   );
 
   // Scroller discovery + listener ownership. The stage's parentElement is the
@@ -294,6 +299,14 @@ export function useEditorialWindow(
     recomputeRange(false);
   }, [geo, scope, recomputeRange]);
 
+  // A hydrated dev override changes only the mounted slice, not geometry.
+  // Default 60 performs no additional reconciliation or scroll write.
+  useLayoutEffect(() => {
+    if (appliedBudgetRef.current === effectiveBudget) return;
+    appliedBudgetRef.current = effectiveBudget;
+    recomputeRange(false);
+  }, [effectiveBudget, recomputeRange]);
+
   // Drag edge autoscroll (Order 18 Stage D): one controller-owned scheduler;
   // dnd-kit's own autoscroll is disabled for the windowed branch. While a
   // drag is active, every frame derives the px delta from the pure model and
@@ -345,5 +358,5 @@ export function useEditorialWindow(
     };
   }, [edgeScroll]);
 
-  return { rows, totalHeight: geo.total, edgeScroll };
+  return { rows, totalHeight: geo.total, geometryVersion: version, retainedRowCount: rows.length - baseRows.length, edgeScroll };
 }

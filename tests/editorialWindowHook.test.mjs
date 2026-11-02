@@ -13,7 +13,7 @@
 import { register } from 'node:module';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { computeGeometry, planAnchorCorrection } from '../src/lib/editorialWindowModel.ts';
+import { bufferedRange, computeGeometry, planAnchorCorrection, visibleRange } from '../src/lib/editorialWindowModel.ts';
 
 register('./helpers/hook-module-loader.mjs', import.meta.url);
 
@@ -54,12 +54,12 @@ const { useEditorialWindow } = await import('../src/hooks/useEditorialWindow.ts'
 // scroller counts scrollTop WRITES (corrections); direct harness sets are
 // input, not writes, and bypass the counter.
 
-function makeList({ ids, heights, scope = 'ws-a', viewportH = 500 }) {
+function makeList({ ids, heights, scope = 'ws-a', viewportH = 500, budget, retainedIds }) {
   const stageRef = { current: null };
   const scroller = document.createElement('div');
   document.body.appendChild(scroller);
   Object.defineProperty(scroller, 'clientHeight', { value: viewportH, configurable: true });
-  const state = { ids, scope, heights, scrollWrites: 0, win: null, scrollTop: 0 };
+  const state = { ids, scope, heights, budget, retainedIds, scrollWrites: 0, win: null, scrollTop: 0 };
   Object.defineProperty(scroller, 'scrollTop', {
     get: () => state.scrollTop,
     set: (v) => {
@@ -71,7 +71,7 @@ function makeList({ ids, heights, scope = 'ws-a', viewportH = 500 }) {
   const rowEls = new Map();
 
   function List() {
-    const win = useEditorialWindow(state.scope, state.ids, stageRef, undefined);
+    const win = useEditorialWindow(state.scope, state.ids, stageRef, state.retainedIds, state.budget);
     state.win = win;
     return React.createElement(
       'div',
@@ -129,7 +129,7 @@ const flatHeights = (ids, h) => new Map(ids.map((id) => [id, h]));
 
 test('initial mount: budget rows mount, no correction write at the top', async () => {
   const ids = rangeIds('r', 200);
-  const env = makeList({ ids, heights: flatHeights(ids, 160) });
+  const env = makeList({ budget: 60, ids, heights: flatHeights(ids, 160) });
   await env.renderNow();
   await env.flushFrames();
   assert.equal(env.state.win.rows.length, 60);
@@ -141,7 +141,7 @@ test('initial mount: budget rows mount, no correction write at the top', async (
 test('WV-3 fix: a height change above the anchor writes exactly one compensating correction', async () => {
   const ids = rangeIds('r', 200);
   const heights = flatHeights(ids, 160);
-  const env = makeList({ ids, heights });
+  const env = makeList({ budget: 60, ids, heights });
   await env.renderNow();
   await env.flushFrames();
   const geoWarm = computeGeometry(ids, (id) => heights.get(id));
@@ -171,7 +171,7 @@ test('WV-3 fix: a height change above the anchor writes exactly one compensating
 test('coverage reconciliation: a same-length reorder moving the anchor outside the slice is followed', async () => {
   const ids = rangeIds('r', 200);
   const heights = flatHeights(ids, 160);
-  const env = makeList({ ids, heights });
+  const env = makeList({ budget: 60, ids, heights });
   await env.renderNow();
   await env.flushFrames();
   const geoBefore = computeGeometry(ids, (id) => heights.get(id));
@@ -198,7 +198,7 @@ test('coverage reconciliation: a same-length reorder moving the anchor outside t
 test('workspace switch: re-baseline — no correction write, coverage re-derived for the new scope', async () => {
   const ids = rangeIds('r', 200);
   const heights = flatHeights(ids, 160);
-  const env = makeList({ ids, heights });
+  const env = makeList({ budget: 60, ids, heights });
   await env.renderNow();
   await env.flushFrames();
   const geoBefore = computeGeometry(ids, (id) => heights.get(id));
@@ -220,7 +220,7 @@ test('workspace switch: re-baseline — no correction write, coverage re-derived
 test('bottom intent through the REAL hook: the view follows the growing last row', async () => {
   const ids = rangeIds('r', 200);
   const heights = flatHeights(ids, 160);
-  const env = makeList({ ids, heights });
+  const env = makeList({ budget: 60, ids, heights });
   await env.renderNow();
   await env.flushFrames();
   const geoWarm = computeGeometry(ids, (id) => heights.get(id));
@@ -239,7 +239,7 @@ test('bottom intent through the REAL hook: the view follows the growing last row
 test('drastic shrink: the correction clamps to the new scrollable range', async () => {
   const ids = rangeIds('r', 200);
   const heights = flatHeights(ids, 160);
-  const env = makeList({ ids, heights });
+  const env = makeList({ budget: 60, ids, heights });
   await env.renderNow();
   await env.flushFrames();
   const geoWarm = computeGeometry(ids, (id) => heights.get(id));
@@ -256,7 +256,7 @@ test('drastic shrink: the correction clamps to the new scrollable range', async 
 
 test('empty list to populated list: the transaction arms without writing', async () => {
   const heights = new Map();
-  const env = makeList({ ids: [], heights });
+  const env = makeList({ budget: 60, ids: [], heights });
   await env.renderNow();
   await env.flushFrames();
   assert.equal(env.state.win.rows.length, 0);
@@ -273,7 +273,7 @@ test('empty list to populated list: the transaction arms without writing', async
 test('plain covered scrolling never writes geometry', async () => {
   const ids = rangeIds('r', 200);
   const heights = flatHeights(ids, 160);
-  const env = makeList({ ids, heights });
+  const env = makeList({ budget: 60, ids, heights });
   await env.renderNow();
   await env.flushFrames();
   for (let i = 1; i <= 5; i++) {
@@ -281,5 +281,289 @@ test('plain covered scrolling never writes geometry', async () => {
     await env.flushFrames();
   }
   assert.equal(env.state.scrollWrites, 0);
+  await env.close();
+});
+
+// The same correction/coverage transactions at 24. The above-anchor growth
+// fixture uses mounted r47 (r35 is intentionally outside the smaller buffer).
+// Each independent fixture has its own scope: learned heights intentionally
+// survive unmount, so unrelated fresh data must not share a warm store.
+test('initial mount: budget rows mount, no correction write at the top [budget 24]', async () => {
+  const ids = rangeIds('r', 200);
+  const env = makeList({ budget: 24, scope: 'cal24-case-1', ids, heights: flatHeights(ids, 160) });
+  await env.renderNow();
+  await env.flushFrames();
+  assert.equal(env.state.win.rows.length, 24);
+  assert.equal(env.state.scrollWrites, 0);
+  assert.equal(env.state.scrollTop, 0);
+  await env.close();
+});
+
+test('WV-3 fix: a height change above the anchor writes exactly one compensating correction [budget 24]', async () => {
+  const ids = rangeIds('r', 200);
+  const heights = flatHeights(ids, 160);
+  const env = makeList({ budget: 24, scope: 'cal24-case-2', ids, heights });
+  await env.renderNow();
+  await env.flushFrames();
+  const geoWarm = computeGeometry(ids, (id) => heights.get(id));
+  const at = geoWarm.tops[50];
+  await env.scrollTo(at); // read row 50
+  await env.flushFrames();
+  assert.equal(env.state.scrollWrites, 0); // plain input never writes
+  // a mounted row ABOVE the viewport grows by 300px
+  heights.set('r47', 460);
+  await env.renderNow(); // a commit re-runs the measurement sweep
+  await env.flushFrames();
+  const geoGrown = computeGeometry(ids, (id) => heights.get(id));
+  const plan = planAnchorCorrection(geoWarm, geoGrown, at, 500);
+  assert.ok(plan, 'the anchor plan must exist');
+  assert.equal(env.state.scrollWrites, 1);
+  assert.equal(env.state.scrollTop, plan.target);
+  // the correction's own echo acknowledges and does no further work
+  await env.dispatchScroll();
+  assert.equal(env.state.scrollWrites, 1);
+  // re-measuring the same value is a no-op
+  await env.renderNow();
+  await env.flushFrames();
+  assert.equal(env.state.scrollWrites, 1);
+  await env.close();
+});
+
+test('coverage reconciliation: a same-length reorder moving the anchor outside the slice is followed [budget 24]', async () => {
+  const ids = rangeIds('r', 200);
+  const heights = flatHeights(ids, 160);
+  const env = makeList({ budget: 24, scope: 'cal24-case-3', ids, heights });
+  await env.renderNow();
+  await env.flushFrames();
+  const geoBefore = computeGeometry(ids, (id) => heights.get(id));
+  const at = geoBefore.tops[100];
+  await env.scrollTo(at);
+  await env.flushFrames();
+  // move r100 to index 2 — far ABOVE the mounted band
+  const reordered = ids.filter((id) => id !== 'r100');
+  reordered.splice(2, 0, 'r100');
+  env.state.ids = reordered;
+  await env.renderNow();
+  await env.flushFrames();
+  const geoAfter = computeGeometry(reordered, (id) => heights.get(id));
+  const plan = planAnchorCorrection(geoBefore, geoAfter, at, 500);
+  assert.ok(plan, 'the anchor plan must exist');
+  assert.equal(env.state.scrollWrites, 1);
+  assert.equal(env.state.scrollTop, plan.target);
+  // the mounted slice FOLLOWS the correction: the anchor row is mounted at
+  // the new offset (without reconciliation the viewport would be blank)
+  assert.ok(env.state.win.rows.some((r) => r.id === 'r100'), 'anchor row must be mounted');
+  await env.close();
+});
+
+test('workspace switch: re-baseline — no correction write, coverage re-derived for the new scope [budget 24]', async () => {
+  const ids = rangeIds('r', 200);
+  const heights = flatHeights(ids, 160);
+  const env = makeList({ budget: 24, scope: 'cal24-case-4', ids, heights });
+  await env.renderNow();
+  await env.flushFrames();
+  const geoBefore = computeGeometry(ids, (id) => heights.get(id));
+  await env.scrollTo(geoBefore.tops[40]);
+  await env.flushFrames();
+  const writesBefore = env.state.scrollWrites;
+  const bIds = rangeIds('b', 200);
+  env.state.scope = 'cal24-ws-b';
+  env.state.ids = bIds;
+  env.state.heights = flatHeights(bIds, 300);
+  await env.renderNow();
+  await env.flushFrames();
+  assert.equal(env.state.scrollWrites, writesBefore, 'old-scope rows must never anchor the new scope');
+  assert.equal(env.state.win.rows.length, 24);
+  assert.ok(env.state.win.rows.every((r) => r.id.startsWith('b')));
+  await env.close();
+});
+
+test('bottom intent through the REAL hook: the view follows the growing last row [budget 24]', async () => {
+  const ids = rangeIds('r', 200);
+  const heights = flatHeights(ids, 160);
+  const env = makeList({ budget: 24, scope: 'cal24-case-5', ids, heights });
+  await env.renderNow();
+  await env.flushFrames();
+  const geoWarm = computeGeometry(ids, (id) => heights.get(id));
+  await env.scrollTo(Math.max(0, geoWarm.total - 500));
+  await env.flushFrames();
+  assert.equal(env.state.scrollWrites, 0);
+  heights.set('r199', 560);
+  await env.renderNow();
+  await env.flushFrames();
+  const geoGrown = computeGeometry(ids, (id) => heights.get(id));
+  assert.equal(env.state.scrollWrites, 1);
+  assert.equal(env.state.scrollTop, Math.max(0, geoGrown.total - 500));
+  await env.close();
+});
+
+test('drastic shrink: the correction clamps to the new scrollable range [budget 24]', async () => {
+  const ids = rangeIds('r', 200);
+  const heights = flatHeights(ids, 160);
+  const env = makeList({ budget: 24, scope: 'cal24-case-6', ids, heights });
+  await env.renderNow();
+  await env.flushFrames();
+  const geoWarm = computeGeometry(ids, (id) => heights.get(id));
+  await env.scrollTo(geoWarm.tops[197]);
+  await env.flushFrames();
+  env.state.ids = ids.slice(0, 5);
+  await env.renderNow();
+  await env.flushFrames();
+  const geoSmall = computeGeometry(ids.slice(0, 5), (id) => heights.get(id));
+  assert.equal(env.state.scrollWrites, 1);
+  assert.equal(env.state.scrollTop, Math.max(0, geoSmall.total - 500));
+  await env.close();
+});
+
+test('empty list to populated list: the transaction arms without writing [budget 24]', async () => {
+  const heights = new Map();
+  const env = makeList({ budget: 24, scope: 'cal24-case-7', ids: [], heights });
+  await env.renderNow();
+  await env.flushFrames();
+  assert.equal(env.state.win.rows.length, 0);
+  const ids = rangeIds('r', 100);
+  for (const id of ids) heights.set(id, 160);
+  env.state.ids = ids;
+  await env.renderNow();
+  await env.flushFrames();
+  assert.equal(env.state.win.rows.length, 24);
+  assert.equal(env.state.scrollWrites, 0);
+  await env.close();
+});
+
+test('plain covered scrolling never writes geometry [budget 24]', async () => {
+  const ids = rangeIds('r', 200);
+  const heights = flatHeights(ids, 160);
+  const env = makeList({ budget: 24, scope: 'cal24-case-8', ids, heights });
+  await env.renderNow();
+  await env.flushFrames();
+  for (let i = 1; i <= 5; i++) {
+    await env.scrollTo(i * 400);
+    await env.flushFrames();
+  }
+  assert.equal(env.state.scrollWrites, 0);
+  await env.close();
+});
+
+test('budget 24: top and fast-jump ranges shrink while full geometry and coverage stay intact', async () => {
+  const ids = rangeIds('small-', 200);
+  const heights = flatHeights(ids, 160);
+  const env = makeList({ ids, heights, scope: 'budget-24-range', budget: 24 });
+  try {
+    await env.renderNow();
+    await env.flushFrames();
+    const geo = computeGeometry(ids, (id) => heights.get(id));
+    assert.equal(env.state.win.rows.length, 24);
+    assert.equal(env.state.win.totalHeight, geo.total);
+    for (const index of [100, 190]) {
+      await env.scrollTo(geo.tops[index]);
+      await env.flushFrames();
+      const vis = visibleRange(geo, env.state.scrollTop, 500);
+      const expected = bufferedRange(vis.first, vis.last, ids.length, 24, 'down');
+      assert.deepEqual(env.state.win.rows.map((row) => row.id), ids.slice(expected.start, expected.end + 1));
+      assert.equal(env.state.win.rows.length, 24);
+      assert.equal(env.state.win.totalHeight, geo.total);
+      assert.ok(env.state.win.rows.some((row) => row.id === ids[vis.first]));
+      assert.ok(env.state.win.rows.some((row) => row.id === ids[vis.last]));
+      assert.equal(env.state.scrollWrites, 0);
+    }
+  } finally { await env.close(); }
+});
+
+test('explicit 60 and pinned former default have identical rows, geometry and correction transactions', async () => {
+  const ids = rangeIds('parity-', 200);
+  const heights = flatHeights(ids, 160);
+  const implicit = makeList({ budget: 60, ids, heights, scope: 'parity-implicit' });
+  const explicit = makeList({ ids, heights, scope: 'parity-explicit', budget: 60 });
+  const compare = () => {
+    assert.deepEqual(explicit.state.win.rows, implicit.state.win.rows);
+    assert.equal(explicit.state.win.totalHeight, implicit.state.win.totalHeight);
+    assert.equal(explicit.state.win.geometryVersion, implicit.state.win.geometryVersion);
+    assert.equal(explicit.state.scrollWrites, implicit.state.scrollWrites);
+    assert.equal(explicit.state.scrollTop, implicit.state.scrollTop);
+  };
+  try {
+    for (const env of [implicit, explicit]) {
+      await env.renderNow();
+      await env.flushFrames();
+    }
+    compare();
+    const geo = computeGeometry(ids, (id) => heights.get(id));
+    for (const env of [implicit, explicit]) {
+      await env.scrollTo(geo.tops[80]);
+      await env.flushFrames();
+    }
+    compare();
+    heights.set('parity-65', 460);
+    for (const env of [implicit, explicit]) {
+      await env.renderNow();
+      await env.flushFrames();
+    }
+    compare();
+    assert.equal(implicit.state.scrollWrites, 1);
+    for (const env of [implicit, explicit]) await env.dispatchScroll();
+    compare();
+  } finally {
+    await implicit.close();
+    await explicit.close();
+  }
+});
+
+test('post-hydration 60 to 24 to 60 updates preserve the stage, geometry and reading offset', async () => {
+  const ids = rangeIds('change-', 200);
+  const heights = flatHeights(ids, 160);
+  const env = makeList({ budget: 60, ids, heights, scope: 'budget-change' });
+  try {
+    await env.renderNow();
+    await env.flushFrames();
+    const stage = env.scroller.firstElementChild;
+    const geo = computeGeometry(ids, (id) => heights.get(id));
+    await env.scrollTo(geo.tops[80]);
+    await env.flushFrames();
+    const offset = env.state.scrollTop;
+    for (const budget of [24, 60]) {
+      env.state.budget = budget;
+      await env.renderNow();
+      await env.flushFrames();
+      assert.equal(env.scroller.firstElementChild, stage, 'budget changes must not remount the stage');
+      assert.equal(env.state.win.rows.length, budget);
+      assert.equal(env.state.win.totalHeight, geo.total);
+      assert.equal(env.state.scrollTop, offset);
+      assert.equal(env.state.scrollWrites, 0, 'range-only changes cannot write a scroll correction');
+    }
+  } finally { await env.close(); }
+});
+
+test('budget 24 reports a retained drag row as an explicit exception without changing geometry', async () => {
+  const ids = rangeIds('retain-', 200);
+  const heights = flatHeights(ids, 160);
+  const env = makeList({
+    ids, heights, scope: 'budget-retain', budget: 24, retainedIds: new Set(['retain-199']),
+  });
+  try {
+    await env.renderNow();
+    await env.flushFrames();
+    const geo = computeGeometry(ids, (id) => heights.get(id));
+    assert.equal(env.state.win.rows.length, 25);
+    assert.equal(env.state.win.retainedRowCount, 1);
+    assert.equal(env.state.win.totalHeight, geo.total);
+    assert.ok(env.rowEl('retain-199'));
+    await env.scrollTo(geo.tops[195]);
+    await env.flushFrames();
+    assert.equal(env.state.win.rows.length, 24);
+    assert.equal(env.state.win.retainedRowCount, 0);
+    assert.equal(env.state.win.totalHeight, geo.total);
+    assert.equal(env.state.scrollWrites, 0);
+  } finally { await env.close(); }
+});
+
+test('omitted default: 24 rows mount, no correction write at the top', async () => {
+  const ids = rangeIds('r', 200);
+  const env = makeList({ ids, heights: flatHeights(ids, 160), scope: 'order68-default-24' });
+  await env.renderNow();
+  await env.flushFrames();
+  assert.equal(env.state.win.rows.length, 24);
+  assert.equal(env.state.scrollWrites, 0);
+  assert.equal(env.state.scrollTop, 0);
   await env.close();
 });

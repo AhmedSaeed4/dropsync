@@ -2,6 +2,7 @@
 // The store is import-free by law, so these tests drive the REAL module with
 // fake runners. Run: node --test tests/editorialCardCache.test.mjs
 import test from 'node:test';
+import { register } from 'node:module';
 import assert from 'node:assert/strict';
 import {
   createEditorialCardCache,
@@ -9,6 +10,9 @@ import {
   EMPTY_CARD_RESOURCE,
   payloadRevision,
 } from '../src/lib/editorialCardCache.ts';
+
+register('./helpers/hook-module-loader.mjs', import.meta.url);
+const { resolveEditorialWindowPolicy } = await import('../src/lib/editorialWindowPolicy.ts');
 
 // Resolve a promise, then let the store's microtask chains (then → absorb →
 // publish → finally → pump) fully drain before asserting.
@@ -92,8 +96,24 @@ function makeThumbRunner() {
   };
 }
 
-test('both row-budget constants agree at 60', () => {
+test('resource queue capacity stays 60', () => {
   assert.equal(EDITORIAL_CARD_CACHE_ROW_BUDGET, 60);
+});
+
+test('resource queue capacity does not follow the dev window override', () => {
+  const previous = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'development';
+  try {
+    const policy = resolveEditorialWindowPolicy({
+      host: 'localhost', search: '?editorialWindowBudget=24', isDev: true,
+    });
+    assert.equal(policy.effectiveBudget, 24);
+    assert.equal(EDITORIAL_CARD_CACHE_ROW_BUDGET, 60);
+    assert.notEqual(EDITORIAL_CARD_CACHE_ROW_BUDGET, policy.effectiveBudget);
+  } finally {
+    if (previous === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previous;
+  }
 });
 
 test('first request decrypts, then the snapshot is a stable hit', async () => {
