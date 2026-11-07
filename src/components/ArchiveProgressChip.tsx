@@ -13,7 +13,8 @@ export function ArchiveProgressChip({ item, overflowCount, contrast, onOpen, onC
 }) {
   const active = 'currentName' in item ? item : null;
   const isError = item.status === 'failed' || item.status === 'cleanup-needed';
-  const label = item.status === 'succeeded' ? '✓ Saved'
+  const isNotice = item.notice === true;
+  const label = isNotice ? 'Notice' : item.status === 'succeeded' ? '✓ Saved'
     : item.status === 'cancelling' ? 'Cancelling'
       : item.status === 'finalizing' ? 'Finalizing'
         : isError ? 'Error'
@@ -21,11 +22,13 @@ export function ArchiveProgressChip({ item, overflowCount, contrast, onOpen, onC
   const showDismiss = item.status === 'failed';
   const showCancel = !!active?.canCancel;
   const control = showDismiss ? onDismiss : showCancel ? onCancel : undefined;
-  const controlLabel = showDismiss ? 'Dismiss archive error' : showCancel ? `Cancel ${item.kind}` : 'Unavailable';
+  const controlLabel = showDismiss ? (isNotice ? 'Dismiss archive notice' : 'Dismiss archive error') : showCancel ? `Cancel ${item.kind}` : 'Unavailable';
   return (
-    <div className={`archive-chip-row relative w-[300px] max-[639px]:w-[min(360px,calc(100vw-28px))] h-[26px] max-[639px]:h-11 pointer-events-auto ${contrast ? 'mix-blend-difference text-white' : 'text-current'}`} role={isError ? 'alert' : 'status'} aria-live={isError ? 'assertive' : 'polite'}>
+    <div className={`archive-chip-row relative w-[300px] max-[639px]:w-[min(360px,calc(100vw-28px))] h-[26px] max-[639px]:h-11 pointer-events-auto ${contrast ? 'mix-blend-difference text-white' : 'text-current'}`} role={isNotice ? 'status' : isError ? 'alert' : 'status'} aria-live={isNotice ? 'polite' : isError ? 'assertive' : 'polite'}>
       <div className="grid h-full w-full grid-cols-[11px_68px_64px_30px_60px_26px] gap-[7px] items-center max-[639px]:grid-cols-[9px_66px_minmax(0,52px)_30px_minmax(28px,1fr)_44px] max-[639px]:gap-[6px]">
-        {isError
+        {isNotice
+          ? <span className="text-[11px]" aria-hidden>i</span>
+          : isError
           ? <span className="text-[11px]" aria-hidden>!</span>
           : item.status === 'succeeded'
             ? <span className="text-[11px]" aria-hidden>✓</span>

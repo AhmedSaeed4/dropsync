@@ -3,7 +3,7 @@
 import type { ArchiveProgress } from './archiveFormat';
 import { ArchiveCheckUnavailableError, ArchiveCleanupNeededError, recoverInterruptedWorkspaceArchiveImport, discoverInterruptedWorkspaceArchiveImport, certifyArchiveRecoveryPlan, recoverArchiveFenceJob } from './workspaceArchive';
 import { recoverInterruptedPersonalArchiveImport, discoverInterruptedPersonalArchiveImport } from './personalArchive';
-import { ArchiveLockBusyError, withUserArchiveLock, captureArchiveRecoveryGeneration, assertArchiveRecoveryGeneration, isArchiveAuthIntent, ARCHIVE_AUTH_EPOCH_PREFIX, canResumeArchiveSession, currentArchiveRecoveryGeneration } from './archiveJobLock';
+import { ArchiveLockBusyError, ArchiveLockUnavailableError, ArchiveCoordinationError, withUserArchiveLock, captureArchiveRecoveryGeneration, assertArchiveRecoveryGeneration, isArchiveAuthIntent, ARCHIVE_AUTH_EPOCH_PREFIX, canResumeArchiveSession, currentArchiveRecoveryGeneration } from './archiveJobLock';
 
 import { type ArchiveOwnerContext, createArchiveOwnerContext, awaitArchiveOwner, ArchiveContextExpiredError } from './importFenceClient';
 
@@ -37,6 +37,7 @@ export interface ArchiveDisplaySnapshot {
   percent: number | null;
   message: string;
   canCancel: boolean;
+  notice?: boolean;
 }
 
 export interface ArchiveSettledSnapshot {
@@ -48,6 +49,22 @@ export interface ArchiveSettledSnapshot {
   message: string;
   settledAt: number;
   dismissed: boolean;
+  notice?: boolean;
+  cause?: string;
+  elapsedCheckingMs?: number;
+}
+
+export interface ArchiveCheckDiagnostic {
+  cause: string;
+  elapsedCheckingMs: number;
+  aborted: boolean;
+  at: number;
+}
+
+declare global {
+  interface Window {
+    __dropsyncArchiveCheckDiag?: ArchiveCheckDiagnostic | null;
+  }
 }
 
 export interface ArchiveDisplayStore {
@@ -398,14 +415,27 @@ export class ArchiveTaskManager {
       owner.check();
       if (remote) this.remoteActive.add(uid); else this.remoteActive.delete(uid);
       if (dirty) throw new ArchiveCheckUnavailableError();
-      if (current()) this.publish({ ...this.snapshot, settled: this.snapshot.settled.filter((item) => item.uid !== uid || item.jobId !== 'recovery-' + uid) });
+      if (current()) {
+        this.publish({ ...this.snapshot, settled: this.snapshot.settled.filter((item) => item.uid !== uid || item.jobId !== 'recovery-' + uid) });
+        if (typeof window !== 'undefined') window.__dropsyncArchiveCheckDiag = null;
+      }
     } catch (error) {
       // An interrupted real cleanup remains owned and fail-closed, even after auth displacement.
       if (cleanupFailure) {
         this.publishRecoveryFailure(uid, 'cleanup-needed', error instanceof Error ? error.message : 'Import cleanup is incomplete.');
       } else if (current() && !(error instanceof ArchiveContextExpiredError && !run.controller.signal.aborted)) {
         dirty = true;
-        this.publishRecoveryFailure(uid, 'failed', 'Could not finish checking interrupted imports. We will retry in the background. You can still sign out.');
+        const aborted = run.controller.signal.aborted;
+        const elapsedCheckingMs = Date.now() - checkStarted;
+        const cause = aborted ? 'deadline'
+          : error instanceof ArchiveCheckUnavailableError ? 'check-unavailable'
+            : [ArchiveLockUnavailableError, ArchiveLockBusyError, ArchiveCoordinationError]
+              .some((ErrorType) => typeof ErrorType === 'function' && error instanceof ErrorType) ? 'coordination'
+              : 'other';
+        if (typeof window !== 'undefined') {
+          window.__dropsyncArchiveCheckDiag = { cause, elapsedCheckingMs, aborted, at: Date.now() };
+        }
+        this.publishRecoveryFailure(uid, 'failed', 'Could not finish checking interrupted imports. We will retry in the background. You can still sign out.', { notice: true, cause, elapsedCheckingMs });
       }
     } finally {
       this.clearRoutineNotice(uid);
@@ -424,10 +454,16 @@ export class ArchiveTaskManager {
     }
   }
 
-  private publishRecoveryFailure(uid: string, status: 'failed' | 'cleanup-needed', message: string) {
+  private publishRecoveryFailure(
+    uid: string, status: 'failed' | 'cleanup-needed', message: string,
+    diagnostics?: Pick<ArchiveSettledSnapshot, 'notice' | 'cause' | 'elapsedCheckingMs'>
+  ) {
+    const existing = this.snapshot.settled.find((item) => item.uid === uid && item.jobId === 'recovery-' + uid);
+    const preserveDismissal = status === 'failed' && existing?.status === 'failed' && existing.dismissed === true;
     this.publish({ ...this.snapshot, settled: [
       ...this.snapshot.settled.filter((item) => item.uid !== uid || item.jobId !== 'recovery-' + uid),
-      { uid, jobId: 'recovery-' + uid, kind: 'import', scope: 'workspace', status, message, settledAt: Date.now(), dismissed: false },
+      { uid, jobId: 'recovery-' + uid, kind: 'import', scope: 'workspace', status, message, settledAt: Date.now(), dismissed: preserveDismissal,
+        ...(status === 'failed' ? diagnostics : {}) },
     ] });
   }
 

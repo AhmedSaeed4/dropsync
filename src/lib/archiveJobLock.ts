@@ -60,7 +60,7 @@ export type ArchiveAuthReason = keyof typeof ARCHIVE_AUTH_MESSAGES;
 export type ArchiveAuthResult = { accepted: true } | { accepted: false; reason: ArchiveAuthReason; message: string };
 export const ARCHIVE_AUTH_EPOCH_PREFIX = 'dropsync_archive_auth_epoch_';
 interface AuthEpoch { generation: string; phase: 'idle' | 'auth'; resultUid: string | null }
-class ArchiveCoordinationError extends Error {}
+export class ArchiveCoordinationError extends Error {}
 const authIntents = new Set<string>();
 export function isArchiveAuthIntent(uid: string): boolean { return authIntents.has(uid); }
 
