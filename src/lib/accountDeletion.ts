@@ -231,6 +231,7 @@ export async function deleteAccount(
   selectedOwners: SelectedOwners = {},
   onProgress?: (progress: DeletionProgress) => void
 ): Promise<{ success: boolean; error?: string }> {
+  if (getArchiveTaskManager().isRecoveryPending(userId)) getArchiveTaskManager().kickRecoveryIfPending(userId);
   if (getArchiveTaskManager().isBusyForUid(userId)) {
     return { success: false, error: 'Finish the archive or its cleanup before deleting your account.' };
   }

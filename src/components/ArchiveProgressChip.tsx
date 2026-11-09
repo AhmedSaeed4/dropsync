@@ -13,7 +13,8 @@ export function ArchiveProgressChip({ item, overflowCount, contrast, onOpen, onC
 }) {
   const active = 'currentName' in item ? item : null;
   const isError = item.status === 'failed' || item.status === 'cleanup-needed';
-  const label = item.status === 'succeeded' ? '✓ Saved'
+  const isNotice = item.notice === true;
+  const label = isNotice ? 'Background check' : item.status === 'succeeded' ? '✓ Saved'
     : item.status === 'cancelling' ? 'Cancelling'
       : item.status === 'finalizing' ? 'Finalizing'
         : isError ? 'Error'
@@ -21,16 +22,23 @@ export function ArchiveProgressChip({ item, overflowCount, contrast, onOpen, onC
   const showDismiss = item.status === 'failed';
   const showCancel = !!active?.canCancel;
   const control = showDismiss ? onDismiss : showCancel ? onCancel : undefined;
-  const controlLabel = showDismiss ? 'Dismiss archive error' : showCancel ? `Cancel ${item.kind}` : 'Unavailable';
+  const controlLabel = showDismiss ? (isNotice ? 'Dismiss background check notice' : 'Dismiss archive error') : showCancel ? `Cancel ${item.kind}` : 'Unavailable';
   return (
-    <div className={`archive-chip-row relative w-[300px] max-[639px]:w-[min(360px,calc(100vw-28px))] h-[26px] max-[639px]:h-11 pointer-events-auto ${contrast ? 'mix-blend-difference text-white' : 'text-current'}`} role={isError ? 'alert' : 'status'} aria-live={isError ? 'assertive' : 'polite'}>
+    <div className={`archive-chip-row relative w-[300px] max-[639px]:w-[min(360px,calc(100vw-28px))] h-[26px] max-[639px]:h-11 pointer-events-auto ${contrast ? 'mix-blend-difference text-white' : 'text-current'}`} role={isNotice ? 'status' : isError ? 'alert' : 'status'} aria-live={isNotice ? 'polite' : isError ? 'assertive' : 'polite'}>
       <div className="grid h-full w-full grid-cols-[11px_68px_64px_30px_60px_26px] gap-[7px] items-center max-[639px]:grid-cols-[9px_66px_minmax(0,52px)_30px_minmax(28px,1fr)_44px] max-[639px]:gap-[6px]">
-        {isError
+        {isNotice
+          ? <span className="text-[11px]" aria-hidden>i</span>
+          : isError
           ? <span className="text-[11px]" aria-hidden>!</span>
           : item.status === 'succeeded'
             ? <span className="text-[11px]" aria-hidden>✓</span>
             : <span className="w-[11px] h-[11px] max-[639px]:w-[9px] max-[639px]:h-[9px] border border-current/30 border-t-current rounded-full animate-spin" aria-hidden />}
-        <button type="button" onClick={onOpen} className="min-w-0 text-left text-[11px] font-mono uppercase tracking-tight truncate" aria-label={`Open ${item.kind} details`}>{label}</button>
+        {isNotice
+          ? <button type="button" onClick={onOpen} className="min-w-0 text-left text-[10px] font-mono uppercase tracking-tight whitespace-normal overflow-visible" aria-label="Open background check details">
+            <span className="block h-[11px] leading-[11px] whitespace-nowrap">Background</span>
+            <span className="block h-[11px] leading-[11px] whitespace-nowrap">check</span>
+          </button>
+          : <button type="button" onClick={onOpen} className="min-w-0 text-left text-[11px] font-mono uppercase tracking-tight truncate" aria-label={`Open ${item.kind} details`}>{label}</button>}
         <button type="button" onClick={onOpen} className="min-w-0 text-left text-[11px] truncate" title={active?.currentName || item.message}>{active?.currentName || ''}</button>
         <span className="text-right text-[10px] tabular-nums">{active?.percent === null || active?.percent === undefined ? '' : `${active.percent}%`}</span>
         <div className="relative h-[2px] bg-current/25" aria-hidden>

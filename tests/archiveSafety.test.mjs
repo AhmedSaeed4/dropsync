@@ -45,7 +45,13 @@ function makeManager({ locked = false, recovery = async () => false, personal = 
       }, { once: true });
     } else enter();
   });
+  const warm = {};
+  vm.runInNewContext(ts.transpileModule(source('src/lib/archiveWarmStart.ts'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText, { exports: warm, setTimeout: clock?.setTimeout || setTimeout,
+    clearTimeout: clock?.clearTimeout || clearTimeout, Date: clock?.Date || Date });
   const dependencies = {
+    './archiveWarmStart': warm,
     './importFenceClient': client,
     './workspaceArchive': { ArchiveCleanupNeededError: CleanupError, ArchiveCheckUnavailableError: CheckUnavailableError,
       recoverInterruptedWorkspaceArchiveImport: recovery, discoverInterruptedWorkspaceArchiveImport: discovery,
@@ -203,7 +209,10 @@ test('cancel aborts work before commit, while final close disallows late cancel'
 });
 
 test('failed cleanup is non-dismissable until retry confirms recovery', async () => {
-  const { manager, CleanupError } = makeManager();
+  const { manager, CleanupError } = makeManager({ recovery: async (_uid, _force, _owner, collect) => {
+    collect?.({ kind: 'fence', jobId: 'one' });
+    return false;
+  } });
   const job = descriptor('one');
   manager.reserveForStart(job);
   await manager.startUnderLock(job, async () => { throw new CleanupError('ledger remains'); });
@@ -221,10 +230,14 @@ test('an unavailable cross-device check settles as a dismissible error and never
     personalDiscovery: async () => { ran.push('personal'); return emptyPlan(); },
   });
   await manager.recoverForUser('owner');
+  assert.equal(manager.getSnapshot().settled.length, 0, 'first failure silent');
+  assert.deepEqual(ran, ['personal']);
+  manager.pauseRoutine('owner');
+  await manager.recoverForUser('owner');
   const card = manager.getSnapshot().settled[0];
   assert.equal(card.status, 'failed');
   assert.match(card.message, /Could not finish checking interrupted imports/);
-  assert.deepEqual(ran, ['personal']);
+  assert.deepEqual(ran, ['personal', 'personal']);
   manager.reserveForStart(descriptor('two'));
   manager.dismissVerifiedError(card.jobId);
   assert.equal(manager.getSnapshot().settled[0].dismissed, true);
@@ -360,6 +373,7 @@ test('P4 five-second deadline abandons late discovery; one dirty retry clears on
     calls++; return calls === 1 ? new Promise((done) => { finish = done; }) : Promise.resolve(emptyPlan());
   } });
   const handle = manager.attachRecovery('owner');
+  void manager.recoverForUser('owner');
   await flush();
   await clock.tick(4999);
   assert.equal(manager.isRecoveryPending('owner'), true);
@@ -367,7 +381,7 @@ test('P4 five-second deadline abandons late discovery; one dirty retry clears on
   assert.equal(manager.isRecoveryPending('owner'), false);
   assert.equal(manager.authBlockReason('owner'), null);
   assert.equal(clock.timers.size, 1);
-  assert.match(manager.getSnapshot().settled[0].message, /You can still sign out/);
+  assert.equal(manager.getSnapshot().settled.length, 0, 'first deadline failure is silent');
   finish({ ...emptyPlan(), journals: [{ jobId: 'late' }] });
   await flush();
   assert.equal(manager.authBlockReason('owner'), null);
@@ -385,6 +399,7 @@ test('P4 checking deadline includes queued promotion lock; no cleanup begins aft
     execute: async () => { runs++; },
   });
   const handle = manager.attachRecovery('owner');
+  void manager.recoverForUser('owner');
   await flush();
   assert.equal(shared.queued.length, 1);
   await clock.tick(5000);
@@ -562,19 +577,21 @@ test('P6 StrictMode dispose/reacquire does not duplicate a routine pass', async 
   let calls = 0, finish;
   const { manager } = makeManager({ discovery: () => { calls++; return new Promise((done) => { finish = done; }); } });
   const first = manager.attachRecovery('owner'); first.dispose();
-  const replay = manager.attachRecovery('owner'); await flush();
+  const replay = manager.attachRecovery('owner'); void manager.recoverForUser('owner'); await flush();
   assert.equal(calls, 1);
   finish(emptyPlan()); await manager.recoverForUser('owner');
   replay.dispose(); await flush();
 });
 
-function accountFixture({ priorState = 'none', remote = false, finalizing = false, outstanding = 0, busyAt = 0 } = {}) {
+function accountFixture({ priorState = 'none', remote = false, finalizing = false, outstanding = 0, busyAt = 0, pendingCheck = () => false, kick = () => {}, busyCheck, beforeLock } = {}) {
   const events = [];
   let checks = 0;
   const owner = { uid: 'owner', generation: 'foreground', check() {} };
   const auth = { currentUser: { uid: 'owner', delete: async () => events.push('auth-delete') } };
   const manager = {
-    isBusyForUid: () => { events.push('busy'); return ++checks === busyAt; },
+    isRecoveryPending: pendingCheck,
+    kickRecoveryIfPending: () => { events.push('kick'); kick(); },
+    isBusyForUid: () => { events.push('busy'); return busyCheck ? busyCheck() : ++checks === busyAt; },
     foregroundOwner: (uid) => { assert.equal(uid, 'owner'); return owner; },
     recoverUnderHeldLock: async (uid, force, context) => {
       assert.equal(uid, 'owner'); assert.equal(context, owner); events.push('recover:' + force); return remote;
@@ -594,7 +611,7 @@ function accountFixture({ priorState = 'none', remote = false, finalizing = fals
     'firebase/firestore': firestore,
     './firebase': { auth, db: {} },
     './archiveTaskManager': { getArchiveTaskManager: () => manager },
-    './archiveJobLock': { withUserArchiveLock: async (uid, mode, callback) => { assert.equal(uid, 'owner'); events.push('lock:' + mode); return callback(); } },
+    './archiveJobLock': { withUserArchiveLock: async (uid, mode, callback) => { assert.equal(uid, 'owner'); events.push('lock:' + mode); await beforeLock?.(); return callback(); } },
     './accountBarriers': {
       acquireAccountBarrier: async () => { events.push('barrier-acquire'); return { ok: true, state: finalizing ? 'finalizing' : 'active' }; },
       abortAccountBarrier: async () => events.push('barrier-abort'),
@@ -744,4 +761,55 @@ test('routine notices use the exact text and clear without publishing into anoth
   manager.setSessionUid('peer');
   assert.equal(manager.getSnapshot().settled.length, 0);
   manager.pauseRoutine('owner');
+});
+
+test('R36 account deletion kick is pre-lock, refuses once and never queues deletion', async () => {
+  const clock = fakeClock();
+  let reads = 0;
+  const { manager } = makeManager({ clock, discovery: async () => { reads++; return emptyPlan(); } });
+  manager.markRecoveryPending('owner');
+  const handle = manager.attachRecovery('owner');
+  const app = accountFixture({ pendingCheck: () => manager.isRecoveryPending('owner'),
+    kick: () => manager.kickRecoveryIfPending('owner'), busyCheck: () => manager.isBusyForUid('owner') });
+  assert.equal((await app.run()).success, false);
+  assert.deepEqual(app.events, ['kick', 'busy']);
+  await flush(); assert.equal(reads, 1);
+  assert.equal(app.events.includes('auth-delete'), false);
+  handle.dispose(); await flush();
+});
+test('R36 real sticky cleanup refuses account deletion at outer and inner gates', async () => {
+  for (const inner of [false, true]) {
+    const { manager } = makeManager({
+      discovery: async () => ({ ...emptyPlan(), journals: [{ jobId: 'known', userId: 'owner' }] }),
+      execute: async () => { throw Error('cleanup remains'); },
+    });
+    if (!inner) await manager.recoverForUser('owner');
+    const app = accountFixture({ busyCheck: () => manager.isBusyForUid('owner'),
+      beforeLock: inner ? () => manager.recoverForUser('owner') : undefined });
+    assert.equal((await app.run()).success, false);
+    assert.deepEqual(app.events, inner ? ['busy', 'lock:account', 'busy'] : ['busy']);
+    assert.equal(manager.authBlockReason('owner'), 'cleanup-needed');
+  }
+});
+
+test('R36 N2 never suppresses real archive failures or cleanup-needed', async () => {
+  for (const cleanup of [false, true]) {
+    const { manager, CleanupError } = makeManager();
+    const job = descriptor('actual-job');
+    manager.reserveForStart(job);
+    await manager.startUnderLock(job, async () => { throw cleanup ? new CleanupError('real cleanup') : Error('real failure'); });
+    const item = manager.getSnapshot().settled[0];
+    assert.equal(item.status, cleanup ? 'cleanup-needed' : 'failed');
+    assert.equal(item.notice, undefined);
+    assert.equal(manager.routineCheckFailures.size, 0);
+  }
+});
+test('R36 N2 does not count a failed actual cleanup as a routine transient', async () => {
+  const { manager } = makeManager({
+    discovery: async () => ({ ...emptyPlan(), journals: [{ jobId: 'known', userId: 'owner' }] }),
+    execute: async () => { throw Error('real cleanup remains'); },
+  });
+  await manager.recoverForUser('owner');
+  assert.equal(manager.getSnapshot().settled[0].status, 'cleanup-needed');
+  assert.equal(manager.routineCheckFailures.size, 0);
 });
