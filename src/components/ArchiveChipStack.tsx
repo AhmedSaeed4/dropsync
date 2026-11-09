@@ -15,7 +15,7 @@ export function ArchiveChipStack({ editorial, callPill, onOpen }: {
   const [contrasts, setContrasts] = useState<boolean[]>([]);
   const settled = useMemo(() => store.settled.filter((item) => !item.dismissed).sort((a, b) => a.settledAt - b.settledAt), [store.settled]);
   const maxRows = short ? 1 : phone ? 2 : 3;
-  const visibleSettled = settled.slice(-Math.max(0, maxRows - (store.active ? 1 : 0)));
+  const visibleSettled = maxRows > (store.active ? 1 : 0) ? settled.slice(-(maxRows - (store.active ? 1 : 0))) : [];
   const rows = [...visibleSettled, ...(store.active ? [store.active] : [])];
   const overflowCount = Math.max(0, settled.length - visibleSettled.length);
 

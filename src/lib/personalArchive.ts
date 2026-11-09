@@ -1,5 +1,7 @@
 'use client';
 
+import { isArchiveRecoveryProofId, type ArchiveVerificationCollector } from './workspaceArchive';
+
 import {
   collection,
   doc,
@@ -214,17 +216,27 @@ export async function discoverInterruptedPersonalArchiveImport(userId: string, o
   }
   let fences: Awaited<ReturnType<typeof listOwnedArchiveFences>> | null = null;
   try { fences = await listOwnedArchiveFences(userId, owner); } catch { owner.check(); /* local recovery remains required */ }
+  const verifiedJobIds: string[] = [];
   const cancelledJobIds: string[] = [];
   const remoteJobIds: string[] = [];
   if (fences) {
     for (const fence of fences.docs) {
       const value = fence.data();
       if (typeof value.workspaceId !== 'string' || !value.workspaceId.startsWith('personal-import-')) continue;
+      const validProof = value.userId === userId && isArchiveRecoveryProofId(value.jobId)
+        && isArchiveRecoveryProofId(value.workspaceId) && (value.mode === 'fresh' || value.mode === 'merge')
+        && fence.id === userId + '_' + value.jobId;
+      if (value.state === 'closed-success' && validProof && !journals.has(value.jobId)) {
+        verifiedJobIds.push(value.jobId);
+      }
       if (value.state !== 'open' && value.state !== 'closed-cancelled') continue;
       if (value.userId !== userId || typeof value.jobId !== 'string' || !value.jobId
         || (value.mode !== 'fresh' && value.mode !== 'merge')) throw new ArchiveCheckUnavailableError();
       const local = journals.has(value.jobId);
-      if (!local && value.state === 'closed-cancelled' && value.cleanupComplete === true) continue;
+      if (!local && value.state === 'closed-cancelled' && value.cleanupComplete === true) {
+        if (validProof) verifiedJobIds.push(value.jobId);
+        continue;
+      }
       if (!local) journals.set(value.jobId, {
         jobId: value.jobId, userId, workspaceId: value.workspaceId,
         createdWorkspace: false, fenceMayExist: true, createdDropIds: [], createdCategoryIds: [], createdR2Keys: [],
@@ -250,13 +262,13 @@ export async function discoverInterruptedPersonalArchiveImport(userId: string, o
       localStorage.removeItem(PERSONAL_IMPORT_JOURNAL_KEY);
     };
   }
-  return { journals: [...journals.values()], cancelledJobIds, remoteJobIds, checkUnavailable: !fences, legacy };
+  return { journals: [...journals.values()], cancelledJobIds, remoteJobIds, checkUnavailable: !fences, legacy, verifiedJobIds, legacyRevision: legacy ? rawLegacy! : undefined };
 }
 
 export async function recoverInterruptedPersonalArchiveImport(
-  userId: string, forceOwnedFences = false, owner = createArchiveOwnerContext(userId)
+  userId: string, forceOwnedFences = false, owner = createArchiveOwnerContext(userId), collect?: ArchiveVerificationCollector
 ): Promise<boolean> {
-  return executeArchiveRecoveryPlan(await discoverInterruptedPersonalArchiveImport(userId, owner), forceOwnedFences, owner);
+  return executeArchiveRecoveryPlan(await discoverInterruptedPersonalArchiveImport(userId, owner), forceOwnedFences, owner, collect);
 }
 
 function getDropCategories(drop: Drop): string[] {

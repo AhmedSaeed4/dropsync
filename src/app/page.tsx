@@ -525,11 +525,17 @@ export default function Home() {
 
   // Routine discovery is cancellable; only real cleanup holds the account lock.
   const archiveUserId = user?.uid;
+  const archiveRecoveryHandle = useRef<ReturnType<typeof archiveManager.attachRecovery> | null>(null);
+  const archiveRecoveryScope = useRef({ identity: '', ready: false, epoch: 0 });
   useEffect(() => {
     if (!archiveUserId) return;
     const recovery = archiveManager.attachRecovery(archiveUserId);
-    return () => recovery.dispose();
-  }, [archiveManager, archiveUserId]);
+    archiveRecoveryHandle.current = recovery;
+    return () => {
+      if (archiveRecoveryHandle.current === recovery) archiveRecoveryHandle.current = null;
+      recovery.dispose();
+    };
+  }, [archiveManager, archiveUserId, user]);
 
   useEffect(() => {
     archiveManager.setNoticeHandler((notice) => setArchiveNotice(notice));
@@ -2132,6 +2138,18 @@ export default function Home() {
     }).catch((error) => setArchiveNotice(error instanceof Error ? error.message : 'Could not start the archive.'));
     return jobId;
   }, [archiveManager, archiveScope, refreshDrops, user, workspaces]);
+
+  useEffect(() => {
+    const accountScreenReady = !!user && (!user.emailVerified || tosStatus === 'needed' || tosStatus === 'error');
+    const mainScreenReady = tosStatus === 'accepted' && !encryptionInitializing && !workspacesLoading && !dropsLoading;
+    const ready = !!(themeLoaded && user && !authLoading && (accountScreenReady || mainScreenReady));
+    const identity = JSON.stringify([archiveUserId, currentWorkspace?.id, accountScreenReady]);
+    const scope = archiveRecoveryScope.current;
+    if (scope.identity !== identity || (scope.ready && !ready)) scope.epoch++;
+    scope.identity = identity;
+    scope.ready = ready;
+    archiveRecoveryHandle.current?.setReady(ready, scope.epoch);
+  }, [themeLoaded, user, authLoading, tosStatus, encryptionInitializing, workspacesLoading, dropsLoading, archiveUserId, currentWorkspace?.id]);
 
   // Reveal the signed-in screen only when its own loading gates have resolved.
   // Account prompts can appear immediately; the main app also waits for initial data.

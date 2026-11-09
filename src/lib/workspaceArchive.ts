@@ -251,12 +251,23 @@ function clearImportJournal(jobId: string): void {
 }
 
 
+// Match the existing settlement route's identifier shape without issuing another read.
+export const isArchiveRecoveryProofId = (value: unknown): value is string => typeof value === 'string'
+  && value.length > 0 && value.length <= 512 && value.trim() === value && !value.includes('/')
+  && value !== '.' && value !== '..';
+
+// Private recovery evidence; never added to display snapshots or diagnostics.
+export type ArchiveRecoveryVerification = { kind: 'fence'; jobId: string } | { kind: 'legacy'; revision: string };
+export type ArchiveVerificationCollector = (proof: ArchiveRecoveryVerification) => void;
+
 export interface ArchiveRecoveryPlan {
   journals: ArchiveRecoveryJournal[];
   cancelledJobIds: string[];
   remoteJobIds: string[];
   checkUnavailable: boolean;
   legacy?: (owner: ArchiveOwnerContext) => Promise<void>;
+  verifiedJobIds?: string[];
+  legacyRevision?: string;
 }
 
 export async function certifyArchiveRecoveryPlan(plan: ArchiveRecoveryPlan, owner: ArchiveOwnerContext): Promise<ArchiveRecoveryPlan> {
@@ -267,15 +278,26 @@ export async function certifyArchiveRecoveryPlan(plan: ArchiveRecoveryPlan, owne
       throw new ArchiveCheckUnavailableError();
     }
   }
-  return { ...plan, journals: plan.journals.filter((journal) => !settled.has(journal.jobId)) };
+  owner.check();
+  return { ...plan, verifiedJobIds: [...(plan.verifiedJobIds || []), ...settled],
+    journals: plan.journals.filter((journal) => !settled.has(journal.jobId)) };
 }
 
-export async function executeArchiveRecoveryPlan(plan: ArchiveRecoveryPlan, forceOwnedFences: boolean, owner: ArchiveOwnerContext): Promise<boolean> {
+export async function executeArchiveRecoveryPlan(plan: ArchiveRecoveryPlan, forceOwnedFences: boolean, owner: ArchiveOwnerContext, collect?: ArchiveVerificationCollector): Promise<boolean> {
   let remote = false;
+  owner.check();
+  for (const jobId of plan.verifiedJobIds || []) collect?.({ kind: 'fence', jobId });
   for (const journal of plan.journals) {
-    if (await recoverArchiveFenceJob(journal, forceOwnedFences || !!journal.journalKey, owner) === 'remote-active') remote = true;
+    const result = await recoverArchiveFenceJob(journal, forceOwnedFences || !!journal.journalKey, owner);
+    owner.check();
+    if (result === 'remote-active') remote = true;
+    else if (result === 'adopted' || result === 'cancelled') collect?.({ kind: 'fence', jobId: journal.jobId });
   }
-  if (plan.legacy) await plan.legacy(owner);
+  if (plan.legacy) {
+    await plan.legacy(owner);
+    owner.check();
+    if (plan.legacyRevision !== undefined) collect?.({ kind: 'legacy', revision: plan.legacyRevision });
+  }
   if (plan.checkUnavailable) throw new ArchiveCheckUnavailableError();
   return remote;
 }
@@ -451,17 +473,27 @@ export async function discoverInterruptedWorkspaceArchiveImport(userId: string, 
   }
   let fences: Awaited<ReturnType<typeof listOwnedArchiveFences>> | null = null;
   try { fences = await listOwnedArchiveFences(userId, owner); } catch { owner.check(); /* local recovery remains required */ }
+  const verifiedJobIds: string[] = [];
   const cancelledJobIds: string[] = [];
   const remoteJobIds: string[] = [];
   if (fences) {
     for (const fence of fences.docs) {
       const value = fence.data();
       if (typeof value.workspaceId !== 'string' || value.workspaceId.startsWith('personal-import-')) continue;
+      const validProof = value.userId === userId && isArchiveRecoveryProofId(value.jobId)
+        && isArchiveRecoveryProofId(value.workspaceId) && (value.mode === 'fresh' || value.mode === 'merge')
+        && fence.id === userId + '_' + value.jobId;
+      if (value.state === 'closed-success' && validProof && !journals.has(value.jobId)) {
+        verifiedJobIds.push(value.jobId);
+      }
       if (value.state !== 'open' && value.state !== 'closed-cancelled') continue;
       if (value.userId !== userId || typeof value.jobId !== 'string' || !value.jobId
         || (value.mode !== 'fresh' && value.mode !== 'merge')) throw new ArchiveCheckUnavailableError();
       const local = journals.has(value.jobId);
-      if (!local && value.state === 'closed-cancelled' && value.cleanupComplete === true) continue;
+      if (!local && value.state === 'closed-cancelled' && value.cleanupComplete === true) {
+        if (validProof) verifiedJobIds.push(value.jobId);
+        continue;
+      }
       if (!local) journals.set(value.jobId, {
         jobId: value.jobId, userId, workspaceId: value.workspaceId,
         createdWorkspace: value.mode === 'fresh', createdDropIds: [], createdCategoryIds: [], createdR2Keys: [],
@@ -472,13 +504,13 @@ export async function discoverInterruptedWorkspaceArchiveImport(userId: string, 
     }
   }
   owner.check();
-  return { journals: [...journals.values()], cancelledJobIds, remoteJobIds, checkUnavailable: !fences };
+  return { journals: [...journals.values()], cancelledJobIds, remoteJobIds, checkUnavailable: !fences, verifiedJobIds };
 }
 
 export async function recoverInterruptedWorkspaceArchiveImport(
-  userId: string, forceOwnedFences = false, owner = createArchiveOwnerContext(userId)
+  userId: string, forceOwnedFences = false, owner = createArchiveOwnerContext(userId), collect?: ArchiveVerificationCollector
 ): Promise<boolean> {
-  return executeArchiveRecoveryPlan(await discoverInterruptedWorkspaceArchiveImport(userId, owner), forceOwnedFences, owner);
+  return executeArchiveRecoveryPlan(await discoverInterruptedWorkspaceArchiveImport(userId, owner), forceOwnedFences, owner, collect);
 }
 
 function normalizeWorkspaceName(name: string): string {

@@ -251,7 +251,7 @@ function recoveryFixture({ fences = [], journals = {}, items = [], present = [],
       logs.push('read:' + query.path);
       if (query.path === 'importFences') {
         if (failList) throw Error('offline');
-        return { docs: fences.map((data) => ({ data: () => data })) };
+        return { docs: fences.map((data) => ({ id: data.documentId ?? data.userId + '_' + data.jobId, data: () => data })) };
       }
       return { docs: [...ledger.values()].map((data) => ({ get: (key) => data[key] })) };
     },
@@ -396,4 +396,104 @@ test('P6 15-minute remote lease remains; stale fence cancels before deleting and
   await stale.work.recoverArchiveFenceJob(journal, false, stale.owner);
   assert.ok(stale.logs.indexOf('cancel') < stale.logs.indexOf('delete:drops/id'));
   assert.ok(stale.logs.indexOf('delete:drops/id') < stale.logs.indexOf('ack:1'));
+});
+
+test('R36 fresh terminal certificates expose private evidence without extra discovery reads', async () => {
+  const fixture = recoveryFixture({ fences: [
+    fence({ cleanupComplete: true }),
+    fence({ jobId: 'success', state: 'closed-success' }),
+    fence({ jobId: 'remote', state: 'open', heartbeatAt: Date.now() }),
+    fence({ jobId: 'personal', mode: 'fresh', workspaceId: 'personal-import-personal', cleanupComplete: true }),
+  ] });
+  const work = await fixture.work.discoverInterruptedWorkspaceArchiveImport('owner', fixture.owner);
+  const personal = await fixture.personal.discoverInterruptedPersonalArchiveImport('owner', fixture.owner);
+  assert.deepEqual(copy(work.verifiedJobIds), ['job', 'success']);
+  assert.deepEqual(copy(personal.verifiedJobIds), ['personal']);
+  assert.deepEqual(fixture.logs, ['read:importFences', 'read:importFences']);
+});
+test('R36 certified unmarked cancellations carry evidence; local markers never bypass execution', async () => {
+  const fixture = recoveryFixture({ fences: [fence()] });
+  const plan = await fixture.work.discoverInterruptedWorkspaceArchiveImport('owner', fixture.owner);
+  assert.deepEqual(copy(plan.verifiedJobIds), []);
+  const certified = await fixture.work.certifyArchiveRecoveryPlan(plan, fixture.owner);
+  assert.deepEqual(copy(certified.verifiedJobIds), ['job']);
+  const proofs = [];
+  await fixture.work.executeArchiveRecoveryPlan(certified, false, fixture.owner, (proof) => proofs.push(copy(proof)));
+  assert.deepEqual(proofs, [{ kind: 'fence', jobId: 'job' }]);
+});
+test('R36 lost terminal settlement response never emits a completion receipt', async () => {
+  const key = 'dropsync_archive_import_journal_job';
+  const fixture = recoveryFixture({ fences: [fence({ cleanupComplete: true })],
+    journals: { [key]: JSON.stringify({ jobId: 'job', userId: 'owner', workspaceId: 'workspace',
+      createdWorkspace: false, createdDropIds: [], createdCategoryIds: [], createdR2Keys: [] }) },
+    failSettle: true });
+  const plan = await fixture.work.discoverInterruptedWorkspaceArchiveImport('owner', fixture.owner);
+  assert.deepEqual(copy(plan.verifiedJobIds), []);
+  assert.equal(plan.journals.length, 1);
+  const proofs = [];
+  await assert.rejects(fixture.work.executeArchiveRecoveryPlan(plan, false, fixture.owner, (proof) => proofs.push(proof)));
+  assert.deepEqual(proofs, []);
+  assert.ok(fixture.stored.has(key));
+});
+test('R36 adoption and explicit never-opened cleanup give matching completion receipts', async () => {
+  for (const [state, exists] of [['closed-success', true], ['closed-cancelled', false]]) {
+    const key = 'dropsync_archive_import_journal_job';
+    const fixture = recoveryFixture({ fenceState: state, fenceExists: exists,
+      journals: { [key]: JSON.stringify({ jobId: 'job', userId: 'owner', workspaceId: 'workspace',
+        createdWorkspace: false, createdDropIds: [], createdCategoryIds: [], createdR2Keys: [], fenceMayExist: true }) } });
+    const proofs = [];
+    await fixture.work.recoverInterruptedWorkspaceArchiveImport('owner', false, fixture.owner, (proof) => proofs.push(copy(proof)));
+    assert.deepEqual(proofs, [{ kind: 'fence', jobId: 'job' }]);
+  }
+});
+test('R36 legacy completion receipt uses exact revision and is absent after changed-journal refusal', async () => {
+  const key = 'dropsync_personal_archive_import_journal';
+  const raw = JSON.stringify({ userId: 'owner', createdDropIds: [], createdCategoryIds: [], createdR2Keys: [] });
+  for (const changed of [false, true]) {
+    const fixture = recoveryFixture({ journals: { [key]: raw } });
+    const plan = await fixture.personal.discoverInterruptedPersonalArchiveImport('owner', fixture.owner);
+    assert.equal(plan.legacyRevision, raw);
+    if (changed) fixture.stored.set(key, raw + ' ');
+    const proofs = [];
+    const pending = fixture.work.executeArchiveRecoveryPlan(plan, false, fixture.owner, (proof) => proofs.push(copy(proof)));
+    if (changed) {
+      await assert.rejects(pending, /journal changed/);
+      assert.deepEqual(proofs, []);
+    } else {
+      await pending;
+      assert.deepEqual(proofs, [{ kind: 'legacy', revision: raw }]);
+    }
+  }
+});
+
+test('R36 malformed raw terminal shape or mismatched document identity never supplies proof', async () => {
+  for (const extra of [
+    { jobId: ' bad' }, { jobId: 'bad/path' }, { jobId: '.' }, { jobId: '..' },
+    { jobId: 'x'.repeat(513) }, { workspaceId: 'bad/path' },
+    { userId: 'peer' }, { mode: 'unknown' }, { documentId: 'owner_other-job' },
+    { workspaceId: 'personal-import-bad/path' },
+  ]) {
+    const fixture = recoveryFixture({ fences: [fence({ state: 'closed-success', ...extra })] });
+    const work = await fixture.work.discoverInterruptedWorkspaceArchiveImport('owner', fixture.owner);
+    const personal = await fixture.personal.discoverInterruptedPersonalArchiveImport('owner', fixture.owner);
+    assert.deepEqual(copy(work.verifiedJobIds), []);
+    assert.deepEqual(copy(personal.verifiedJobIds), []);
+    assert.deepEqual(fixture.logs, ['read:importFences', 'read:importFences']);
+  }
+});
+
+test('R36 malformed workspace or legacy storage remains retained and emits no proof', async () => {
+  for (const [key, kind] of [
+    ['dropsync_archive_import_journal_job', 'work'],
+    ['dropsync_personal_archive_import_journal', 'personal'],
+  ]) {
+    const fixture = recoveryFixture({ journals: { [key]: '{' } });
+    const proofs = [];
+    const operation = kind === 'work'
+      ? fixture.work.recoverInterruptedWorkspaceArchiveImport
+      : fixture.personal.recoverInterruptedPersonalArchiveImport;
+    await assert.rejects(operation('owner', false, fixture.owner, (proof) => proofs.push(proof)));
+    assert.deepEqual(proofs, []);
+    assert.equal(fixture.stored.get(key), '{');
+  }
 });
