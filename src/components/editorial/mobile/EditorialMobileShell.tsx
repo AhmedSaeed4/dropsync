@@ -1,6 +1,8 @@
 'use client';
 
 import { LoadingIndicator } from '@/components/LoadingIndicator';
+import { useNarrowWindowStatus } from "@/lib/editorialNarrowWindowReadout";
+import { useMobileViewMounts } from '@/hooks/useMobileViewMounts';
 import { useState, useEffect } from 'react';
 import { useReducedMotion } from 'motion/react';
 import { Drop, Workspace, Category, ExpirationOption } from '@/types';
@@ -176,7 +178,14 @@ export function EditorialMobileShell({
 
   // Tab persistence (#8): open on the last tab; reads/writes wrapped like EditorialLayout's
   // localStorage effects — a thrown storage exception must never break render.
-  const [activeTab, setActiveTab] = useState<'drops' | 'create' | 'search'>('drops');
+  const prefersReducedMotion = useReducedMotion();
+  const views = useMobileViewMounts(JSON.stringify([user?.uid, currentWorkspaceId]), !!prefersReducedMotion);
+  const activeTab = views.displayedTab;
+  const requestedTab = views.requestedTab;
+  const setActiveTab = views.request;
+  useNarrowWindowStatus({ enabled: !views.opened.has("search"), view: "search",
+    userId: user?.uid ?? null, scope: currentWorkspace?.id ?? "personal", mounted: false,
+    requestedTab, displayedTab: activeTab, preparing: false, N: drops.length, F: 0, branch: "unopened" });
 
   // Mirror of the Drops view's selection mode — slides the navbar away while selecting
   // (OWNER REQUEST #2). Resets on tab switch so leaving Drops mid-selection can never leave
@@ -189,7 +198,7 @@ export function EditorialMobileShell({
     // selection away — cancel it explicitly on any tab change (R3: a tab switch is outside
     // the selection flow). The view's own signal effect does the clearing.
     setDeselectSignal((n) => n + 1);
-  }, [activeTab]);
+  }, [requestedTab]);
 
   // OWNER REQUEST #3: header controls (chat / settings / theme) live here, above the Drops
   // view — bumping this counter asks the view to cancel an open selection, exactly like its
@@ -203,18 +212,17 @@ export function EditorialMobileShell({
   const [createOverlayOpen, setCreateOverlayOpen] = useState(false);
   const [searchOverlayOpen, setSearchOverlayOpen] = useState(false);
 
-  const prefersReducedMotion = useReducedMotion();
 
   useEffect(() => {
     try {
       const t = localStorage.getItem('dropsync_editorial_mobile_tab');
       if (t === 'drops' || t === 'create' || t === 'search') setActiveTab(t);
     } catch {}
-  }, []);
+  }, [setActiveTab]);
 
   useEffect(() => {
-    try { localStorage.setItem('dropsync_editorial_mobile_tab', activeTab); } catch {}
-  }, [activeTab]);
+    try { localStorage.setItem('dropsync_editorial_mobile_tab', requestedTab); } catch {}
+  }, [requestedTab]);
 
   // Re-open the preview with the drop the user was viewing before Move (returnToPreview port,
   // EditorialLayout :261-269).
@@ -285,7 +293,7 @@ export function EditorialMobileShell({
           cancelDropsSelection();
           onOpenSettings();
         }}
-        activeTab={activeTab}
+        activeTab={requestedTab}
         workspaceNav={{
           workspaces,
           currentWorkspace,
@@ -312,7 +320,10 @@ export function EditorialMobileShell({
           className={`absolute inset-0 ${activeTab === 'drops' ? 'visible opacity-100 z-10' : 'invisible pointer-events-none opacity-0'}`}
           style={{ transition: prefersReducedMotion ? 'none' : `opacity ${activeTab === 'drops' ? '0.3s cubic-bezier(0.4, 0, 0.2, 1) 0.1s' : '0.25s cubic-bezier(0.4, 0, 0.2, 1)'}, visibility ${activeTab === 'drops' ? '0.3s cubic-bezier(0.4, 0, 0.2, 1) 0.1s' : '0.25s cubic-bezier(0.4, 0, 0.2, 1)'}` }}
         >
+          {views.opened.has('drops') && (
           <MobileDropsView
+            onReady={views.ack.drops}
+            windowState={{ requestedTab, displayedTab: activeTab, preparing: views.preparing === 'drops' }}
             theme={theme}
             currentUserId={user?.uid ?? null}
             currentWorkspace={currentWorkspace}
@@ -342,14 +353,17 @@ export function EditorialMobileShell({
             onOverlayOpenChange={setDropsOverlayOpen}
             deselectSignal={deselectSignal}
           />
+          )}
         </div>
         <div
           className={`absolute inset-0 ${activeTab === 'create' ? 'visible opacity-100 z-10' : 'invisible pointer-events-none opacity-0'}`}
           style={{ transition: prefersReducedMotion ? 'none' : `opacity ${activeTab === 'create' ? '0.3s cubic-bezier(0.4, 0, 0.2, 1) 0.1s' : '0.25s cubic-bezier(0.4, 0, 0.2, 1)'}, visibility ${activeTab === 'create' ? '0.3s cubic-bezier(0.4, 0, 0.2, 1) 0.1s' : '0.25s cubic-bezier(0.4, 0, 0.2, 1)'}` }}
         >
+          {views.opened.has('create') && (
           <MobileCreateView
+            onReady={views.ack.create}
             // R11/D19: whether Create is the visible tab — going inactive cancels a live dictation.
-            active={activeTab === 'create'}
+            active={requestedTab === 'create'}
             theme={theme}
             user={user}
             currentUserId={user?.uid ?? null}
@@ -362,12 +376,16 @@ export function EditorialMobileShell({
             onCreated={() => setActiveTab('drops')}
             onOverlayOpenChange={setCreateOverlayOpen}
           />
+          )}
         </div>
         <div
           className={`absolute inset-0 ${activeTab === 'search' ? 'visible opacity-100 z-10' : 'invisible pointer-events-none opacity-0'}`}
           style={{ transition: prefersReducedMotion ? 'none' : `opacity ${activeTab === 'search' ? '0.3s cubic-bezier(0.4, 0, 0.2, 1) 0.1s' : '0.25s cubic-bezier(0.4, 0, 0.2, 1)'}, visibility ${activeTab === 'search' ? '0.3s cubic-bezier(0.4, 0, 0.2, 1) 0.1s' : '0.25s cubic-bezier(0.4, 0, 0.2, 1)'}` }}
         >
+          {views.opened.has('search') && (
           <MobileSearchView
+            onReady={views.ack.search}
+            windowState={{ requestedTab, displayedTab: activeTab, preparing: views.preparing === 'search' }}
             theme={theme}
             currentUserId={user?.uid ?? null}
             currentWorkspace={currentWorkspace}
@@ -376,7 +394,7 @@ export function EditorialMobileShell({
             refreshDrops={refreshDrops}
             workspaceMembers={workspaceMembers}
             hoverable={hoverable}
-            active={activeTab === 'search'}
+            active={requestedTab === 'search'}
             onOverlayOpenChange={setSearchOverlayOpen}
             onPreview={onOpenRootDrop}
             onEditDrop={onEditDrop}
@@ -384,6 +402,7 @@ export function EditorialMobileShell({
             onJoinCall={onJoinCall}
             isReopenCallId={isReopenCallId}
           />
+          )}
         </div>
       </main>
 
@@ -584,7 +603,7 @@ export function EditorialMobileShell({
       )}
 
       {/* Bottom floating navbar (Drops · Create · Search) */}
-      <MobileNavbar activeTab={activeTab} onTabChange={setActiveTab} theme={theme} hidden={navbarHidden} />
+      <MobileNavbar activeTab={requestedTab} onTabChange={setActiveTab} theme={theme} hidden={navbarHidden} />
     </div>
   );
 }

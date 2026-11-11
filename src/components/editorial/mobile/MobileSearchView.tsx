@@ -1,7 +1,8 @@
 'use client';
 
+import { useNarrowWindowStatus } from "@/lib/editorialNarrowWindowReadout";
 import { LoadingIndicator } from '@/components/LoadingIndicator';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Drop, Workspace } from '@/types';
 import { isReminderFiredShared, isReminderGlowingForViewer, pinDrop, unpinDrop } from '@/lib/drops';
 import { usePendingDeletions, requestDelete, undo, dismiss } from '@/lib/pendingDeletions';
@@ -10,6 +11,7 @@ import { dropMatchesSearchQuery } from '@/lib/youtubeLabels';
 import { getDropSortPrefs } from '@/lib/auth';
 import type { DropSortMode } from '@/lib/auth';
 import type { MemberInfo } from '@/lib/workspaces';
+import { NarrowEditorialWindowList } from "../NarrowEditorialWindowList";
 import { MobileDropCard } from './MobileDropCard';
 import { MobileActionSheet } from './MobileActionSheet';
 import { Toast } from '@/components/Toast';
@@ -19,6 +21,8 @@ import { AnimatePresence } from 'motion/react';
 type Theme = 'light' | 'dark' | 'minimal';
 
 interface MobileSearchViewProps {
+  onReady?: () => void;
+  windowState?: { requestedTab: string; displayedTab: string; preparing: boolean };
   theme: Theme;
   currentUserId: string | null;
   currentWorkspace: Workspace | null;
@@ -89,6 +93,7 @@ export function MobileSearchView({
   workspaceMembers,
   hoverable,
   active,
+  onReady, windowState,
   onPreview,
   onEditDrop,
   onOpenMoveModal,
@@ -121,7 +126,7 @@ export function MobileSearchView({
   // The shared pending-deletions store — tombstoned drops vanish from Search too (and a
   // deletion made HERE is tombstoned out of Drops as well).
   const { pending: pendingDeletions, tombstone: deletedDropIds } = usePendingDeletions();
-  const visibleDrops = drops.filter(d => !pendingDeletions.has(d.id) && !deletedDropIds.has(d.id));
+  const visibleDrops = useMemo(() => drops.filter(d => !pendingDeletions.has(d.id) && !deletedDropIds.has(d.id)), [drops, pendingDeletions, deletedDropIds]);
 
   // Desktop EditorialDropList :227-231, verbatim logic. In a personal space no picker ever
   // opens — `@text` is just a name query.
@@ -147,10 +152,12 @@ export function MobileSearchView({
 
   // R16: scroll memory is per-workspace — the position survives tab switches (D16) but a
   // workspace switch (any direction) always lands at the top of the new space's results.
-  const searchScrollRef = useRef<HTMLDivElement>(null);
+  const [searchScroller, attachSearchScroller] = useState<HTMLDivElement | null>(null);
+  const searchScrollRef = useMemo(() => ({ current: searchScroller }), [searchScroller]);
+
   useEffect(() => {
     searchScrollRef.current?.scrollTo({ top: 0 });
-  }, [spaceKey]);
+  }, [spaceKey, searchScrollRef]);
 
   // Read-only sync of the space's sort prefs: on tab entry (active), on space change while
   // here, and at mount when Search is the landing tab. Firestore stays the only authority.
@@ -243,11 +250,21 @@ export function MobileSearchView({
     return [...live, ...fired, ...pinned, ...unpinned];
   }, [visibleDrops, query, mentionFilter, sortMode, manualOrder]);
 
+  useNarrowWindowStatus({ enabled: loading || !filteredDrops.length, view: "search",
+    userId: currentUserId, scope: currentWorkspace?.id ?? "personal", mounted: true,
+    requestedTab: windowState?.requestedTab ?? "search", displayedTab: windowState?.displayedTab ?? "search",
+    preparing: windowState?.preparing ?? false, N: drops.length, F: filteredDrops.length,
+    branch: loading ? "loading" : visibleDrops.length ? "filtered-empty" : "empty", scrollerRef: searchScrollRef });
+
+  useLayoutEffect(() => {
+    if ((loading || !filteredDrops.length) && searchScrollRef.current?.clientWidth) onReady?.();
+  });
+
   const now = new Date();
 
   return (
     <div className="flex h-full flex-col">
-      <div ref={searchScrollRef} className="flex-1 min-h-0 space-y-3 overflow-y-auto overscroll-contain px-4 pb-28 editorial-scroll-hide">
+      <div ref={attachSearchScroller} className="flex-1 min-h-0 space-y-3 overflow-y-auto overscroll-contain px-4 pb-28 editorial-scroll-hide">
         <p className={`text-[10px] font-semibold uppercase tracking-[0.12em] ${font} ${tc.muted}`}>Search</p>
 
         {/* The search box — the prototype's .search-box (card bg, 18px radius, in-flow magnifier)
@@ -354,11 +371,15 @@ export function MobileSearchView({
             </p>
           </div>
         ) : (
-          <div className="space-y-2">
-            {filteredDrops.map((drop) => (
+          <NarrowEditorialWindowList drops={filteredDrops} presenceIds={visibleDrops.map(drop => drop.id)}
+            scrollerRef={searchScrollRef} scope={spaceKey} userId={currentUserId} view="search" theme={theme}
+            N={drops.length} animate={false} hidden={windowState ? windowState.displayedTab !== "search" : !active}
+            requestedTab={windowState?.requestedTab} displayedTab={windowState?.displayedTab}
+            preparing={windowState?.preparing} onReady={onReady}
+            renderRow={(drop, pin) => (
               <MobileDropCard
-                key={drop.id}
                 drop={drop}
+                virtualMode resourceScope={spaceKey} onWindowRetentionChange={pin}
                 theme={theme}
                 currentUserId={currentUserId}
                 currentWorkspaceId={currentWorkspace?.id ?? null}
@@ -375,8 +396,7 @@ export function MobileSearchView({
                 isReopenCallId={isReopenCallId}
                 hoverable={hoverable}
               />
-            ))}
-          </div>
+            )} />
         )}
       </div>
 

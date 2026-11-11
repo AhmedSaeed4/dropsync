@@ -1,10 +1,12 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useRef, useState } from 'react';
 import { Drop, Workspace } from '@/types';
 import { formatFileSize, getTimeRemaining, decryptDrop, getYouTubeVideoId } from '@/lib/drops';
 import { primeDecryptedPreview } from '@/lib/previewPrime';
 import { DropMentionContent } from '../../DropMentionContent';
+import { NarrowMediaContext } from '../NarrowEditorialWindowList';
+import { useEditorialCardResources } from '@/hooks/useEditorialCardResources';
 import { useVideoThumbnail } from '@/hooks/useVideoThumbnail';
 import { getEditorialThemeColors } from '../editorialTheme';
 import { LiveCallDropTile } from '../../call/LiveCallDropTile';
@@ -14,6 +16,9 @@ import type { MemberInfo } from '@/lib/workspaces';
 type Theme = 'light' | 'dark' | 'minimal';
 
 interface MobileDropCardProps {
+  virtualMode?: boolean;
+  resourceScope?: string;
+  onWindowRetentionChange?: (value: boolean) => void;
   drop: Drop;
   theme: Theme;
   currentUserId: string | null;
@@ -64,11 +69,12 @@ function getScrollParent(el: Element | null): Element | null {
 // Lazy-visibility hook ported verbatim from EditorialDropItem (1000px margin, scroll-parent
 // root, latch-on-first-intersect). LOAD-BEARING: without it a big encrypted workspace would
 // decrypt everything on mount.
-function useInView<T extends Element>(rootMargin = '1000px 0px') {
+function useInView<T extends Element>(rootMargin = '1000px 0px', enabled = true) {
   const ref = useRef<T | null>(null);
   const [inView, setInView] = useState(false);
 
   useEffect(() => {
+    if (!enabled) return;
     const el = ref.current;
     if (!el) return;
     if (typeof IntersectionObserver === 'undefined') {
@@ -89,7 +95,7 @@ function useInView<T extends Element>(rootMargin = '1000px 0px') {
     );
     observer.observe(el);
     return () => observer.disconnect();
-  }, [rootMargin]);
+  }, [rootMargin, enabled]);
 
   return { ref, inView };
 }
@@ -114,6 +120,9 @@ export function MobileDropCard({
   hoverable,
   manualMove,
   manualPosition,
+  virtualMode = false,
+  resourceScope = 'personal',
+  onWindowRetentionChange,
 }: MobileDropCardProps) {
   const [decryptedContent, setDecryptedContent] = useState<string>('');
   const [decryptedFileData, setDecryptedFileData] = useState<string>('');
@@ -122,7 +131,13 @@ export function MobileDropCard({
   // Full-screen image viewer — src of the image shown in the lightbox (null = closed).
   const [viewerSrc, setViewerSrc] = useState<string | null>(null);
 
-  const { ref: cardRef, inView } = useInView<HTMLDivElement>('1000px 0px');
+  const { ref: cardRef, inView } = useInView<HTMLDivElement>('1000px 0px', !virtualMode);
+  const resources = useEditorialCardResources(virtualMode, resourceScope, drop, currentUserId ?? undefined);
+  const media = useContext(NarrowMediaContext);
+  useEffect(() => {
+    onWindowRetentionChange?.(viewerSrc !== null);
+    return () => onWindowRetentionChange?.(false);
+  }, [viewerSrc, onWindowRetentionChange]);
   const hasDecrypted = useRef(false);
   // iv changes on every re-encryption; imageR2Key covers image-only edits (see EditorialDropItem).
   const lastSigRef = useRef<string | null>(null);
@@ -140,6 +155,7 @@ export function MobileDropCard({
 
   // Decrypt effect ported verbatim from EditorialDropItem :234-281 (incl. signature guard).
   useEffect(() => {
+    if (virtualMode && drop.encrypted) return;
     async function decrypt() {
       if (!drop.encrypted) {
         setDecryptedContent(drop.content || '');
@@ -179,25 +195,38 @@ export function MobileDropCard({
       }
     }
     decrypt();
-  }, [drop, currentUserId, inView]);
+  }, [drop, currentUserId, inView, virtualMode]);
 
+  // Owner ruling Order75 §11: never present unchanged ciphertext as decrypted.
+  // Preserve the phone's existing empty-text error display.
+  const virtualError = resources.failed || resources.textError
+    || (resources.ready && !resources.text && !resources.file && !resources.image);
   const displayContent = drop.encrypted
-    ? (decryptError ? '[Encrypted - cannot decrypt]' : decryptedContent)
+    ? (virtualMode ? (virtualError ? '[Encrypted - cannot decrypt]' : resources.text ?? '') : (decryptError ? '[Encrypted - cannot decrypt]' : decryptedContent))
     : (drop.content || '');
-  const displayFileData = drop.encrypted ? decryptedFileData : (drop.fileData || '');
-  const displayImageData = decryptedImageData;
+  const displayFileData = drop.encrypted ? (virtualMode ? resources.file ?? '' : decryptedFileData) : (drop.fileData || '');
+  const displayImageData = virtualMode && drop.encrypted ? resources.image ?? '' : decryptedImageData;
 
   const contentReady = !drop.encrypted
+    || (virtualMode && (resources.ready || resources.failed))
     || decryptedContent !== ''
     || decryptedFileData !== ''
     || decryptedImageData !== ''
     || decryptError;
 
   // Video thumbnail + YouTube detection — same priority chain as EditorialDropItem :300-314.
-  const { thumbnailUrl: videoThumbnail } = useVideoThumbnail(
-    isVideo ? displayFileData : null,
+  const retainedThumbnail = media?.get(drop.id);
+  const cachedThumbnail = retainedThumbnail?.source === displayFileData ? retainedThumbnail.thumbnail : null;
+  const { thumbnailUrl: generatedThumbnail } = useVideoThumbnail(
+    isVideo && !(virtualMode && drop.encrypted) && !cachedThumbnail ? displayFileData : null,
     drop.mimeType
   );
+  const videoThumbnail = virtualMode && drop.encrypted ? resources.thumbnail : cachedThumbnail ?? generatedThumbnail;
+  useEffect(() => {
+    if (virtualMode && !drop.encrypted && media && generatedThumbnail && displayFileData) {
+      media.set(drop.id, { source: displayFileData, thumbnail: generatedThumbnail });
+    }
+  }, [virtualMode, drop.id, drop.encrypted, media, generatedThumbnail, displayFileData]);
   const youtubeVideoId = drop.type === 'text' ? getYouTubeVideoId(displayContent) : null;
 
   const getThumbnailSrc = () => {

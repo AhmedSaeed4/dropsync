@@ -43,7 +43,7 @@ import { ensureCategoriesForTarget } from '@/lib/categories';
 import { LiveCallModal } from '../call/LiveCallModal';
 import type { CallMeshState } from '@/hooks/useLiveKitCall';
 import dynamic from 'next/dynamic';
-import { useIsPhone } from '@/hooks/useIsPhone';
+import { useEditorialClientTier } from '@/hooks/useEditorialClientTier';
 
 // Mobile shell (≤767px only) — lazy so desktop users never download it. ssr:false is safe:
 // the server render and first client render both take the desktop path (hook default false).
@@ -280,7 +280,8 @@ export function EditorialLayout(props: EditorialLayoutProps) {
   // Phone gate for the mobile redesign (decision #2: ≤767px). A NEW hook — useIsMobile above
   // is the 1023px stacked-chat behavior and stays exactly as it is. Desktop/tablet JSX below
   // is untouched; this early return is the only mobile-specific code in this file.
-  const isPhone = useIsPhone();
+  const clientTier = useEditorialClientTier();
+  const isPhone = clientTier === 'phone';
 
   // Re-open the preview with the drop the user was viewing before Move. An already-decrypted drop
   // renders instantly (no skeleton, no re-decrypt); a drop that was still decrypting when Move was
@@ -630,6 +631,7 @@ export function EditorialLayout(props: EditorialLayoutProps) {
         <div className={`shrink-0 wide:overflow-y-auto editorial-scroll-hide wide:min-h-0 transition-all duration-[350ms] ease-[cubic-bezier(0.4,0,0.2,1)] w-full wide:[overflow-anchor:none] ${showChat ? 'wide:w-[480px] wide:min-w-[480px]' : 'wide:w-[520px] wide:min-w-[520px]'}`}>
           <div>
             <MemoEditorialDropList
+              narrowTier={clientTier === 'middle' ? 'middle' : undefined}
               drops={drops}
               loading={dropsLoading}
               onDelete={refreshDrops}
