@@ -1,7 +1,8 @@
 'use client';
 
+import { useNarrowWindowStatus } from "@/lib/editorialNarrowWindowReadout";
 import { LoadingIndicator } from '@/components/LoadingIndicator';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Drop, Category, Workspace } from '@/types';
 import { deleteDrop, pinDrop, unpinDrop, isReminderFiredShared, isReminderGlowingForViewer } from '@/lib/drops';
 import { usePendingDeletions, requestDelete, undo, dismiss } from '@/lib/pendingDeletions';
@@ -9,10 +10,11 @@ import { getEditorialThemeColors } from '../editorialTheme';
 import { EditorialStatusPanel } from '../EditorialStatusPanel';
 import { UndoToast } from '@/components/UndoToast';
 import { Toast } from '@/components/Toast';
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import { AnimatePresence, useReducedMotion } from 'motion/react';
 import { getDropSortPrefs, setDropSortMode, setDropOrder } from '@/lib/auth';
 import type { DropSortMode } from '@/lib/auth';
 import type { MemberInfo } from '@/lib/workspaces';
+import { NarrowEditorialWindowList } from '../NarrowEditorialWindowList';
 import { MobileDropCard } from './MobileDropCard';
 import { MobileCategoryStrip } from './MobileCategoryStrip';
 import { MobileSortMenu } from './MobileSortMenu';
@@ -22,6 +24,8 @@ import { MobileActionSheet } from './MobileActionSheet';
 type Theme = 'light' | 'dark' | 'minimal';
 
 interface MobileDropsViewProps {
+  onReady?: () => void;
+  windowState?: { requestedTab: string; displayedTab: string; preparing: boolean };
   theme: Theme;
   currentUserId: string | null;
   currentWorkspace: Workspace | null;
@@ -123,6 +127,7 @@ export function MobileDropsView({
   onSelectionModeChange,
   onOverlayOpenChange,
   deselectSignal,
+  onReady, windowState,
 }: MobileDropsViewProps) {
   const tc = getEditorialThemeColors(theme);
   const font = tc.fontClass;
@@ -166,7 +171,7 @@ export function MobileDropsView({
     onOverlayOpenChange?.(!!sheetDrop || sortMenuOpen);
   }, [sheetDrop, sortMenuOpen, onOverlayOpenChange]);
 
-  const visibleDrops = drops.filter(d => !pendingDeletions.has(d.id) && !deletedDropIds.has(d.id));
+  const visibleDrops = useMemo(() => drops.filter(d => !pendingDeletions.has(d.id) && !deletedDropIds.has(d.id)), [drops, pendingDeletions, deletedDropIds]);
 
   useEffect(() => { setSelectedCategory('all'); }, [categories]);
   // Switching workspaces resets selection + category filter (§5); sort/strip prefs re-apply
@@ -228,10 +233,11 @@ export function MobileDropsView({
 
   // R16: scroll memory is per-workspace — the position survives tab switches (D16) but a
   // workspace switch (any direction) always lands at the top of the new space's list.
-  const dropsScrollRef = useRef<HTMLDivElement>(null);
+  const [dropsScroller, attachDropsScroller] = useState<HTMLDivElement | null>(null);
+  const dropsScrollRef = useMemo(() => ({ current: dropsScroller }), [dropsScroller]);
   useEffect(() => {
     dropsScrollRef.current?.scrollTo({ top: 0 });
-  }, [spaceKey]);
+  }, [spaceKey, dropsScrollRef]);
 
   const [sortMode, setSortMode] = useState<DropSortMode>('newest');
   const [manualOrder, setManualOrder] = useState<string[]>([]);
@@ -324,6 +330,15 @@ export function MobileDropsView({
     return [...live, ...fired, ...pinned, ...unpinned];
   }, [visibleDrops, selectedCategory, sortMode, manualOrder]);
 
+  useNarrowWindowStatus({ enabled: loading || !filteredDrops.length, view: "drops",
+    userId: currentUserId, scope: currentWorkspace?.id ?? "personal", mounted: true,
+    requestedTab: windowState?.requestedTab ?? "drops", displayedTab: windowState?.displayedTab ?? "drops",
+    preparing: windowState?.preparing ?? false, N: drops.length, F: filteredDrops.length,
+    branch: loading ? "loading" : visibleDrops.length ? "filtered-empty" : "empty", scrollerRef: dropsScrollRef });
+
+  useLayoutEffect(() => {
+    if ((loading || !filteredDrops.length) && dropsScrollRef.current?.clientWidth) onReady?.();
+  });
   const now = new Date();
 
   // Manual reorder: only Manual mode, unfiltered, not selecting (desktop :630 semantics).
@@ -438,7 +453,7 @@ export function MobileDropsView({
 
   return (
     <div className="flex h-full flex-col">
-      <div ref={dropsScrollRef} className="flex-1 min-h-0 space-y-3 overflow-y-auto overscroll-contain px-4 pb-28 editorial-scroll-hide">
+      <div ref={attachDropsScroller} className="flex-1 min-h-0 space-y-3 overflow-y-auto overscroll-contain px-4 pb-28 editorial-scroll-hide">
         {/* Title block (#11, D5): the real status panel renders only the animated word (count
             moved into the subline), then the prototype's stacked title + whisper subline
             (prototype :442-446; .h1 = 26px/600/−0.5px/1.15) before the control row. */}
@@ -561,58 +576,18 @@ export function MobileDropsView({
           <div className="p-8 text-center">
             <p className={`text-xs ${font} ${tc.muted}`}>No drops in this category</p>
           </div>
-        ) : animateDrops ? (
-          <div className="space-y-2">
-            <AnimatePresence initial={false} mode="popLayout">
-              {filteredDrops.map((drop) => {
-                const moveIdx = manualIndexById.get(drop.id);
-                return (
-                  <motion.div
-                    key={drop.id}
-                    layout
-                    initial={{ opacity: 0, scale: 0.97 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.9 }}
-                    transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
-                  >
-                    <MobileDropCard
-                      key={drop.id}
-                      drop={drop}
-                      theme={theme}
-                      currentUserId={currentUserId}
-                      currentWorkspaceId={currentWorkspace?.id ?? null}
-                      currentWorkspace={currentWorkspace}
-                      allDrops={drops}
-                      selectionMode={selectionMode}
-                      selected={selectedIds.has(drop.id)}
-                      onSelect={toggleSelect}
-                      onPreview={onPreview}
-                      onOpenSheet={setSheetDrop}
-                      reminderGlow={isReminderGlowingForViewer(drop, currentUserId, now)}
-                      onJoinCall={onJoinCall}
-                      members={workspaceMembers}
-                      isReopenCallId={isReopenCallId}
-                      hoverable={hoverable}
-                      manualMove={showMoveControls && moveIdx !== undefined ? {
-                        canUp: moveIdx > 0,
-                        canDown: moveIdx < manualCount - 1,
-                        onUp: () => moveUp(drop.id),
-                        onDown: () => moveDown(drop.id),
-                      } : undefined}
-                      manualPosition={showMoveControls && moveIdx !== undefined ? moveIdx : undefined}
-                    />
-                  </motion.div>
-                );
-              })}
-            </AnimatePresence>
-          </div>
         ) : (
-          <div className="space-y-2">
-            {filteredDrops.map((drop) => {
+          <NarrowEditorialWindowList drops={filteredDrops} presenceIds={visibleDrops.map(drop => drop.id)}
+            scrollerRef={dropsScrollRef} scope={currentWorkspace?.id ?? 'personal'} userId={currentUserId}
+            view="drops" onReady={onReady} requestedTab={windowState?.requestedTab} displayedTab={windowState?.displayedTab}
+            preparing={windowState?.preparing} hidden={windowState ? windowState.displayedTab !== "drops" : false} theme={theme} N={drops.length} animate={animateDrops}
+            renderRow={(drop, pin) => {
               const moveIdx = manualIndexById.get(drop.id);
               return (
                 <MobileDropCard
-                  key={drop.id}
+                  virtualMode
+                  resourceScope={currentWorkspace?.id ?? 'personal'}
+                  onWindowRetentionChange={pin}
                   drop={drop}
                   theme={theme}
                   currentUserId={currentUserId}
@@ -638,8 +613,8 @@ export function MobileDropsView({
                   manualPosition={showMoveControls && moveIdx !== undefined ? moveIdx : undefined}
                 />
               );
-            })}
-          </div>
+            }}
+          />
         )}
       </div>
 

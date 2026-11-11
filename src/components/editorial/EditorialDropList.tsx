@@ -1,7 +1,7 @@
 'use client';
 
 import { LoadingIndicator } from '@/components/LoadingIndicator';
-import { useState, useCallback, useMemo, useEffect, useLayoutEffect, useRef, memo, type ComponentProps } from 'react';
+import { useState, useReducer, useCallback, useMemo, useEffect, useLayoutEffect, useRef, memo, type ComponentProps } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { DndContext, PointerSensor, useSensor, useSensors, closestCenter, type DragEndEvent } from '@dnd-kit/core';
@@ -20,6 +20,7 @@ import HoldToDeleteButton from './HoldToDeleteButton';
 import { MemberInfo } from '@/lib/workspaces';
 import { getCategoryCollapsed, setCategoryCollapsed, getDropSortPrefs, setDropSortMode, setDropOrder } from '@/lib/auth';
 import type { DropSortMode } from '@/lib/auth';
+import { NarrowEditorialWindowList } from './NarrowEditorialWindowList';
 import { EditorialWindowList } from './EditorialWindowList';
 import { useWideEditorial } from '@/hooks/useEditorialWindow';
 import { eligibleDragIds } from '@/lib/editorialWindowModel';
@@ -34,6 +35,7 @@ import {
 } from '@/lib/editorialWindowPolicy';
 
 interface EditorialDropListProps {
+  narrowTier?: 'middle';
   drops: Drop[];
   loading: boolean;
   onDelete: () => void;
@@ -319,10 +321,20 @@ export function EditorialDropList({
   onSortModeChange,
   onExportWorkspace,
   onExportPersonal,
+  narrowTier,
 }: EditorialDropListProps) {
   // Wide-desktop visible window (Round 9 D17): picks the windowed renderer at
   // >=1400px. False through SSR/hydration; the wide branch mounts right after.
   const isWide = useWideEditorial();
+  // Once a narrow renderer is active, keep it through the query handoff until wide wins.
+  const [narrowLatched, handoff] = useReducer(
+    (latched: boolean, next: 'middle' | 'wide' | 'pending') => next === 'middle' || (next === 'pending' && latched),
+    narrowTier === 'middle'
+  );
+  useLayoutEffect(() => {
+    handoff(isWide ? 'wide' : narrowTier === 'middle' ? 'middle' : 'pending');
+  }, [narrowTier, isWide]);
+  const useNarrow = !isWide && (narrowTier === 'middle' || narrowLatched);
   // The first client render uses the same 60-row policy as SSR. A loopback
   // dev override resolves only after hydration and never changes branch gates.
   const [windowPolicy, setWindowPolicy] = useState(() => resolveEditorialWindowPolicy());
@@ -802,6 +814,12 @@ export function EditorialDropList({
   // Dev metadata has no React state and no frame publisher. Scope changes
   // replace the lease; row probes are updated by EW only after commit.
   const calibrationScrollerRef = useRef<HTMLDivElement>(null);
+  const [narrowScroller, setNarrowScroller] = useState<HTMLDivElement | null>(null);
+  const narrowScrollerRef = useMemo(() => ({ current: narrowScroller }), [narrowScroller]);
+  const attachNarrowScroller = useCallback((node: HTMLDivElement | null) => {
+    calibrationScrollerRef.current = node;
+    setNarrowScroller(node);
+  }, []);
   const calibrationLeaseRef = useRef<EditorialWindowReadoutLease | null>(null);
   const calibrationScope = useMemo(() => ({
     userId: currentUserId, spaceKey, activeWorkspaceId,
@@ -834,7 +852,7 @@ export function EditorialDropList({
     const branch: EditorialWindowBranch = loading ? 'loading'
       : visibleDrops.length === 0 && pendingDeletions.size === 0 ? 'empty'
       : filteredDrops.length === 0 ? 'filtered-empty'
-      : isWide
+      : isWide || useNarrow
         ? enableDrag ? 'window-drag' : animateDrops ? 'window-animated' : 'window-plain'
         : enableDrag ? 'legacy-drag' : animateDrops ? 'legacy-animated' : 'legacy-plain';
     const windowed = branch.startsWith('window-');
@@ -887,7 +905,7 @@ export function EditorialDropList({
     calibrationScope, windowPolicy, currentUserId, activeWorkspaceId, currentWorkspace?.id,
     loading, drops.length, visibleDrops.length, pendingDeletions.size, filteredDrops,
     searchQuery, selectedCategory, mentionFilter, sortMode, manualOrder,
-    isFiltered, prefersReducedMotion, enableDrag, animateDrops, isWide,
+    isFiltered, prefersReducedMotion, enableDrag, animateDrops, isWide, useNarrow,
   ]);
 
   // Category delete handlers
@@ -1339,7 +1357,7 @@ export function EditorialDropList({
         )}
 
         {/* Drop list — shared loader while loading, real content otherwise */}
-        <div ref={calibrationScrollerRef} className="max-h-[500px] overflow-y-auto overflow-x-hidden thin-scrollbar">
+        <div ref={useNarrow ? attachNarrowScroller : calibrationScrollerRef} className="max-h-[500px] overflow-y-auto overflow-x-hidden thin-scrollbar">
           {loading ? (
             <LoadingIndicator label="Loading drops" />
           ) : visibleDrops.length === 0 && pendingDeletions.size === 0 ? (
@@ -1433,6 +1451,36 @@ export function EditorialDropList({
                   animate={animateDrops}
                 />
             )
+          ) : useNarrow ? (
+            <DndContext sensors={dndSensors} collisionDetection={closestCenter} autoScroll={false}
+              onDragStart={e => setActiveDragId(String(e.active.id))}
+              onDragEnd={e => { setActiveDragId(null); handleDragEnd(e); }}
+              onDragCancel={() => setActiveDragId(null)}>
+              <NarrowEditorialWindowList
+                drops={filteredDrops} presenceIds={visibleDrops.map(drop => drop.id)}
+                scope={spaceKey} userId={currentUserId ?? null} view="middle" theme={theme}
+                scrollerRef={narrowScrollerRef} N={drops.length} animate={!enableDrag && animateDrops}
+                effectiveBudget={windowPolicy.effectiveBudget} calibrationProbe={calibrationScope.probe}
+                sortableIds={enableDrag ? eligibleDragIds(filteredDrops, d => isReminderFiredShared(d, now)) : undefined}
+                activeDragId={enableDrag ? activeDragId : null}
+                renderRow={(drop, pin, handle) => {
+                  const index = manualIndexById.get(drop.id);
+                  return <EditorialDropItem drop={drop} onDelete={handleDeleteWithUndo} onPreview={onPreview}
+                    onEdit={onEdit} selected={selectedIds.has(drop.id)} onSelect={toggleSelect}
+                    selectionMode={selectionMode} theme={theme} currentUserId={currentUserId}
+                    canMutate={!!currentUserId && (currentUserId === drop.userId || (!!currentWorkspace && currentUserId === currentWorkspace.ownerId))}
+                    allDrops={allDrops} onJoinCall={onJoinCall} members={workspaceMembers}
+                    isReopenCallId={isReopenCallId} hoverable={hoverable}
+                    reminderGlow={isReminderGlowingForViewer(drop, currentUserId ?? null, now)}
+                    onPin={handlePinDrop} onUnpin={handlePinDrop} activeWorkspaceId={activeWorkspaceId}
+                    onSendToChat={onSendToChat} onSendToAgent={onSendToAgent}
+                    virtualMode resourceScope={spaceKey} onWindowRetentionChange={pin}
+                    showDragHandle={!!handle} dragHandleProps={handle}
+                    showMoveControls={index !== undefined && !enableDrag}
+                    canMoveUp={index !== undefined && index > 0} canMoveDown={index !== undefined && index < manualCount - 1}
+                    onMoveUp={moveUp} onMoveDown={moveDown} />;
+                }} />
+            </DndContext>
           ) : enableDrag ? (
             <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
               <div className="p-3 space-y-2">

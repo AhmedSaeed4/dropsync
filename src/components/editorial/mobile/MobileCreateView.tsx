@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Category, Drop, ExpirationOption, Workspace } from '@/types';
 import { createFileDrop, createTextDrop, formatReminderFire } from '@/lib/drops';
@@ -26,6 +26,8 @@ type Theme = 'light' | 'dark' | 'minimal';
 type StartMode = 'file' | 'text' | 'draw';
 
 interface MobileCreateViewProps {
+  onReady?: () => void;
+  windowState?: { requestedTab: string; displayedTab: string; preparing: boolean };
   theme: Theme;
   // The signed-in user (shell's `user`) — createTextDrop/createFileDrop's userId + creatorName.
   user: any;
@@ -82,6 +84,7 @@ export function MobileCreateView({
   onCreateCategory,
   onCreated,
   active,
+  onReady,
   onOverlayOpenChange,
 }: MobileCreateViewProps) {
   const tc = getEditorialThemeColors(theme);
@@ -129,6 +132,10 @@ export function MobileCreateView({
   // every switch (the established keep-mounted ruling); only the scroll resets.
   const workspaceId = currentWorkspace?.id ?? 'personal';
   const createScrollRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (currentWorkspace?.isImporting || createScrollRef.current?.clientWidth) onReady?.();
+  });
+
   useEffect(() => {
     createScrollRef.current?.scrollTo({ top: 0 });
   }, [workspaceId]);

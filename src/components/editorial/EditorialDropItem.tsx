@@ -21,6 +21,7 @@ import { LiveCallDropTile } from '../call/LiveCallDropTile';
 import type { MemberInfo } from '@/lib/workspaces';
 
 interface EditorialDropItemProps {
+  onWindowRetentionChange?: (value: boolean) => void;
   drop: Drop;
   onDelete: (drop: Drop) => void;
   onPreview: (drop: Drop) => void;
@@ -201,6 +202,7 @@ export const EditorialDropItem = memo(function EditorialDropItem({
   hoverable = false,
   virtualMode = false,
   resourceScope,
+  onWindowRetentionChange,
 }: EditorialDropItemProps) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -498,6 +500,12 @@ export const EditorialDropItem = memo(function EditorialDropItem({
     if (drop.isStaged) return;
     onEdit?.(drop);
   };
+
+  useEffect(() => {
+    if (!onWindowRetentionChange) return;
+    onWindowRetentionChange(!!(confirmDelete || copied || isDownloading || isSharing || shareCopied || menuState));
+    return () => onWindowRetentionChange(false);
+  }, [onWindowRetentionChange, confirmDelete, copied, isDownloading, isSharing, shareCopied, menuState]);
 
   const canCopyContent = isTextFile(drop);
 
